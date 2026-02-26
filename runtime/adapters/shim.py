@@ -40,6 +40,19 @@ class ShimRunHandle:
     stderr_file: TextIO
 
 
+_ENV_VARS_TO_STRIP = (
+    "CLAUDECODE",
+)
+
+
+def _sanitize_env() -> Dict[str, str]:
+    """Return a copy of os.environ with known conflicting variables removed."""
+    env = os.environ.copy()
+    for key in _ENV_VARS_TO_STRIP:
+        env.pop(key, None)
+    return env
+
+
 class ShimAdapterBase:
     id: ProviderId
 
@@ -104,6 +117,7 @@ class ShimAdapterBase:
             stderr=stderr_file,
             text=True,
             start_new_session=True,
+            env=_sanitize_env(),
         )
         self._runs[run_id] = ShimRunHandle(
             process=process,
@@ -122,6 +136,17 @@ class ShimAdapterBase:
             pid=process.pid,
             session_id=None,
         )
+
+    @staticmethod
+    def _close_io(handle: ShimRunHandle) -> None:
+        try:
+            handle.stdout_file.close()
+        except Exception:
+            pass
+        try:
+            handle.stderr_file.close()
+        except Exception:
+            pass
 
     def poll(self, ref: TaskRunRef) -> TaskStatus:
         handle = self._runs.get(ref.run_id)
@@ -154,11 +179,7 @@ class ShimAdapterBase:
                 message="running",
             )
 
-        try:
-            handle.stdout_file.close()
-            handle.stderr_file.close()
-        except Exception:
-            pass
+        self._close_io(handle)
 
         stdout_text = handle.stdout_path.read_text(encoding="utf-8") if handle.stdout_path.exists() else ""
         stderr_text = handle.stderr_path.read_text(encoding="utf-8") if handle.stderr_path.exists() else ""
@@ -182,6 +203,7 @@ class ShimAdapterBase:
             "stderr_path": str(handle.stderr_path),
         }
         handle.provider_result_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        self._runs.pop(ref.run_id, None)
 
         return TaskStatus(
             task_id=ref.task_id,
@@ -212,6 +234,10 @@ class ShimAdapterBase:
                 os.killpg(os.getpgid(handle.process.pid), signal.SIGKILL)
             except ProcessLookupError:
                 return
+            time.sleep(0.1)
+        if handle.process.poll() is not None:
+            self._close_io(handle)
+            self._runs.pop(ref.run_id, None)
 
     def normalize(self, raw: object, ctx: NormalizeContext) -> List[NormalizedFinding]:
         raise NotImplementedError

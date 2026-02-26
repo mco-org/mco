@@ -4,7 +4,10 @@ import tempfile
 import time
 import unittest
 
+from unittest.mock import patch
+
 from runtime.adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
+from runtime.adapters.shim import _sanitize_env
 from runtime.contracts import NormalizeContext, TaskInput
 
 
@@ -115,7 +118,25 @@ class AdapterContractTests(unittest.TestCase):
             adapter.cancel(ref)
             status = self._wait_terminal(adapter, ref)
             self.assertTrue(status.completed)
-            self.assertIn(status.attempt_state, ("FAILED", "SUCCEEDED"))
+            self.assertIn(status.attempt_state, ("FAILED", "SUCCEEDED", "EXPIRED"))
+
+    def test_run_handle_is_released_after_terminal_poll(self) -> None:
+        adapter = ClaudeAdapter()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task = TaskInput(
+                task_id="task-handle-release",
+                prompt="ignored",
+                repo_root=tmpdir,
+                target_paths=["."],
+                metadata={
+                    "artifact_root": tmpdir,
+                    "command_override": ["python3", "-c", "print('ok')"],
+                },
+            )
+            ref = adapter.run(task)
+            status = self._wait_terminal(adapter, ref)
+            self.assertTrue(status.completed)
+            self.assertNotIn(ref.run_id, adapter._runs)  # type: ignore[attr-defined]
 
     def test_gemini_adapter_run_poll_normalize(self) -> None:
         adapter = GeminiAdapter()
@@ -200,6 +221,31 @@ class AdapterContractTests(unittest.TestCase):
                 NormalizeContext(task_id=task.task_id, provider="qwen", repo_root=tmpdir, raw_ref="raw/qwen.stdout.log"),
             )
             self.assertEqual(len(findings), 1)
+
+    def test_sanitize_env_strips_claudecode(self) -> None:
+        with patch.dict("os.environ", {"CLAUDECODE": "1", "HOME": "/tmp"}):
+            env = _sanitize_env()
+            self.assertNotIn("CLAUDECODE", env)
+            self.assertIn("HOME", env)
+
+    def test_popen_receives_sanitized_env(self) -> None:
+        adapter = ClaudeAdapter()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task = TaskInput(
+                task_id="task-env-check",
+                prompt="ignored",
+                repo_root=tmpdir,
+                target_paths=["."],
+                metadata={
+                    "artifact_root": tmpdir,
+                    "command_override": ["python3", "-c", "import os, sys; sys.exit(0 if 'CLAUDECODE' not in os.environ else 1)"],
+                },
+            )
+            with patch.dict("os.environ", {"CLAUDECODE": "1"}):
+                ref = adapter.run(task)
+            status = self._wait_terminal(adapter, ref)
+            self.assertTrue(status.completed)
+            self.assertEqual(status.attempt_state, "SUCCEEDED")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,11 @@ from runtime.types import AttemptResult, ErrorKind, TaskState, WarningKind
 
 class RetrySemanticsTests(unittest.TestCase):
     def test_retry_then_success(self) -> None:
-        runtime = OrchestratorRuntime(RetryPolicy(max_retries=2, base_delay_seconds=1.0, backoff_multiplier=2.0))
+        slept: list[float] = []
+        runtime = OrchestratorRuntime(
+            RetryPolicy(max_retries=2, base_delay_seconds=1.0, backoff_multiplier=2.0),
+            sleep_fn=slept.append,
+        )
 
         def runner(attempt: int) -> AttemptResult:
             if attempt == 1:
@@ -21,9 +25,14 @@ class RetrySemanticsTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.attempts, 2)
         self.assertEqual(result.delays_seconds, [1.0])
+        self.assertEqual(slept, [1.0])
 
     def test_retry_exhaustion(self) -> None:
-        runtime = OrchestratorRuntime(RetryPolicy(max_retries=2, base_delay_seconds=1.0, backoff_multiplier=2.0))
+        slept: list[float] = []
+        runtime = OrchestratorRuntime(
+            RetryPolicy(max_retries=2, base_delay_seconds=1.0, backoff_multiplier=2.0),
+            sleep_fn=slept.append,
+        )
 
         def runner(_attempt: int) -> AttemptResult:
             return AttemptResult(success=False, error_kind=ErrorKind.RETRYABLE_RATE_LIMIT)
@@ -33,6 +42,7 @@ class RetrySemanticsTests(unittest.TestCase):
         self.assertEqual(result.attempts, 3)
         self.assertEqual(result.final_error, ErrorKind.RETRYABLE_RATE_LIMIT)
         self.assertEqual(result.delays_seconds, [1.0, 2.0])
+        self.assertEqual(slept, [1.0, 2.0])
 
     def test_non_retryable_no_retry(self) -> None:
         runtime = OrchestratorRuntime()

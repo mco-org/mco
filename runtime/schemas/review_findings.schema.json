@@ -53,8 +53,6 @@
             "additionalProperties": true,
             "required": [
               "file",
-              "line",
-              "symbol",
               "snippet"
             ],
             "properties": {

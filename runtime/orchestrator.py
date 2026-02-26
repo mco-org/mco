@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -50,8 +51,14 @@ class TaskStateMachine:
 
 
 class OrchestratorRuntime:
-    def __init__(self, retry_policy: Optional[RetryPolicy] = None, state_file: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        retry_policy: Optional[RetryPolicy] = None,
+        state_file: Optional[str] = None,
+        sleep_fn: Optional[Callable[[float], None]] = None,
+    ) -> None:
         self.retry_policy = retry_policy or RetryPolicy()
+        self.sleep_fn = sleep_fn or time.sleep
         self.dispatch_cache: Dict[str, RunResult] = {}
         self.idempotency_index: Dict[str, str] = {}
         self.sent_notifications: Set[Tuple[str, str, str]] = set()
@@ -205,7 +212,9 @@ class OrchestratorRuntime:
                 return final
 
             retry_index = attempts
-            delays.append(self.retry_policy.compute_delay(retry_index))
+            delay_seconds = self.retry_policy.compute_delay(retry_index)
+            delays.append(delay_seconds)
+            self.sleep_fn(delay_seconds)
 
     def send_terminal_notification(self, task_id: str, state: TaskState, channel: str) -> bool:
         with self._lock:
