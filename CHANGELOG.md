@@ -1,0 +1,49 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.3] - 2026-02-26
+### Added
+- Added full Simplified Chinese README (`README.zh-CN.md`) with language switch links.
+- Added environment sanitization for provider subprocesses to strip `CLAUDECODE`.
+
+### Changed
+- Aligned review findings schema and parser contract by making `evidence.line` and `evidence.symbol` optional keys.
+- Clarified installation channels in docs: npm available now, PyPI pending Trusted Publisher setup.
+
+### Fixed
+- Implemented real retry backoff sleep in runtime retry loop.
+- Released adapter run handles in terminal and cancel paths to avoid in-memory handle growth.
+- Switched CLI config parsing to fail-fast for invalid `--provider-timeouts` and `--provider-permissions-json`.
+
+## [0.1.2] - 2026-02-26
+### Added
+- Added packaging metadata (`pyproject.toml`) and `mco` console entrypoint.
+- Added npm wrapper package (`@tt-a1i/mco`) for Node-based environments.
+- Added publishing workflows for PyPI and npm.
+
+### Changed
+- Updated repository naming and distribution identity to `mco`.
+- Updated README and release docs for install and usage guidance.
+
+## [0.1.1] - 2026-02-26
+### Added
+- Added provider permission contract docs.
+- Added release governance artifacts (`CODEOWNERS`, release notes updates).
+
+### Fixed
+- Hardened npm publish workflow behavior when `NPM_TOKEN` is missing.
+- Fixed npm workflow syntax/guard issues for reliable CI execution.
+
+## [0.1.0] - 2026-02-26
+### Added
+- Initial runnable runtime for multi-provider orchestration (`run` and `review` commands).
+- Provider adapters for `claude`, `codex`, `gemini`, `opencode`, and `qwen`.
+- Progress-driven timeout handling, retry semantics, idempotent dispatch, and notification dedupe.
+- Canonical findings normalization, review decisioning, and artifact outputs (`summary.md`, `decision.md`, `findings.json`, `run.json`).
+- Runtime gate, adapter contract tests, and benchmark/probe scripts.

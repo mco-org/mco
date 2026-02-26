@@ -22,12 +22,13 @@
 1. [task_plan.md](./task_plan.md)
 
 ## 发布说明
-1. [docs/releases/v0.1.2.md](./docs/releases/v0.1.2.md)
-2. [docs/releases/v0.1.2.zh-CN.md](./docs/releases/v0.1.2.zh-CN.md)
-3. [docs/releases/v0.1.1.md](./docs/releases/v0.1.1.md)
-4. [docs/releases/v0.1.1.zh-CN.md](./docs/releases/v0.1.1.zh-CN.md)
-5. [docs/releases/v0.1.0.md](./docs/releases/v0.1.0.md)
-6. [docs/releases/v0.1.0.zh-CN.md](./docs/releases/v0.1.0.zh-CN.md)
+1. [CHANGELOG.md](./CHANGELOG.md)
+2. [docs/releases/v0.1.2.md](./docs/releases/v0.1.2.md)
+3. [docs/releases/v0.1.2.zh-CN.md](./docs/releases/v0.1.2.zh-CN.md)
+4. [docs/releases/v0.1.1.md](./docs/releases/v0.1.1.md)
+5. [docs/releases/v0.1.1.zh-CN.md](./docs/releases/v0.1.1.zh-CN.md)
+6. [docs/releases/v0.1.0.md](./docs/releases/v0.1.0.md)
+7. [docs/releases/v0.1.0.zh-CN.md](./docs/releases/v0.1.0.zh-CN.md)
 
 ## 统一 CLI（Step 2）
 `mco review`：统一的审查入口。  
