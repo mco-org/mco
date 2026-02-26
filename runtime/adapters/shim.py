@@ -223,16 +223,22 @@ class ShimAdapterBase:
         if handle is None:
             return
         if handle.process.poll() is not None:
+            self._close_io(handle)
+            self._runs.pop(ref.run_id, None)
             return
         try:
             os.killpg(os.getpgid(handle.process.pid), signal.SIGTERM)
         except ProcessLookupError:
+            self._close_io(handle)
+            self._runs.pop(ref.run_id, None)
             return
         time.sleep(0.2)
         if handle.process.poll() is None:
             try:
                 os.killpg(os.getpgid(handle.process.pid), signal.SIGKILL)
             except ProcessLookupError:
+                self._close_io(handle)
+                self._runs.pop(ref.run_id, None)
                 return
             time.sleep(0.1)
         if handle.process.poll() is not None:

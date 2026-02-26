@@ -138,6 +138,24 @@ class AdapterContractTests(unittest.TestCase):
             self.assertTrue(status.completed)
             self.assertNotIn(ref.run_id, adapter._runs)  # type: ignore[attr-defined]
 
+    def test_cancel_releases_finished_run_handle_without_poll(self) -> None:
+        adapter = ClaudeAdapter()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task = TaskInput(
+                task_id="task-cancel-release-finished",
+                prompt="ignored",
+                repo_root=tmpdir,
+                target_paths=["."],
+                metadata={
+                    "artifact_root": tmpdir,
+                    "command_override": ["python3", "-c", "print('done')"],
+                },
+            )
+            ref = adapter.run(task)
+            time.sleep(0.2)
+            adapter.cancel(ref)
+            self.assertNotIn(ref.run_id, adapter._runs)  # type: ignore[attr-defined]
+
     def test_gemini_adapter_run_poll_normalize(self) -> None:
         adapter = GeminiAdapter()
         with tempfile.TemporaryDirectory() as tmpdir:
