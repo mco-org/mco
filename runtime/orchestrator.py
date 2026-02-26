@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from .retry import RetryPolicy
-from .types import AttemptResult, ErrorKind, RunResult, TaskState, WarningKind
+from .types import AttemptResult, ErrorKind, RunResult, TaskState
 
 
 RETRYABLE_ERRORS = {
@@ -59,6 +59,8 @@ class OrchestratorRuntime:
     ) -> None:
         self.retry_policy = retry_policy or RetryPolicy()
         self.sleep_fn = sleep_fn or time.sleep
+        # Dispatch/task idempotency caching is intentionally disabled so each invocation
+        # executes against providers and returns fresh model output.
         self.dispatch_cache: Dict[str, RunResult] = {}
         self.idempotency_index: Dict[str, str] = {}
         self.sent_notifications: Set[Tuple[str, str, str]] = set()
@@ -74,27 +76,10 @@ class OrchestratorRuntime:
             if not self.state_file.exists():
                 return
             data = json.loads(self.state_file.read_text(encoding="utf-8"))
-            self.idempotency_index = dict(data.get("idempotency_index", {}))
             self.sent_notifications = {
                 (item["task_id"], item["state"], item["channel"]) for item in data.get("sent_notifications", [])
             }
-
-            self.dispatch_cache = {}
-            for key, value in data.get("dispatch_cache", {}).items():
-                warnings = [WarningKind(w) for w in value.get("warnings", [])]
-                final_error = value.get("final_error")
-                self.dispatch_cache[key] = RunResult(
-                    task_id=value["task_id"],
-                    provider=value["provider"],
-                    dispatch_key=value["dispatch_key"],
-                    success=value["success"],
-                    attempts=value["attempts"],
-                    delays_seconds=value.get("delays_seconds", []),
-                    output=value.get("output"),
-                    final_error=ErrorKind(final_error) if final_error else None,
-                    warnings=warnings,
-                    deduped_dispatch=False,
-                )
+            # Legacy keys (idempotency_index/dispatch_cache) are ignored by design.
 
     def _persist_state(self) -> None:
         with self._lock:
@@ -103,23 +88,7 @@ class OrchestratorRuntime:
             if not self.state_file.parent.exists():
                 self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
-            dispatch_cache = {}
-            for key, value in self.dispatch_cache.items():
-                dispatch_cache[key] = {
-                    "task_id": value.task_id,
-                    "provider": value.provider,
-                    "dispatch_key": value.dispatch_key,
-                    "success": value.success,
-                    "attempts": value.attempts,
-                    "delays_seconds": value.delays_seconds,
-                    "output": value.output,
-                    "final_error": value.final_error.value if value.final_error else None,
-                    "warnings": [w.value for w in value.warnings],
-                }
-
             payload = {
-                "idempotency_index": self.idempotency_index,
-                "dispatch_cache": dispatch_cache,
                 "sent_notifications": [
                     {"task_id": task_id, "state": state, "channel": channel}
                     for task_id, state, channel in sorted(self.sent_notifications)
@@ -132,13 +101,8 @@ class OrchestratorRuntime:
 
     def submit(self, task_id: str, idempotency_key: str) -> Tuple[bool, str]:
         """Returns (created_new, task_id)."""
-        with self._lock:
-            existing = self.idempotency_index.get(idempotency_key)
-            if existing:
-                return (False, existing)
-            self.idempotency_index[idempotency_key] = task_id
-            self._persist_state()
-            return (True, task_id)
+        _ = idempotency_key
+        return (True, task_id)
 
     def run_with_retry(
         self,
@@ -147,22 +111,6 @@ class OrchestratorRuntime:
         dispatch_key: str,
         runner: Callable[[int], AttemptResult],
     ) -> RunResult:
-        with self._lock:
-            if dispatch_key in self.dispatch_cache:
-                cached = self.dispatch_cache[dispatch_key]
-                return RunResult(
-                    task_id=cached.task_id,
-                    provider=cached.provider,
-                    dispatch_key=cached.dispatch_key,
-                    success=cached.success,
-                    attempts=cached.attempts,
-                    delays_seconds=list(cached.delays_seconds),
-                    output=cached.output,
-                    final_error=cached.final_error,
-                    warnings=list(cached.warnings),
-                    deduped_dispatch=True,
-                )
-
         attempts = 0
         delays: List[float] = []
         all_warnings = []
@@ -187,9 +135,6 @@ class OrchestratorRuntime:
                     final_error=None,
                     warnings=all_warnings,
                 )
-                with self._lock:
-                    self.dispatch_cache[dispatch_key] = final
-                    self._persist_state()
                 return final
 
             final_error = result.error_kind or ErrorKind.NORMALIZATION_ERROR
@@ -206,9 +151,6 @@ class OrchestratorRuntime:
                     final_error=final_error,
                     warnings=all_warnings,
                 )
-                with self._lock:
-                    self.dispatch_cache[dispatch_key] = final
-                    self._persist_state()
                 return final
 
             retry_index = attempts

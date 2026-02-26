@@ -161,7 +161,7 @@ MCO 默认零配置可用。直接运行即可，按需通过命令行参数覆�
 | `--provider-permissions-json` | 未设置 | provider 权限映射 JSON（见下方） |
 | `--save-artifacts` | 关闭 | 在默认 stdout 模式下同时写入产物 |
 | `--task-id` | 自动生成 | 稳定的任务标识符，用于产物路径 |
-| `--idempotency-key` | 自动生成 | 相同 key 的重复运行返回缓存结果 |
+| `--idempotency-key` | 未设置 | 可选请求标识（已禁用缓存，不做去重） |
 | `--artifact-base` | `reports/review` | 产物输出基础目录 |
 
 默认 provider 权限：
@@ -226,7 +226,7 @@ Cursor / Trae / Copilot / Claude Code / 命令行
 
 - 瞬态错误（超时、限流、网络抖动）自动重试，指数退避（默认重试 1 次）。
 - 单个 provider 失败不影响其他 provider。
-- 使用相同 `--idempotency-key` 的重复运行直接返回缓存结果，不重新执行。
+- 每次调用都会真实执行 provider 并返回新输出（不复用结果缓存）。
 
 ### 在 Claude Code 内运行
 

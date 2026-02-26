@@ -237,7 +237,7 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(result.parse_success_count, 0)
             self.assertEqual(result.parse_failure_count, 1)
 
-    def test_repeat_submission_skips_redispatch(self) -> None:
+    def test_repeat_submission_executes_each_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             adapter = FakeAdapter(
                 "claude",
@@ -256,10 +256,10 @@ class ReviewEngineTests(unittest.TestCase):
             first = run_review(req, adapters={"claude": adapter})
             second = run_review(req, adapters={"claude": adapter})
             self.assertTrue(first.created_new_task)
-            self.assertFalse(second.created_new_task)
-            self.assertEqual(adapter.runs, 1)
+            self.assertTrue(second.created_new_task)
+            self.assertEqual(adapter.runs, 2)
 
-    def test_default_idempotency_distinguishes_review_and_run_modes(self) -> None:
+    def test_run_and_review_each_execute_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             adapter = FakeAdapter("claude", '{"findings":[]}')
             req = ReviewRequest(
@@ -274,8 +274,9 @@ class ReviewEngineTests(unittest.TestCase):
             run_result = run_review(req, adapters={"claude": adapter}, review_mode=False)
             self.assertTrue(review_result.created_new_task)
             self.assertTrue(run_result.created_new_task)
+            self.assertEqual(adapter.runs, 2)
 
-    def test_dispatch_cache_isolation_uses_idempotency_fingerprint(self) -> None:
+    def test_each_run_executes_without_dispatch_cache_reuse(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             adapter = FakeAdapter("claude", "raw output")
             req_a = ReviewRequest(
@@ -315,6 +316,24 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(adapter.runs, 2)
             self.assertFalse(bool(first.provider_results["claude"].get("deduped_dispatch")))
             self.assertFalse(bool(second.provider_results["claude"].get("deduped_dispatch")))
+
+    def test_run_mode_provider_result_includes_full_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw = "line-1\nline-2\nline-3"
+            adapter = FakeAdapter("qwen", raw)
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="summarize",
+                providers=["qwen"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                state_file=f"{tmpdir}/state.json",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+            )
+            result = run_review(req, adapters={"qwen": adapter}, review_mode=False)
+            details = result.provider_results["qwen"]
+            self.assertEqual(details.get("output_text"), raw)
+            self.assertEqual(details.get("output_stdout"), raw)
+            self.assertEqual(details.get("output_stderr"), "")
 
     def test_wait_all_keeps_fast_provider_when_other_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -55,7 +55,7 @@ class RetrySemanticsTests(unittest.TestCase):
         self.assertEqual(result.attempts, 1)
         self.assertEqual(result.delays_seconds, [])
 
-    def test_dispatch_idempotency(self) -> None:
+    def test_dispatch_always_executes(self) -> None:
         runtime = OrchestratorRuntime()
         calls = {"n": 0}
 
@@ -65,9 +65,9 @@ class RetrySemanticsTests(unittest.TestCase):
 
         first = runtime.run_with_retry("task-4", "opencode", "dispatch-4", runner)
         second = runtime.run_with_retry("task-4", "opencode", "dispatch-4", runner)
-        self.assertEqual(calls["n"], 1)
+        self.assertEqual(calls["n"], 2)
         self.assertFalse(first.deduped_dispatch)
-        self.assertTrue(second.deduped_dispatch)
+        self.assertFalse(second.deduped_dispatch)
         self.assertEqual(second.warnings, [WarningKind.PROVIDER_WARNING_MCP_STARTUP])
 
     def test_notification_dedupe(self) -> None:
@@ -77,13 +77,14 @@ class RetrySemanticsTests(unittest.TestCase):
         self.assertTrue(sent_first)
         self.assertFalse(sent_second)
 
-    def test_submit_idempotency_key(self) -> None:
+    def test_submit_always_creates_new_task(self) -> None:
         runtime = OrchestratorRuntime()
         created_a, task_a = runtime.submit("task-6", "key-1")
         created_b, task_b = runtime.submit("task-6b", "key-1")
         self.assertTrue(created_a)
-        self.assertFalse(created_b)
-        self.assertEqual(task_a, task_b)
+        self.assertTrue(created_b)
+        self.assertEqual(task_a, "task-6")
+        self.assertEqual(task_b, "task-6b")
 
     def test_terminal_state_evaluation(self) -> None:
         runtime = OrchestratorRuntime()
@@ -129,7 +130,7 @@ class StateMachineTests(unittest.TestCase):
 
 
 class RestartRecoveryTests(unittest.TestCase):
-    def test_submit_idempotency_survives_restart(self) -> None:
+    def test_submit_always_creates_new_task_after_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = f"{tmpdir}/runtime-state.json"
             runtime_a = OrchestratorRuntime(state_file=state_file)
@@ -139,10 +140,10 @@ class RestartRecoveryTests(unittest.TestCase):
 
             runtime_b = OrchestratorRuntime(state_file=state_file)
             created_b, task_b = runtime_b.submit("task-r1-other", "idem-r1")
-            self.assertFalse(created_b)
-            self.assertEqual(task_b, "task-r1")
+            self.assertTrue(created_b)
+            self.assertEqual(task_b, "task-r1-other")
 
-    def test_dispatch_dedupe_survives_restart(self) -> None:
+    def test_dispatch_cache_disabled_survives_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = f"{tmpdir}/runtime-state.json"
             runtime_a = OrchestratorRuntime(state_file=state_file)
@@ -164,10 +165,10 @@ class RestartRecoveryTests(unittest.TestCase):
                 return AttemptResult(success=True, output={"ok": False})
 
             second = runtime_b.run_with_retry("task-r2", "codex", "dispatch-r2", runner_b)
-            self.assertEqual(calls_b["n"], 0)
-            self.assertTrue(second.deduped_dispatch)
+            self.assertEqual(calls_b["n"], 1)
+            self.assertFalse(second.deduped_dispatch)
             self.assertTrue(second.success)
-            self.assertEqual(second.output, {"ok": True})
+            self.assertEqual(second.output, {"ok": False})
 
     def test_notification_dedupe_survives_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -134,6 +134,10 @@ def _output_excerpt(stdout_text: str, stderr_text: str, limit: int = 240) -> str
     return compact[:limit]
 
 
+def _output_text(stdout_text: str, stderr_text: str) -> str:
+    return stdout_text if stdout_text.strip() else stderr_text
+
+
 @dataclass(frozen=True)
 class _ProviderExecutionOutcome:
     provider: str
@@ -408,6 +412,9 @@ def _run_provider(
                         "wall_clock_seconds": round(now - started, 3),
                         "last_progress_at": _timestamp_to_iso(last_progress_at),
                         "output_excerpt": _output_excerpt(timeout_stdout, timeout_stderr),
+                        "output_text": _output_text(timeout_stdout, timeout_stderr),
+                        "output_stdout": timeout_stdout,
+                        "output_stderr": timeout_stderr,
                         "parse_ok": False,
                         "parse_reason": "",
                         "schema_valid_count": 0,
@@ -436,6 +443,9 @@ def _run_provider(
                     "wall_clock_seconds": round(time.time() - started, 3),
                     "last_progress_at": _timestamp_to_iso(last_progress_at),
                     "output_excerpt": "",
+                    "output_text": "",
+                    "output_stdout": "",
+                    "output_stderr": "",
                     "parse_ok": False,
                     "parse_reason": "",
                     "schema_valid_count": 0,
@@ -488,6 +498,9 @@ def _run_provider(
                 "wall_clock_seconds": round(time.time() - started, 3),
                 "last_progress_at": _timestamp_to_iso(last_progress_at),
                 "output_excerpt": _output_excerpt(raw_stdout, raw_stderr),
+                "output_text": _output_text(raw_stdout, raw_stderr),
+                "output_stdout": raw_stdout,
+                "output_stderr": raw_stderr,
                 "parse_ok": parse_ok,
                 "parse_reason": parse_reason,
                 "schema_valid_count": schema_valid_count,
@@ -524,6 +537,9 @@ def _run_provider(
         "wall_clock_seconds": wall_clock_seconds,
         "last_progress_at": str(output.get("last_progress_at", "")),
         "output_excerpt": str(output.get("output_excerpt", "")),
+        "output_text": str(output.get("output_text", "")),
+        "output_stdout": str(output.get("output_stdout", "")),
+        "output_stderr": str(output.get("output_stderr", "")),
         "parse_ok": parse_ok,
         "parse_reason": str(output.get("parse_reason", "")),
         "schema_valid_count": provider_schema_valid,
@@ -567,28 +583,10 @@ def run_review(
         retry_policy=RetryPolicy(max_retries=request.policy.max_retries, base_delay_seconds=1.0, backoff_multiplier=2.0),
         state_file=request.state_file,
     )
-    created_new_task, resolved_task_id = runtime.submit(task_id, idempotency_key)
+    created_new_task, resolved_task_id = (True, task_id)
     artifact_root = str(task_artifact_root(request.artifact_base, resolved_task_id))
     root_path = Path(artifact_root)
     root_path.mkdir(parents=True, exist_ok=True)
-
-    if not created_new_task:
-        run_file = root_path / "run.json"
-        if run_file.exists():
-            existing = json.loads(run_file.read_text(encoding="utf-8"))
-            return ReviewResult(
-                task_id=resolved_task_id,
-                artifact_root=artifact_root,
-                decision=str(existing.get("decision", "INCONCLUSIVE")),
-                terminal_state=str(existing.get("terminal_state", TaskState.FAILED.value)),
-                provider_results=dict(existing.get("provider_results", {})),
-                findings_count=int(existing.get("findings_count", 0)),
-                parse_success_count=int(existing.get("parse_success_count", 0)),
-                parse_failure_count=int(existing.get("parse_failure_count", 0)),
-                schema_valid_count=int(existing.get("schema_valid_count", 0)),
-                dropped_findings_count=int(existing.get("dropped_findings_count", 0)),
-                created_new_task=False,
-            )
 
     normalized_targets, normalized_allow_paths = _normalize_scopes(
         request.repo_root,

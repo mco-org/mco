@@ -94,6 +94,11 @@ def _render_user_readable_report(
         excerpt = str(details.get("output_excerpt", "")).strip()
         if excerpt:
             lines.append(f"  excerpt: {excerpt}")
+        output_text = str(details.get("output_text", ""))
+        if output_text:
+            lines.append("  output:")
+            for raw_line in output_text.splitlines():
+                lines.append(f"    {raw_line}")
     lines.append("")
     if result_mode in ("artifact", "both"):
         lines.append("Artifacts")
@@ -195,7 +200,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     scope.add_argument("--target-paths", default=".", help="Comma-separated task scope paths")
     scope.add_argument("--task-id", default="", help="Optional stable task id")
-    scope.add_argument("--idempotency-key", default="", help="Optional stable idempotency key")
+    scope.add_argument("--idempotency-key", default="", help="Optional request label (cache disabled)")
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
     timeouts.add_argument(

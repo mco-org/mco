@@ -134,7 +134,7 @@ class CliJsonContractTests(unittest.TestCase):
                 artifact_root=f"{tmpdir}/reports/review/task-run-stdout-1",
                 decision="PASS",
                 terminal_state="COMPLETED",
-                provider_results={"codex": {"success": True, "output_excerpt": "ok"}},
+                provider_results={"codex": {"success": True, "output_excerpt": "ok", "output_text": "full output"}},
                 findings_count=0,
                 parse_success_count=0,
                 parse_failure_count=0,
@@ -162,6 +162,7 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(payload["result_mode"], "stdout")
             self.assertIn("provider_results", payload)
             self.assertIn("codex", payload["provider_results"])
+            self.assertEqual(payload["provider_results"]["codex"]["output_text"], "full output")
 
     def test_stdout_mode_calls_engine_without_artifact_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
