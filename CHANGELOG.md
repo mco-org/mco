@@ -6,10 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.1] - 2026-02-26
 ### Changed
 - Changed default CLI delivery mode to stdout-first (`--result-mode stdout`) so agent callers receive results directly without mandatory artifact reads.
 - Added `--save-artifacts` to explicitly persist artifact files while keeping stdout result delivery.
-- Updated benchmark script and README (EN/CN) to reflect explicit opt-in artifact writing.
+- Updated benchmark script to explicitly opt into artifact persistence (`--save-artifacts`).
+- Repositioned README (EN/CN) messaging around "Any Prompt. Any Agent. Any IDE." and clarified caller-agent orchestration scenarios.
 
 ## [0.2.0] - 2026-02-26
 ### Changed
