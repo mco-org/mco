@@ -2,7 +2,7 @@
 
 ## Scenario
 
-- Config: `$config_path`
+- Providers: `$providers`
 - Prompt: smoke contract-only task
 - Serial run: `--max-provider-parallelism 1`
 - Full-parallel run: `--max-provider-parallelism 0`

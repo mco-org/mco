@@ -19,7 +19,7 @@ class CiReportingToolsTests(unittest.TestCase):
             output_path = tmp / "report.md"
             payload = {
                 "generated_at": "2026-02-26T07:21:48Z",
-                "config_path": "/tmp/mco.step3-baseline.json",
+                "providers": "claude,codex,gemini,opencode,qwen",
                 "serial": {
                     "task_id": "serial",
                     "wall_time_seconds": 166,

@@ -7,15 +7,7 @@ DATE_STR="$(date +%F)"
 OUT_DIR="$ROOT_DIR/reports/adapter-contract/$DATE_STR"
 mkdir -p "$OUT_DIR"
 TEMPLATE_PATH="$ROOT_DIR/docs/templates/step5-benchmark-report.md.tpl"
-
-CONFIG_PATH="${1:-$ROOT_DIR/mco.step3-baseline.json}"
-if [[ "$CONFIG_PATH" != /* ]]; then
-  CONFIG_PATH="$ROOT_DIR/${CONFIG_PATH#./}"
-fi
-if [ ! -f "$CONFIG_PATH" ]; then
-  echo "Config file not found: $CONFIG_PATH" >&2
-  exit 1
-fi
+PROVIDERS="${1:-claude,codex,gemini,opencode,qwen}"
 
 PROMPT="Smoke benchmark for parallel review. No tools. Return exactly one low-severity maintainability finding in strict JSON contract."
 RUN_TAG="$(date +%Y%m%d%H%M%S)"
@@ -34,9 +26,9 @@ run_case() {
   started="$(date +%s)"
   set +e
   "$ROOT_DIR/mco" review \
-    --config "$CONFIG_PATH" \
     --repo "$ROOT_DIR" \
     --prompt "$PROMPT" \
+    --providers "$PROVIDERS" \
     --task-id "$task_id" \
     --idempotency-key "$task_id" \
     --max-provider-parallelism "$parallelism" \
@@ -113,7 +105,7 @@ REPORT_MD="$OUT_DIR/step5-parallel-benchmark.md"
 
 jq -n \
   --arg generated_at "$(date -u +%FT%TZ)" \
-  --arg config_path "$CONFIG_PATH" \
+  --arg providers "$PROVIDERS" \
   --arg prompt "$PROMPT" \
   --arg serial_result "$SERIAL_JSON" \
   --arg parallel_result "$PARALLEL_JSON" \
@@ -121,7 +113,7 @@ jq -n \
   --slurpfile parallel "$PARALLEL_JSON" \
   '{
     generated_at: $generated_at,
-    config_path: $config_path,
+    providers: $providers,
     prompt: $prompt,
     serial_result_path: $serial_result,
     parallel_result_path: $parallel_result,
