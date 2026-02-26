@@ -6,7 +6,7 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Set, Tuple
 
 from .adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
 from .adapters.parsing import inspect_contract_output
@@ -63,13 +63,37 @@ def _default_task_id(repo_root: str, prompt: str) -> str:
     return f"task-{_sha(f'{repo_root}:{prompt}')[:16]}"
 
 
-def _default_idempotency_key(repo_root: str, prompt: str, providers: List[ProviderId]) -> str:
-    return _sha(f"{repo_root}|{prompt}|{','.join(providers)}|stage-a-v1")
+def _default_idempotency_key(
+    repo_root: str,
+    prompt: str,
+    providers: List[ProviderId],
+    review_mode: bool,
+    policy: ReviewPolicy,
+) -> str:
+    mode = "review" if review_mode else "run"
+    policy_fingerprint = json.dumps(
+        {
+            "mode": mode,
+            "allow_paths": policy.allow_paths,
+            "enforcement_mode": policy.enforcement_mode,
+            "provider_permissions": policy.provider_permissions,
+            "provider_timeouts": policy.provider_timeouts,
+        },
+        sort_keys=True,
+        ensure_ascii=True,
+    )
+    return _sha(f"{repo_root}|{prompt}|{','.join(providers)}|{policy_fingerprint}|stage-b-v1")
 
 
 def _build_prompt(user_prompt: str, target_paths: List[str]) -> str:
     scope = ", ".join(target_paths) if target_paths else "."
     return f"{user_prompt}\n\nScope: {scope}\n\n{STRICT_JSON_CONTRACT}"
+
+
+def _build_run_prompt(user_prompt: str, target_paths: List[str], allow_paths: List[str]) -> str:
+    scope = ", ".join(target_paths) if target_paths else "."
+    allowed = ", ".join(allow_paths) if allow_paths else "."
+    return f"{user_prompt}\n\nScope: {scope}\nAllowed Paths: {allowed}"
 
 
 def _adapter_registry() -> Mapping[str, ProviderAdapter]:
@@ -105,6 +129,61 @@ class _ProviderExecutionOutcome:
     dropped_count: int
     findings: List[NormalizedFinding]
     provider_result: Dict[str, object]
+
+
+def _safe_resolve(repo_root: Path, raw_path: str) -> Path:
+    candidate_raw = Path(raw_path)
+    base = candidate_raw if candidate_raw.is_absolute() else (repo_root / candidate_raw)
+    resolved = base.resolve(strict=False)
+    repo_resolved = repo_root.resolve(strict=False)
+    try:
+        resolved.relative_to(repo_resolved)
+    except Exception as exc:
+        raise ValueError(f"path_outside_repo: {raw_path}") from exc
+    return resolved
+
+
+def _normalize_scopes(repo_root: str, target_paths: List[str], allow_paths: List[str]) -> Tuple[List[str], List[str]]:
+    root = Path(repo_root).resolve(strict=False)
+    raw_allow = allow_paths if allow_paths else ["."]
+    raw_target = target_paths if target_paths else ["."]
+
+    normalized_allow: List[str] = []
+    allow_resolved: List[Path] = []
+    for raw_path in raw_allow:
+        resolved = _safe_resolve(root, raw_path)
+        rel = resolved.relative_to(root).as_posix()
+        rel_value = rel if rel else "."
+        normalized_allow.append(rel_value)
+        allow_resolved.append(resolved)
+
+    normalized_target: List[str] = []
+    for raw_path in raw_target:
+        resolved = _safe_resolve(root, raw_path)
+        in_allow = False
+        for allow_root in allow_resolved:
+            if resolved == allow_root or allow_root in resolved.parents:
+                in_allow = True
+                break
+        if not in_allow:
+            raise ValueError(f"target_path_outside_allow_paths: {raw_path}")
+        rel = resolved.relative_to(root).as_posix()
+        normalized_target.append(rel if rel else ".")
+
+    return normalized_target, normalized_allow
+
+
+def _supported_permission_keys(adapter: ProviderAdapter) -> Set[str]:
+    fn = getattr(adapter, "supported_permission_keys", None)
+    if not callable(fn):
+        return set()
+    try:
+        keys = fn()
+    except Exception:
+        return set()
+    if not isinstance(keys, list):
+        return set()
+    return {str(item).strip() for item in keys if str(item).strip()}
 
 
 def _provider_timeout_seconds(policy: ReviewPolicy, provider: str) -> int:
@@ -168,6 +247,8 @@ def _run_provider(
     resolved_task_id: str,
     full_prompt: str,
     target_paths: List[str],
+    allow_paths: List[str],
+    review_mode: bool,
     provider: str,
 ) -> _ProviderExecutionOutcome:
     adapter = adapter_map.get(provider)
@@ -201,6 +282,36 @@ def _run_provider(
             },
         )
 
+    requested_permissions = request.policy.provider_permissions.get(provider, {})
+    requested_permissions = requested_permissions if isinstance(requested_permissions, dict) else {}
+    supported_keys = _supported_permission_keys(adapter)
+    unknown_permission_keys = sorted(
+        key for key in requested_permissions.keys() if str(key).strip() and key not in supported_keys
+    )
+    effective_permissions = {
+        str(key): str(value)
+        for key, value in requested_permissions.items()
+        if str(key).strip() in supported_keys
+    }
+    if unknown_permission_keys and request.policy.enforcement_mode == "strict":
+        _ensure_provider_artifacts(request.artifact_base, resolved_task_id, provider)
+        return _ProviderExecutionOutcome(
+            provider=provider,
+            success=False,
+            parse_ok=False,
+            schema_valid_count=0,
+            dropped_count=0,
+            findings=[],
+            provider_result={
+                "success": False,
+                "reason": "permission_enforcement_failed",
+                "enforcement_mode": request.policy.enforcement_mode,
+                "requested_permissions": requested_permissions,
+                "supported_permission_keys": sorted(supported_keys),
+                "unknown_permission_keys": unknown_permission_keys,
+            },
+        )
+
     dispatch_key = _sha(f"{resolved_task_id}:{provider}:dispatch-v1")
     provider_timeout = _provider_timeout_seconds(request.policy, provider)
 
@@ -213,7 +324,12 @@ def _run_provider(
                 repo_root=request.repo_root,
                 target_paths=target_paths,
                 timeout_seconds=provider_timeout,
-                metadata={"artifact_root": request.artifact_base},
+                metadata={
+                    "artifact_root": request.artifact_base,
+                    "allow_paths": allow_paths,
+                    "provider_permissions": effective_permissions,
+                    "enforcement_mode": request.policy.enforcement_mode,
+                },
             )
             run_ref = adapter.run(input_task)
             started = time.time()
@@ -233,25 +349,39 @@ def _run_provider(
                 return AttemptResult(success=False, error_kind=ErrorKind.RETRYABLE_TIMEOUT, stderr="provider_poll_timeout")
 
             raw_stdout = _read_text(Path(run_ref.artifact_path) / "raw" / f"{provider}.stdout.log")
-            findings = adapter.normalize(
-                raw_stdout,
-                NormalizeContext(task_id=resolved_task_id, provider=provider, repo_root=request.repo_root, raw_ref=f"raw/{provider}.stdout.log"),
-            )
-            contract_info = inspect_contract_output(raw_stdout)
-
-            parse_ok = bool(contract_info["parse_ok"])
-            success = status.attempt_state == "SUCCEEDED" and parse_ok
-            if request.policy.require_non_empty_findings and success and len(findings) == 0:
-                success = False
+            findings: List[NormalizedFinding] = []
+            parse_ok = False
+            parse_reason = "not_applicable"
+            schema_valid_count = 0
+            dropped_count = 0
+            success = status.attempt_state == "SUCCEEDED"
+            if review_mode:
+                findings = adapter.normalize(
+                    raw_stdout,
+                    NormalizeContext(
+                        task_id=resolved_task_id,
+                        provider=provider,
+                        repo_root=request.repo_root,
+                        raw_ref=f"raw/{provider}.stdout.log",
+                    ),
+                )
+                contract_info = inspect_contract_output(raw_stdout)
+                parse_ok = bool(contract_info["parse_ok"])
+                parse_reason = str(contract_info.get("parse_reason", ""))
+                schema_valid_count = int(contract_info["schema_valid_count"])
+                dropped_count = int(contract_info["dropped_count"])
+                success = status.attempt_state == "SUCCEEDED" and parse_ok
+                if request.policy.require_non_empty_findings and success and len(findings) == 0:
+                    success = False
 
             payload = {
                 "provider": provider,
                 "status": asdict(status),
                 "run_ref": asdict(run_ref),
                 "parse_ok": parse_ok,
-                "parse_reason": str(contract_info.get("parse_reason", "")),
-                "schema_valid_count": int(contract_info["schema_valid_count"]),
-                "dropped_count": int(contract_info["dropped_count"]),
+                "parse_reason": parse_reason,
+                "schema_valid_count": schema_valid_count,
+                "dropped_count": dropped_count,
                 "findings": [asdict(item) for item in findings],
             }
             if success:
@@ -280,6 +410,10 @@ def _run_provider(
         "dropped_count": provider_dropped,
         "findings_count": len(findings),
         "output_path": output.get("status", {}).get("output_path") if isinstance(output.get("status"), dict) else None,
+        "requested_permissions": requested_permissions,
+        "applied_permissions": effective_permissions,
+        "unknown_permission_keys": unknown_permission_keys,
+        "enforcement_mode": request.policy.enforcement_mode,
     }
     _ensure_provider_artifacts(request.artifact_base, resolved_task_id, provider)
     return _ProviderExecutionOutcome(
@@ -293,10 +427,20 @@ def _run_provider(
     )
 
 
-def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderAdapter]] = None) -> ReviewResult:
+def run_review(
+    request: ReviewRequest,
+    adapters: Optional[Mapping[str, ProviderAdapter]] = None,
+    review_mode: bool = True,
+) -> ReviewResult:
     adapter_map = dict(adapters or _adapter_registry())
     task_id = request.task_id or _default_task_id(request.repo_root, request.prompt)
-    idempotency_key = request.idempotency_key or _default_idempotency_key(request.repo_root, request.prompt, request.providers)
+    idempotency_key = request.idempotency_key or _default_idempotency_key(
+        request.repo_root,
+        request.prompt,
+        request.providers,
+        review_mode,
+        request.policy,
+    )
 
     runtime = OrchestratorRuntime(
         retry_policy=RetryPolicy(max_retries=request.policy.max_retries, base_delay_seconds=1.0, backoff_multiplier=2.0),
@@ -325,8 +469,16 @@ def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderA
                 created_new_task=False,
             )
 
-    target_paths = request.target_paths or ["."]
-    full_prompt = _build_prompt(request.prompt, target_paths)
+    normalized_targets, normalized_allow_paths = _normalize_scopes(
+        request.repo_root,
+        request.target_paths or ["."],
+        request.policy.allow_paths or ["."],
+    )
+    full_prompt = (
+        _build_prompt(request.prompt, normalized_targets)
+        if review_mode
+        else _build_run_prompt(request.prompt, normalized_targets, normalized_allow_paths)
+    )
     provider_order: List[str] = []
     provider_seen = set()
     for provider in request.providers:
@@ -343,7 +495,17 @@ def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderA
     outcomes: Dict[str, _ProviderExecutionOutcome] = {}
     if max_workers <= 1:
         for provider in provider_order:
-            outcomes[provider] = _run_provider(request, runtime, adapter_map, resolved_task_id, full_prompt, target_paths, provider)
+            outcomes[provider] = _run_provider(
+                request,
+                runtime,
+                adapter_map,
+                resolved_task_id,
+                full_prompt,
+                normalized_targets,
+                normalized_allow_paths,
+                review_mode,
+                provider,
+            )
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
@@ -354,7 +516,9 @@ def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderA
                     adapter_map,
                     resolved_task_id,
                     full_prompt,
-                    target_paths,
+                    normalized_targets,
+                    normalized_allow_paths,
+                    review_mode,
                     provider,
                 ): provider
                 for provider in provider_order
@@ -388,12 +552,13 @@ def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderA
         provider_results[provider] = outcome.provider_result
         required_provider_success[provider] = outcome.success
         aggregated_findings.extend(outcome.findings)
-        if outcome.parse_ok:
-            parse_success_count += 1
-        else:
-            parse_failure_count += 1
-        schema_valid_count += outcome.schema_valid_count
-        dropped_findings_count += outcome.dropped_count
+        if review_mode:
+            if outcome.parse_ok:
+                parse_success_count += 1
+            else:
+                parse_failure_count += 1
+            schema_valid_count += outcome.schema_valid_count
+            dropped_findings_count += outcome.dropped_count
 
     terminal_state = runtime.evaluate_terminal_state(required_provider_success)
     aggregated_findings.sort(key=lambda item: (item.provider, item.finding_id, item.fingerprint))
@@ -402,12 +567,16 @@ def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderA
     for finding in aggregated_findings:
         counts[finding.severity] = counts.get(finding.severity, 0) + 1
 
-    if counts.get("critical", 0) > 0:
+    if review_mode and counts.get("critical", 0) > 0:
         decision = "FAIL"
-    elif counts.get("high", 0) >= request.policy.high_escalation_threshold:
+    elif review_mode and counts.get("high", 0) >= request.policy.high_escalation_threshold:
         decision = "ESCALATE"
-    elif len(aggregated_findings) == 0:
+    elif review_mode and len(aggregated_findings) == 0:
         decision = "INCONCLUSIVE"
+    elif not review_mode and terminal_state == TaskState.FAILED:
+        decision = "FAIL"
+    elif not review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
+        decision = "PARTIAL"
     else:
         decision = "PASS"
 
@@ -416,10 +585,11 @@ def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderA
         for item in aggregated_findings
     ]
 
-    _write_json(root_path / "findings.json", findings_json)
+    if review_mode:
+        _write_json(root_path / "findings.json", findings_json)
 
     summary = [
-        f"# Review Summary ({resolved_task_id})",
+        f"# {'Review' if review_mode else 'Run'} Summary ({resolved_task_id})",
         "",
         f"- Decision: {decision}",
         f"- Terminal state: {terminal_state.value}",
@@ -429,6 +599,8 @@ def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderA
         f"- Parse failure count: {parse_failure_count}",
         f"- Schema valid finding count: {schema_valid_count}",
         f"- Dropped finding count: {dropped_findings_count}",
+        f"- Allow paths: {', '.join(normalized_allow_paths)}",
+        f"- Enforcement mode: {request.policy.enforcement_mode}",
         "",
         "## Severity Counts",
         f"- critical: {counts['critical']}",
@@ -438,20 +610,30 @@ def run_review(request: ReviewRequest, adapters: Optional[Mapping[str, ProviderA
     ]
     _write_text(root_path / "summary.md", "\n".join(summary))
 
-    decision_lines = [
-        f"# Review Decision ({resolved_task_id})",
-        "",
-        f"- decision: {decision}",
-        f"- terminal_state: {terminal_state.value}",
-        f"- rule_trace: critical={counts['critical']}, high={counts['high']}, findings={len(aggregated_findings)}",
-    ]
+    decision_lines = [f"# {'Review' if review_mode else 'Run'} Decision ({resolved_task_id})", ""]
+    decision_lines.append(f"- decision: {decision}")
+    decision_lines.append(f"- terminal_state: {terminal_state.value}")
+    if review_mode:
+        decision_lines.append(
+            f"- rule_trace: critical={counts['critical']}, high={counts['high']}, findings={len(aggregated_findings)}"
+        )
+    else:
+        success_count = sum(1 for value in required_provider_success.values() if value)
+        decision_lines.append(
+            f"- run_trace: providers={len(required_provider_success)}, success={success_count}, failed={len(required_provider_success) - success_count}"
+        )
     _write_text(root_path / "decision.md", "\n".join(decision_lines))
 
     run_payload = {
         "task_id": resolved_task_id,
+        "mode": "review" if review_mode else "run",
         "created_new_task": created_new_task,
         "terminal_state": terminal_state.value,
         "decision": decision,
+        "allow_paths": normalized_allow_paths,
+        "target_paths": normalized_targets,
+        "enforcement_mode": request.policy.enforcement_mode,
+        "provider_permissions": request.policy.provider_permissions,
         "provider_results": provider_results,
         "findings_count": len(aggregated_findings),
         "parse_success_count": parse_success_count,

@@ -1,7 +1,7 @@
 # Runtime Gate Report (2026-02-26)
 
 - Status: PASS
-- Ran 52 tests in 4.466s
+- Ran 62 tests in 4.145s
 - Raw log: `/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/runtime-gh-raw.log`
 
 ## Gate Mapping

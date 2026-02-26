@@ -8,6 +8,16 @@
     "high_escalation_threshold": 1,
     "require_non_empty_findings": true,
     "max_provider_parallelism": 0,
+    "allow_paths": [".", "runtime", "scripts"],
+    "enforcement_mode": "strict",
+    "provider_permissions": {
+      "claude": {
+        "permission_mode": "plan"
+      },
+      "codex": {
+        "sandbox": "workspace-write"
+      }
+    },
     "provider_timeouts": {
       "claude": 300,
       "codex": 240,

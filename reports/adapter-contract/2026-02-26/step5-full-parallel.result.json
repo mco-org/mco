@@ -1,6 +1,6 @@
 {
-  "task_id": "bench-step5-parallel-20260226151851",
-  "artifact_root": "/Users/tsk/multi-cli-orchestrator/reports/review/bench-step5-parallel-20260226151851",
+  "task_id": "bench-step5-parallel-20260226153246",
+  "artifact_root": "/Users/tsk/multi-cli-orchestrator/reports/review/bench-step5-parallel-20260226153246",
   "decision": "PASS",
   "terminal_state": "COMPLETED",
   "findings_count": 5,
@@ -11,7 +11,7 @@
   "created_new_task": true,
   "benchmark_case": "full-parallel",
   "max_provider_parallelism": 0,
-  "wall_time_seconds": 39,
+  "wall_time_seconds": 68,
   "command_exit_code": 0,
   "stdout_log": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/step5-full-parallel.stdout.log",
   "stderr_log": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/step5-full-parallel.stderr.log",

@@ -26,7 +26,16 @@ class CodexAdapter(ShimAdapterBase):
     def _auth_check_command(self, binary: str) -> List[str]:
         return [binary, "login", "status"]
 
+    def supported_permission_keys(self) -> List[str]:
+        return ["sandbox"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
+        sandbox = "workspace-write"
+        raw_permissions = input_task.metadata.get("provider_permissions")
+        if isinstance(raw_permissions, dict):
+            value = raw_permissions.get("sandbox")
+            if isinstance(value, str) and value.strip():
+                sandbox = value.strip()
         return [
             "codex",
             "exec",
@@ -34,7 +43,7 @@ class CodexAdapter(ShimAdapterBase):
             "-C",
             input_task.repo_root,
             "--sandbox",
-            "workspace-write",
+            sandbox,
             "--json",
             input_task.prompt,
         ]
@@ -57,4 +66,3 @@ class CodexAdapter(ShimAdapterBase):
     def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
         text = raw if isinstance(raw, str) else ""
         return normalize_findings_from_text(text, ctx, "codex")
-

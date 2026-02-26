@@ -24,6 +24,8 @@
 ## Unified CLI (Step 2)
 `mco review` is the unified entrypoint for running a review task.
 
+`mco run` is the generalized execution entrypoint for agent-style task orchestration (no forced findings schema).
+
 Quick start:
 ```bash
 ./mco review \
@@ -35,6 +37,11 @@ Quick start:
 Machine-readable output:
 ```bash
 ./mco review --repo . --prompt "Review for bugs." --providers claude,codex --json
+```
+
+General run mode:
+```bash
+./mco run --repo . --prompt "Summarize the current repo architecture." --providers claude,codex --json
 ```
 
 Config file (JSON):
@@ -49,6 +56,16 @@ Config file (JSON):
     "high_escalation_threshold": 1,
     "require_non_empty_findings": true,
     "max_provider_parallelism": 0,
+    "allow_paths": [".", "runtime", "scripts"],
+    "enforcement_mode": "strict",
+    "provider_permissions": {
+      "claude": {
+        "permission_mode": "plan"
+      },
+      "codex": {
+        "sandbox": "workspace-write"
+      }
+    },
     "provider_timeouts": {
       "claude": 300,
       "codex": 240,
@@ -73,6 +90,19 @@ Override fan-out and per-provider timeout from CLI:
   --provider-timeouts qwen=240,codex=120
 ```
 
+Run mode with hard path constraints:
+```bash
+./mco run \
+  --repo . \
+  --prompt "Compare adapter behaviors and return a short markdown summary." \
+  --providers claude,codex \
+  --allow-paths runtime,scripts \
+  --target-paths runtime/adapters,runtime/review_engine.py \
+  --enforcement-mode strict \
+  --provider-permissions-json '{"codex":{"sandbox":"workspace-write"},"claude":{"permission_mode":"plan"}}' \
+  --json
+```
+
 Artifacts are written to:
 - `<artifact_base>/<task_id>/summary.md`
 - `<artifact_base>/<task_id>/decision.md`
@@ -84,9 +114,12 @@ Artifacts are written to:
 Notes:
 - YAML config requires `pyyaml` installed; otherwise use JSON config.
 - Review prompt is wrapped with a strict JSON finding contract by default.
+- `run` mode does not force findings schema; it focuses on execution aggregation and provider success.
 - Execution model is `wait-all`: one provider timeout/failure does not stop others.
 - `max_provider_parallelism=0` (or omitted) means full parallelism across selected providers.
 - Built-in provider timeout profile defaults to `claude=300s` and `codex=240s`; config/CLI overrides still take precedence.
+- `allow_paths` and `target_paths` are validated against `repo_root`; path escape is rejected.
+- `enforcement_mode=strict` (default) fails closed when provider permission requirements cannot be honored.
 
 ## Step5 Benchmark Script
 Use this script to generate serial vs full-parallel evidence and write reports under `reports/adapter-contract/<date>/`:

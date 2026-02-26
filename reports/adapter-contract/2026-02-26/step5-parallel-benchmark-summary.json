@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-02-26T07:21:48Z",
+  "generated_at": "2026-02-26T07:36:31Z",
   "config_path": "/Users/tsk/multi-cli-orchestrator/mco.step3-baseline.json",
   "prompt": "Smoke benchmark for parallel review. No tools. Return exactly one low-severity maintainability finding in strict JSON contract.",
   "serial_result_path": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/step5-serial.result.json",
   "parallel_result_path": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/step5-full-parallel.result.json",
   "serial": {
-    "task_id": "bench-step5-serial-20260226151851",
-    "artifact_root": "/Users/tsk/multi-cli-orchestrator/reports/review/bench-step5-serial-20260226151851",
+    "task_id": "bench-step5-serial-20260226153246",
+    "artifact_root": "/Users/tsk/multi-cli-orchestrator/reports/review/bench-step5-serial-20260226153246",
     "decision": "PASS",
     "terminal_state": "COMPLETED",
     "findings_count": 5,
@@ -17,7 +17,7 @@
     "created_new_task": true,
     "benchmark_case": "serial",
     "max_provider_parallelism": 1,
-    "wall_time_seconds": 138,
+    "wall_time_seconds": 156,
     "command_exit_code": 0,
     "stdout_log": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/step5-serial.stdout.log",
     "stderr_log": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/step5-serial.stderr.log",
@@ -27,8 +27,8 @@
     "zero_finding_provider_count": 0
   },
   "parallel": {
-    "task_id": "bench-step5-parallel-20260226151851",
-    "artifact_root": "/Users/tsk/multi-cli-orchestrator/reports/review/bench-step5-parallel-20260226151851",
+    "task_id": "bench-step5-parallel-20260226153246",
+    "artifact_root": "/Users/tsk/multi-cli-orchestrator/reports/review/bench-step5-parallel-20260226153246",
     "decision": "PASS",
     "terminal_state": "COMPLETED",
     "findings_count": 5,
@@ -39,7 +39,7 @@
     "created_new_task": true,
     "benchmark_case": "full-parallel",
     "max_provider_parallelism": 0,
-    "wall_time_seconds": 39,
+    "wall_time_seconds": 68,
     "command_exit_code": 0,
     "stdout_log": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/step5-full-parallel.stdout.log",
     "stderr_log": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26/step5-full-parallel.stderr.log",
@@ -50,5 +50,5 @@
   },
   "benchmark_ok": true,
   "metric_note": "parse_success_count measures contract parse success; effective_findings_count measures canonical findings retained after schema/drop filtering.",
-  "latency_reduction_percent": 71.73913043478261
+  "latency_reduction_percent": 56.41025641025641
 }

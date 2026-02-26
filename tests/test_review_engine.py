@@ -117,6 +117,20 @@ class TimedFakeAdapter(FakeAdapter):
         self.cancel_calls += 1
 
 
+class PermissionAwareFakeAdapter(FakeAdapter):
+    def __init__(self, provider: str, raw_stdout: str, supported_keys: list[str]) -> None:
+        super().__init__(provider, raw_stdout)
+        self._supported_keys = supported_keys
+        self.last_provider_permissions = None
+
+    def supported_permission_keys(self) -> list[str]:
+        return list(self._supported_keys)
+
+    def run(self, input_task: TaskInput) -> TaskRunRef:
+        self.last_provider_permissions = input_task.metadata.get("provider_permissions")
+        return super().run(input_task)
+
+
 class ReviewEngineTests(unittest.TestCase):
     def test_review_with_findings_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -190,6 +204,22 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertTrue(first.created_new_task)
             self.assertFalse(second.created_new_task)
             self.assertEqual(adapter.runs, 1)
+
+    def test_default_idempotency_distinguishes_review_and_run_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = FakeAdapter("claude", '{"findings":[]}')
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="same-prompt",
+                providers=["claude"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                state_file=f"{tmpdir}/state.json",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+            )
+            review_result = run_review(req, adapters={"claude": adapter}, review_mode=True)
+            run_result = run_review(req, adapters={"claude": adapter}, review_mode=False)
+            self.assertTrue(review_result.created_new_task)
+            self.assertTrue(run_result.created_new_task)
 
     def test_wait_all_keeps_fast_provider_when_other_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -276,6 +306,84 @@ class ReviewEngineTests(unittest.TestCase):
             run_payload = json.loads(Path(result.artifact_root, "run.json").read_text(encoding="utf-8"))
             keys = list(run_payload["provider_results"].keys())
             self.assertEqual(keys, sorted(keys))
+
+    def test_run_mode_accepts_plain_text_without_review_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = FakeAdapter("claude", "plain text without findings schema")
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="run task",
+                providers=["claude"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                state_file=f"{tmpdir}/state.json",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=True),
+            )
+            result = run_review(req, adapters={"claude": adapter}, review_mode=False)
+            self.assertEqual(result.decision, "PASS")
+            self.assertEqual(result.terminal_state, "COMPLETED")
+            self.assertEqual(result.parse_success_count, 0)
+            self.assertEqual(result.parse_failure_count, 0)
+
+    def test_allow_paths_rejects_target_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = FakeAdapter("claude", '{"findings":[]}')
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                state_file=f"{tmpdir}/state.json",
+                policy=ReviewPolicy(
+                    timeout_seconds=3,
+                    max_retries=0,
+                    require_non_empty_findings=True,
+                    allow_paths=["."],
+                ),
+                target_paths=["../outside"],
+            )
+            with self.assertRaises(ValueError):
+                run_review(req, adapters={"claude": adapter}, review_mode=False)
+
+    def test_strict_permission_enforcement_blocks_unsupported_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = FakeAdapter("gemini", "raw output")
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="run task",
+                providers=["gemini"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                state_file=f"{tmpdir}/state.json",
+                policy=ReviewPolicy(
+                    timeout_seconds=3,
+                    max_retries=0,
+                    enforcement_mode="strict",
+                    provider_permissions={"gemini": {"sandbox": "workspace-write"}},
+                ),
+            )
+            result = run_review(req, adapters={"gemini": adapter}, review_mode=False)
+            self.assertEqual(result.terminal_state, "FAILED")
+            provider_result = result.provider_results["gemini"]
+            self.assertEqual(provider_result.get("reason"), "permission_enforcement_failed")
+
+    def test_supported_provider_permission_is_applied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = PermissionAwareFakeAdapter("codex", "raw output", supported_keys=["sandbox"])
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="run task",
+                providers=["codex"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                state_file=f"{tmpdir}/state.json",
+                policy=ReviewPolicy(
+                    timeout_seconds=3,
+                    max_retries=0,
+                    enforcement_mode="strict",
+                    provider_permissions={"codex": {"sandbox": "read-only"}},
+                ),
+            )
+            result = run_review(req, adapters={"codex": adapter}, review_mode=False)
+            self.assertEqual(result.terminal_state, "COMPLETED")
+            self.assertEqual(adapter.last_provider_permissions, {"sandbox": "read-only"})
 
 
 if __name__ == "__main__":

@@ -1,0 +1,293 @@
+{
+  "generated_at": "2026-02-26T07:37:15.384756+00:00",
+  "workflows": {
+    "gate": {
+      "generated_at": "2026-02-26T07:37:15.349197+00:00",
+      "workflow": "gate",
+      "run_id": "local-gate",
+      "report_root": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26",
+      "file_count": 27,
+      "total_bytes": 295719,
+      "key_artifacts": {
+        "runtime_gate_report": {
+          "path": "runtime-gh-report.md",
+          "exists": true
+        },
+        "runtime_gate_raw_log": {
+          "path": "runtime-gh-raw.log",
+          "exists": true
+        },
+        "step5_benchmark_report": {
+          "path": "step5-parallel-benchmark.md",
+          "exists": true
+        },
+        "step5_benchmark_summary": {
+          "path": "step5-parallel-benchmark-summary.json",
+          "exists": true
+        },
+        "adapter_contract_summary": {
+          "path": "summary.md",
+          "exists": true
+        }
+      },
+      "files": [
+        {
+          "path": "matrix.json",
+          "bytes": 1475
+        },
+        {
+          "path": "runtime-gh-raw.log",
+          "bytes": 0
+        },
+        {
+          "path": "runtime-gh-report.md",
+          "bytes": 716
+        },
+        {
+          "path": "runtime-gh-result.json",
+          "bytes": 187
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772080886/raw/claude.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772080886/raw/claude.stdout.log",
+          "bytes": 3778
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772081317/raw/claude.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772081317/raw/claude.stdout.log",
+          "bytes": 272408
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772082236/providers/claude.json",
+          "bytes": 765
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772082236/raw/claude.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772082236/raw/claude.stdout.log",
+          "bytes": 3
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-codex-1772082254/providers/codex.json",
+          "bytes": 837
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-codex-1772082254/raw/codex.stderr.log",
+          "bytes": 2685
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-codex-1772082254/raw/codex.stdout.log",
+          "bytes": 823
+        },
+        {
+          "path": "step1-adapter-dryrun.json",
+          "bytes": 1128
+        },
+        {
+          "path": "step1-adapter-dryrun.md",
+          "bytes": 582
+        },
+        {
+          "path": "step3-5provider-baseline.md",
+          "bytes": 926
+        },
+        {
+          "path": "step4-parallel-benchmark.md",
+          "bytes": 1436
+        },
+        {
+          "path": "step5-full-parallel.result.json",
+          "bytes": 865
+        },
+        {
+          "path": "step5-full-parallel.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step5-full-parallel.stdout.log",
+          "bytes": 360
+        },
+        {
+          "path": "step5-parallel-benchmark-summary.json",
+          "bytes": 2575
+        },
+        {
+          "path": "step5-parallel-benchmark.md",
+          "bytes": 1126
+        },
+        {
+          "path": "step5-serial.result.json",
+          "bytes": 841
+        },
+        {
+          "path": "step5-serial.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step5-serial.stdout.log",
+          "bytes": 356
+        },
+        {
+          "path": "summary.md",
+          "bytes": 1847
+        }
+      ]
+    },
+    "benchmark": {
+      "generated_at": "2026-02-26T07:37:15.384752+00:00",
+      "workflow": "benchmark",
+      "run_id": "local-benchmark",
+      "report_root": "/Users/tsk/multi-cli-orchestrator/reports/adapter-contract/2026-02-26",
+      "file_count": 29,
+      "total_bytes": 300259,
+      "key_artifacts": {
+        "runtime_gate_report": {
+          "path": "runtime-gh-report.md",
+          "exists": true
+        },
+        "runtime_gate_raw_log": {
+          "path": "runtime-gh-raw.log",
+          "exists": true
+        },
+        "step5_benchmark_report": {
+          "path": "step5-parallel-benchmark.md",
+          "exists": true
+        },
+        "step5_benchmark_summary": {
+          "path": "step5-parallel-benchmark-summary.json",
+          "exists": true
+        },
+        "adapter_contract_summary": {
+          "path": "summary.md",
+          "exists": true
+        }
+      },
+      "files": [
+        {
+          "path": "ci-artifact-index.json",
+          "bytes": 3937
+        },
+        {
+          "path": "ci-artifact-index.md",
+          "bytes": 603
+        },
+        {
+          "path": "matrix.json",
+          "bytes": 1475
+        },
+        {
+          "path": "runtime-gh-raw.log",
+          "bytes": 0
+        },
+        {
+          "path": "runtime-gh-report.md",
+          "bytes": 716
+        },
+        {
+          "path": "runtime-gh-result.json",
+          "bytes": 187
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772080886/raw/claude.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772080886/raw/claude.stdout.log",
+          "bytes": 3778
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772081317/raw/claude.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772081317/raw/claude.stdout.log",
+          "bytes": 272408
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772082236/providers/claude.json",
+          "bytes": 765
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772082236/raw/claude.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-claude-1772082236/raw/claude.stdout.log",
+          "bytes": 3
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-codex-1772082254/providers/codex.json",
+          "bytes": 837
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-codex-1772082254/raw/codex.stderr.log",
+          "bytes": 2685
+        },
+        {
+          "path": "step1-adapter-dryrun-artifacts/step1-codex-1772082254/raw/codex.stdout.log",
+          "bytes": 823
+        },
+        {
+          "path": "step1-adapter-dryrun.json",
+          "bytes": 1128
+        },
+        {
+          "path": "step1-adapter-dryrun.md",
+          "bytes": 582
+        },
+        {
+          "path": "step3-5provider-baseline.md",
+          "bytes": 926
+        },
+        {
+          "path": "step4-parallel-benchmark.md",
+          "bytes": 1436
+        },
+        {
+          "path": "step5-full-parallel.result.json",
+          "bytes": 865
+        },
+        {
+          "path": "step5-full-parallel.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step5-full-parallel.stdout.log",
+          "bytes": 360
+        },
+        {
+          "path": "step5-parallel-benchmark-summary.json",
+          "bytes": 2575
+        },
+        {
+          "path": "step5-parallel-benchmark.md",
+          "bytes": 1126
+        },
+        {
+          "path": "step5-serial.result.json",
+          "bytes": 841
+        },
+        {
+          "path": "step5-serial.stderr.log",
+          "bytes": 0
+        },
+        {
+          "path": "step5-serial.stdout.log",
+          "bytes": 356
+        },
+        {
+          "path": "summary.md",
+          "bytes": 1847
+        }
+      ]
+    }
+  }
+}

@@ -19,6 +19,9 @@ class ReviewPolicy:
     require_non_empty_findings: bool = True
     max_provider_parallelism: int = 0
     provider_timeouts: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_PROVIDER_TIMEOUTS))
+    allow_paths: List[str] = field(default_factory=lambda: ["."])
+    provider_permissions: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    enforcement_mode: str = "strict"
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,37 @@ def _to_policy(payload: Dict[str, Any]) -> ReviewPolicy:
     if max_parallel < 0:
         max_parallel = 0
 
+    raw_allow_paths = payload.get("allow_paths", ["."])
+    allow_paths: List[str]
+    if isinstance(raw_allow_paths, str):
+        allow_paths = [item.strip() for item in raw_allow_paths.split(",") if item.strip()]
+    elif isinstance(raw_allow_paths, list):
+        allow_paths = [str(item).strip() for item in raw_allow_paths if str(item).strip()]
+    else:
+        allow_paths = ["."]
+    if not allow_paths:
+        allow_paths = ["."]
+
+    raw_provider_permissions = payload.get("provider_permissions", {})
+    provider_permissions: Dict[str, Dict[str, str]] = {}
+    if isinstance(raw_provider_permissions, dict):
+        for provider, permissions in raw_provider_permissions.items():
+            provider_name = str(provider).strip()
+            if not provider_name or not isinstance(permissions, dict):
+                continue
+            normalized: Dict[str, str] = {}
+            for key, value in permissions.items():
+                key_name = str(key).strip()
+                if not key_name:
+                    continue
+                normalized[key_name] = str(value)
+            if normalized:
+                provider_permissions[provider_name] = normalized
+
+    enforcement_mode = str(payload.get("enforcement_mode", "strict")).strip().lower()
+    if enforcement_mode not in ("strict", "best_effort"):
+        enforcement_mode = "strict"
+
     return ReviewPolicy(
         timeout_seconds=int(payload.get("timeout_seconds", 180)),
         max_retries=int(payload.get("max_retries", 1)),
@@ -71,6 +105,9 @@ def _to_policy(payload: Dict[str, Any]) -> ReviewPolicy:
         require_non_empty_findings=_as_bool(payload.get("require_non_empty_findings", True), True),
         max_provider_parallelism=max_parallel,
         provider_timeouts=provider_timeouts,
+        allow_paths=allow_paths,
+        provider_permissions=provider_permissions,
+        enforcement_mode=enforcement_mode,
     )
 
 

@@ -23,6 +23,7 @@ Define a practical architecture that supports five mainstream coding CLIs (Claud
 - [x] Phase 17: Step 5 stability hardening (default provider timeout profile + one-click benchmark + non-blocking scheduled CI benchmark)
 - [x] Phase 18: Step 5 report standardization (fixed markdown template + renderer + parse/findings metric split)
 - [x] Phase 19: GitHub engineering baseline (issue/PR templates + workflow artifact index + v0.1.0 release documentation)
+- [x] Phase 20: General execution layer baseline (`mco run` + allow-path validation + provider permission enforcement)
 
 ## Key Questions
 1. How to avoid a single-CLI-centered architecture and make any CLI a first-class entry point?
@@ -48,6 +49,7 @@ Define a practical architecture that supports five mainstream coding CLIs (Claud
 - Step 5 stability hardening completed: built-in timeout profile defaults (`claude=300s`, `codex=240s`), one-command benchmark script (`scripts/run_step5_parallel_benchmark.sh`), and non-blocking scheduled benchmark workflow (`.github/workflows/benchmark.yml`).
 - Step 5 reporting is standardized: fixed template at `docs/templates/step5-benchmark-report.md.tpl`, renderer `scripts/render_step5_report.py`, and CI artifact index generator `scripts/collect_ci_artifacts.py`.
 - GitHub collaboration baseline is completed: issue templates and PR template under `.github/`, plus release doc `docs/releases/v0.1.0.md`.
+- General execution baseline is implemented: `mco run` is available for non-review tasks, review contract enforcement is now mode-based, `allow_paths` path-bound checks are enforced, and provider permission mapping supports `strict`/`best_effort` execution modes.
 
 ## Errors Encountered
 - None.

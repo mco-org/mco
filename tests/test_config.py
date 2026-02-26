@@ -14,6 +14,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.providers, ["claude", "codex"])
         self.assertEqual(cfg.policy.max_provider_parallelism, 0)
         self.assertEqual(cfg.policy.provider_timeouts, DEFAULT_PROVIDER_TIMEOUTS)
+        self.assertEqual(cfg.policy.allow_paths, ["."])
+        self.assertEqual(cfg.policy.provider_permissions, {})
+        self.assertEqual(cfg.policy.enforcement_mode, "strict")
 
     def test_json_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -29,6 +32,9 @@ class ConfigTests(unittest.TestCase):
                             "require_non_empty_findings": False,
                             "max_provider_parallelism": 3,
                             "provider_timeouts": {"claude": 120},
+                            "allow_paths": ["src", "tests"],
+                            "provider_permissions": {"codex": {"sandbox": "read-only"}},
+                            "enforcement_mode": "best_effort",
                         },
                     },
                     fh,
@@ -42,6 +48,9 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(cfg.policy.max_provider_parallelism, 3)
             self.assertEqual(cfg.policy.provider_timeouts.get("claude"), 120)
             self.assertEqual(cfg.policy.provider_timeouts.get("codex"), DEFAULT_PROVIDER_TIMEOUTS["codex"])
+            self.assertEqual(cfg.policy.allow_paths, ["src", "tests"])
+            self.assertEqual(cfg.policy.provider_permissions.get("codex"), {"sandbox": "read-only"})
+            self.assertEqual(cfg.policy.enforcement_mode, "best_effort")
 
 
 if __name__ == "__main__":

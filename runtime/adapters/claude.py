@@ -26,12 +26,21 @@ class ClaudeAdapter(ShimAdapterBase):
     def _auth_check_command(self, binary: str) -> List[str]:
         return [binary, "auth", "status"]
 
+    def supported_permission_keys(self) -> List[str]:
+        return ["permission_mode"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
+        permission_mode = "plan"
+        raw_permissions = input_task.metadata.get("provider_permissions")
+        if isinstance(raw_permissions, dict):
+            value = raw_permissions.get("permission_mode")
+            if isinstance(value, str) and value.strip():
+                permission_mode = value.strip()
         return [
             "claude",
             "-p",
             "--permission-mode",
-            "plan",
+            permission_mode,
             "--output-format",
             "text",
             input_task.prompt,
