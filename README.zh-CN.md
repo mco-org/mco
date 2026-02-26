@@ -103,43 +103,36 @@ mco run \
   --enforcement-mode strict
 ```
 
-## 配置
+## 默认值与参数覆盖
 
-在项目根目录创建 `mco.json`：
+MCO 默认零配置可用。直接运行即可，按需通过命令行参数覆盖行为。
 
-```json
-{
-  "providers": ["claude", "codex", "qwen"],
-  "artifact_base": "reports/review",
-  "state_file": ".mco/state.json",
-  "policy": {
-    "stall_timeout_seconds": 900,
-    "review_hard_timeout_seconds": 1800,
-    "max_provider_parallelism": 0,
-    "enforcement_mode": "strict",
-    "provider_permissions": {
-      "claude": { "permission_mode": "plan" },
-      "codex": { "sandbox": "workspace-write" }
-    }
-  }
-}
-```
+### 关键运行参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--providers` | `claude,codex` | 逗号分隔 provider 列表 |
+| `--stall-timeout` | `900` | 无输出进展超过此时间才取消 |
+| `--review-hard-timeout` | `1800` | review 模式硬截止（`0` = 禁用） |
+| `--max-provider-parallelism` | `0` | `0` = 选中 provider 全并行 |
+| `--enforcement-mode` | `strict` | 权限不满足时 fail-closed |
+| `--provider-timeouts` | 未设置 | provider 级 stall timeout 覆盖（`provider=seconds`） |
+| `--provider-permissions-json` | 未设置 | provider 权限映射 JSON |
+
+示例：
 
 ```bash
-mco review --config mco.json --repo . --prompt "Review for bugs."
+mco review \
+  --repo . \
+  --prompt "Review for bugs." \
+  --providers claude,codex,qwen \
+  --stall-timeout 900 \
+  --review-hard-timeout 1800 \
+  --max-provider-parallelism 0 \
+  --provider-timeouts qwen=900,codex=900
 ```
 
-### 关键策略字段
-
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| `stall_timeout_seconds` | 900 | 无输出进展超过此时间才取消 |
-| `review_hard_timeout_seconds` | 1800 | review 模式硬截止（0 = 禁用） |
-| `max_provider_parallelism` | 0 | 0 = 全部 provider 并行 |
-| `enforcement_mode` | `strict` | strict 模式下权限不满足则 fail-closed |
-| `provider_timeouts` | `{}` | 各 provider 独立的 stall timeout 覆盖 |
-
-所有 CLI 参数优先于配置文件。运行 `mco review --help` 查看完整参数列表。
+运行 `mco review --help` 查看完整参数列表。
 
 ## 工作原理
 

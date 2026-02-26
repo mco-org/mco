@@ -25,8 +25,6 @@ class Step5BenchmarkScriptTests(unittest.TestCase):
             target_script.write_text(source_script.read_text(encoding="utf-8"), encoding="utf-8")
             target_script.chmod(0o755)
 
-            (fake_root / "mco.step3-baseline.json").write_text("{}", encoding="utf-8")
-
             fake_mco = fake_root / "mco"
             fake_mco.write_text(
                 textwrap.dedent(
@@ -102,9 +100,8 @@ class Step5BenchmarkScriptTests(unittest.TestCase):
             )
             fake_mco.chmod(0o755)
 
-            config_path = fake_root / "mco.step3-baseline.json"
             proc = subprocess.run(
-                [str(target_script), str(config_path)],
+                [str(target_script)],
                 cwd=str(fake_root),
                 text=True,
                 capture_output=True,

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-from .config import ReviewConfig, ReviewPolicy, load_review_config
+from .config import ReviewConfig, ReviewPolicy
 from .review_engine import ReviewRequest, run_review
 
 
@@ -141,7 +141,6 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo", default=".", help="Repository root path")
     parser.add_argument("--prompt", required=True, help="Task prompt")
     parser.add_argument("--providers", default="", help="Comma-separated providers, e.g. claude,codex")
-    parser.add_argument("--config", default="", help="Config file path (.json or .yaml/.yml)")
     parser.add_argument("--artifact-base", default="", help="Artifact base directory override")
     parser.add_argument("--state-file", default="", help="Runtime state file override")
     parser.add_argument("--task-id", default="", help="Optional stable task id")
@@ -215,7 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
-    cfg = load_review_config(args.config or None)
+    cfg = ReviewConfig()
     providers = _parse_providers(args.providers) if args.providers else cfg.providers
     artifact_base = args.artifact_base or cfg.artifact_base
     state_file = args.state_file or cfg.state_file
@@ -239,7 +238,7 @@ def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
     review_hard_timeout_seconds = cfg.policy.review_hard_timeout_seconds
     if args.review_hard_timeout is not None and args.review_hard_timeout >= 0:
         review_hard_timeout_seconds = args.review_hard_timeout
-    enforce_findings_contract = cfg.policy.enforce_findings_contract or bool(args.strict_contract)
+    enforce_findings_contract = bool(args.strict_contract)
 
     policy = ReviewPolicy(
         timeout_seconds=cfg.policy.timeout_seconds,
@@ -268,7 +267,7 @@ def main(argv: List[str] | None = None) -> int:
 
     try:
         cfg = _resolve_config(args)
-    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+    except ValueError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
     repo_root = str(Path(args.repo).resolve())

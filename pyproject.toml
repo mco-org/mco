@@ -25,9 +25,6 @@ classifiers = [
 ]
 dependencies = []
 
-[project.optional-dependencies]
-yaml = ["pyyaml>=6.0"]
-
 [project.urls]
 Homepage = "https://github.com/tt-a1i/mco"
 Repository = "https://github.com/tt-a1i/mco"

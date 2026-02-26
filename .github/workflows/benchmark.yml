@@ -4,12 +4,6 @@ on:
   schedule:
     - cron: "15 3 * * *"
   workflow_dispatch:
-    inputs:
-      config_path:
-        description: "Config path for benchmark script"
-        required: false
-        default: "mco.step3-baseline.json"
-        type: string
 
 jobs:
   step5-parallel-benchmark:
@@ -18,15 +12,13 @@ jobs:
       - self-hosted
       - macOS
     continue-on-error: true
-    env:
-      CONFIG_PATH: ${{ inputs.config_path || 'mco.step3-baseline.json' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Run step5 benchmark
         continue-on-error: true
-        run: ./scripts/run_step5_parallel_benchmark.sh "$CONFIG_PATH"
+        run: ./scripts/run_step5_parallel_benchmark.sh
 
       - name: Collect CI artifact index
         if: always()

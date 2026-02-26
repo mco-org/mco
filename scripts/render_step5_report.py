@@ -37,7 +37,7 @@ def build_render_context(summary: Dict[str, Any], summary_json_path: str) -> Dic
 
     return {
         "date": str(summary.get("generated_at", ""))[:10],
-        "config_path": str(summary.get("config_path", "unknown")),
+        "providers": str(summary.get("providers", "unknown")),
         "serial_task_id": str(_value(serial, "task_id", "unknown")),
         "serial_wall_time": f"{_value(serial, 'wall_time_seconds', 0)}s",
         "serial_parse_success": str(_value(serial, "parse_success_count", 0)),

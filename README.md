@@ -103,43 +103,36 @@ mco run \
   --enforcement-mode strict
 ```
 
-## Configuration
+## Defaults and Overrides
 
-Create `mco.json` in your project root:
+MCO is zero-config by default. You can run it directly with built-in defaults and override behavior with CLI flags only.
 
-```json
-{
-  "providers": ["claude", "codex", "qwen"],
-  "artifact_base": "reports/review",
-  "state_file": ".mco/state.json",
-  "policy": {
-    "stall_timeout_seconds": 900,
-    "review_hard_timeout_seconds": 1800,
-    "max_provider_parallelism": 0,
-    "enforcement_mode": "strict",
-    "provider_permissions": {
-      "claude": { "permission_mode": "plan" },
-      "codex": { "sandbox": "workspace-write" }
-    }
-  }
-}
-```
+### Key Runtime Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--providers` | `claude,codex` | Comma-separated provider list |
+| `--stall-timeout` | `900` | Cancel when no output progress for this duration |
+| `--review-hard-timeout` | `1800` | Hard deadline for review mode (`0` = disabled) |
+| `--max-provider-parallelism` | `0` | `0` = full parallelism across selected providers |
+| `--enforcement-mode` | `strict` | `strict` fails closed on unmet permissions |
+| `--provider-timeouts` | unset | Per-provider stall-timeout overrides (`provider=seconds`) |
+| `--provider-permissions-json` | unset | Provider permission mapping JSON |
+
+Example:
 
 ```bash
-mco review --config mco.json --repo . --prompt "Review for bugs."
+mco review \
+  --repo . \
+  --prompt "Review for bugs." \
+  --providers claude,codex,qwen \
+  --stall-timeout 900 \
+  --review-hard-timeout 1800 \
+  --max-provider-parallelism 0 \
+  --provider-timeouts qwen=900,codex=900
 ```
 
-### Key Policy Fields
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `stall_timeout_seconds` | 900 | Cancel when no output progress for this duration |
-| `review_hard_timeout_seconds` | 1800 | Hard deadline for review mode (0 = disabled) |
-| `max_provider_parallelism` | 0 | 0 = full parallelism across all providers |
-| `enforcement_mode` | `strict` | `strict` fails closed on unmet permissions |
-| `provider_timeouts` | `{}` | Per-provider stall timeout overrides |
-
-All CLI flags override config file values. Run `mco review --help` for the full list.
+Run `mco review --help` for the full flag list.
 
 ## How It Works
 

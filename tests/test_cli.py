@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import tempfile
 import unittest
 
 from runtime.cli import (
@@ -50,105 +48,81 @@ class CliTests(unittest.TestCase):
             _parse_provider_permissions_json('{"codex":"workspace-write"}')
 
     def test_resolve_config_applies_cli_overrides(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cfg_path = f"{tmpdir}/mco.json"
-            with open(cfg_path, "w", encoding="utf-8") as fh:
-                json.dump(
-                    {
-                        "providers": ["claude", "codex"],
-                        "artifact_base": "reports/review",
-                        "state_file": ".mco/state.json",
-                        "policy": {
-                            "timeout_seconds": 180,
-                            "max_retries": 1,
-                            "stall_timeout_seconds": 400,
-                            "poll_interval_seconds": 0.5,
-                            "review_hard_timeout_seconds": 999,
-                            "max_provider_parallelism": 2,
-                            "provider_timeouts": {"qwen": 240},
-                            "provider_permissions": {"codex": {"sandbox": "read-only"}},
-                            "allow_paths": ["src"],
-                        },
-                    },
-                    fh,
-                )
-
-            parser = build_parser()
-            args = parser.parse_args(
-                [
-                    "review",
-                    "--prompt",
-                    "x",
-                    "--config",
-                    cfg_path,
-                    "--max-provider-parallelism",
-                    "3",
-                    "--provider-timeouts",
-                    "codex=120",
-                    "--stall-timeout",
-                    "700",
-                    "--poll-interval",
-                    "2.0",
-                    "--review-hard-timeout",
-                    "3000",
-                    "--allow-paths",
-                    "src,tests",
-                    "--enforcement-mode",
-                    "best_effort",
-                    "--provider-permissions-json",
-                    '{"claude":{"permission_mode":"accept-edits"}}',
-                    "--strict-contract",
-                ]
-            )
-            resolved = _resolve_config(args)
-            self.assertEqual(resolved.policy.max_provider_parallelism, 3)
-            self.assertEqual(resolved.policy.provider_timeouts.get("qwen"), 240)
-            self.assertEqual(resolved.policy.provider_timeouts.get("codex"), 120)
-            self.assertIsNone(resolved.policy.provider_timeouts.get("claude"))
-            self.assertEqual(resolved.policy.stall_timeout_seconds, 700)
-            self.assertEqual(resolved.policy.poll_interval_seconds, 2.0)
-            self.assertEqual(resolved.policy.review_hard_timeout_seconds, 3000)
-            self.assertEqual(resolved.policy.allow_paths, ["src", "tests"])
-            self.assertEqual(resolved.policy.enforcement_mode, "best_effort")
-            self.assertEqual(resolved.policy.provider_permissions.get("codex"), {"sandbox": "read-only"})
-            self.assertEqual(
-                resolved.policy.provider_permissions.get("claude"),
-                {"permission_mode": "accept-edits"},
-            )
-            self.assertTrue(resolved.policy.enforce_findings_contract)
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--prompt",
+                "x",
+                "--providers",
+                "claude,codex,qwen",
+                "--artifact-base",
+                "reports/custom",
+                "--state-file",
+                ".mco/custom-state.json",
+                "--max-provider-parallelism",
+                "3",
+                "--provider-timeouts",
+                "codex=120,qwen=240",
+                "--stall-timeout",
+                "700",
+                "--poll-interval",
+                "2.0",
+                "--review-hard-timeout",
+                "3000",
+                "--allow-paths",
+                "src,tests",
+                "--enforcement-mode",
+                "best_effort",
+                "--provider-permissions-json",
+                '{"claude":{"permission_mode":"accept-edits"},"codex":{"sandbox":"read-only"}}',
+                "--strict-contract",
+            ]
+        )
+        resolved = _resolve_config(args)
+        self.assertEqual(resolved.providers, ["claude", "codex", "qwen"])
+        self.assertEqual(resolved.artifact_base, "reports/custom")
+        self.assertEqual(resolved.state_file, ".mco/custom-state.json")
+        self.assertEqual(resolved.policy.max_provider_parallelism, 3)
+        self.assertEqual(resolved.policy.provider_timeouts.get("qwen"), 240)
+        self.assertEqual(resolved.policy.provider_timeouts.get("codex"), 120)
+        self.assertIsNone(resolved.policy.provider_timeouts.get("claude"))
+        self.assertEqual(resolved.policy.stall_timeout_seconds, 700)
+        self.assertEqual(resolved.policy.poll_interval_seconds, 2.0)
+        self.assertEqual(resolved.policy.review_hard_timeout_seconds, 3000)
+        self.assertEqual(resolved.policy.allow_paths, ["src", "tests"])
+        self.assertEqual(resolved.policy.enforcement_mode, "best_effort")
+        self.assertEqual(resolved.policy.provider_permissions.get("codex"), {"sandbox": "read-only"})
+        self.assertEqual(
+            resolved.policy.provider_permissions.get("claude"),
+            {"permission_mode": "accept-edits"},
+        )
+        self.assertTrue(resolved.policy.enforce_findings_contract)
 
     def test_resolve_config_allows_cli_zero_to_force_full_parallel(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cfg_path = f"{tmpdir}/mco.json"
-            with open(cfg_path, "w", encoding="utf-8") as fh:
-                json.dump(
-                    {
-                        "providers": ["claude", "codex"],
-                        "policy": {"max_provider_parallelism": 3},
-                    },
-                    fh,
-                )
-
-            parser = build_parser()
-            args = parser.parse_args(
-                [
-                    "review",
-                    "--prompt",
-                    "x",
-                    "--config",
-                    cfg_path,
-                    "--max-provider-parallelism",
-                    "0",
-                ]
-            )
-            resolved = _resolve_config(args)
-            self.assertEqual(resolved.policy.max_provider_parallelism, 0)
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--prompt",
+                "x",
+                "--max-provider-parallelism",
+                "0",
+            ]
+        )
+        resolved = _resolve_config(args)
+        self.assertEqual(resolved.policy.max_provider_parallelism, 0)
 
     def test_parser_accepts_run_subcommand(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["run", "--prompt", "x"])
         self.assertEqual(args.command, "run")
         self.assertEqual(args.result_mode, "artifact")
+
+    def test_parser_rejects_config_flag(self) -> None:
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["review", "--prompt", "x", "--config", "mco.json"])
 
 
 if __name__ == "__main__":
