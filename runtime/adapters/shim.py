@@ -40,6 +40,19 @@ class ShimRunHandle:
     stderr_file: TextIO
 
 
+_ENV_VARS_TO_STRIP = (
+    "CLAUDECODE",
+)
+
+
+def _sanitize_env() -> Dict[str, str]:
+    """Return a copy of os.environ with known conflicting variables removed."""
+    env = os.environ.copy()
+    for key in _ENV_VARS_TO_STRIP:
+        env.pop(key, None)
+    return env
+
+
 class ShimAdapterBase:
     id: ProviderId
 
@@ -104,6 +117,7 @@ class ShimAdapterBase:
             stderr=stderr_file,
             text=True,
             start_new_session=True,
+            env=_sanitize_env(),
         )
         self._runs[run_id] = ShimRunHandle(
             process=process,
