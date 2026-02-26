@@ -379,6 +379,26 @@ class ReviewEngineTests(unittest.TestCase):
             provider_result = result.provider_results["gemini"]
             self.assertEqual(provider_result.get("reason"), "permission_enforcement_failed")
 
+    def test_best_effort_drops_unsupported_permission_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = PermissionAwareFakeAdapter("gemini", "raw output", supported_keys=[])
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="run task",
+                providers=["gemini"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                state_file=f"{tmpdir}/state.json",
+                policy=ReviewPolicy(
+                    timeout_seconds=3,
+                    max_retries=0,
+                    enforcement_mode="best_effort",
+                    provider_permissions={"gemini": {"sandbox": "workspace-write"}},
+                ),
+            )
+            result = run_review(req, adapters={"gemini": adapter}, review_mode=False)
+            self.assertEqual(result.terminal_state, "COMPLETED")
+            self.assertEqual(adapter.last_provider_permissions, {})
+
     def test_supported_provider_permission_is_applied(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             adapter = PermissionAwareFakeAdapter("codex", "raw output", supported_keys=["sandbox"])
