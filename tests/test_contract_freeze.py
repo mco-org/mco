@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import fields
 
+from runtime.adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
 from runtime.artifacts import ARTIFACT_LAYOUT_VERSION, ROOT_DIRS, ROOT_FILES, expected_paths
 from runtime.contracts import CAPABILITY_TIERS, PROVIDER_IDS, ProviderAdapter
 from runtime.types import RUN_RESULT_FIELDS, RUN_RESULT_SCHEMA_VERSION, RunResult
@@ -32,7 +33,13 @@ class ContractFreezeTests(unittest.TestCase):
         self.assertTrue(str(paths["providers/claude.json"]).endswith("/task-123/providers/claude.json"))
         self.assertTrue(str(paths["raw/codex.stderr.log"]).endswith("/task-123/raw/codex.stderr.log"))
 
+    def test_provider_permission_key_matrix_contract(self) -> None:
+        self.assertEqual(ClaudeAdapter().supported_permission_keys(), ["permission_mode"])
+        self.assertEqual(CodexAdapter().supported_permission_keys(), ["sandbox"])
+        self.assertEqual(GeminiAdapter().supported_permission_keys(), [])
+        self.assertEqual(OpenCodeAdapter().supported_permission_keys(), [])
+        self.assertEqual(QwenAdapter().supported_permission_keys(), [])
+
 
 if __name__ == "__main__":
     unittest.main()
-
