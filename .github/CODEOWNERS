@@ -1,0 +1,8 @@
+# Default owner for all files.
+* @tt-a1i
+
+# Runtime and adapter core ownership.
+/runtime/ @tt-a1i
+/tests/ @tt-a1i
+/scripts/ @tt-a1i
+/docs/ @tt-a1i

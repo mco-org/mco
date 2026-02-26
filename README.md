@@ -18,8 +18,10 @@
 1. [task_plan.md](./task_plan.md)
 
 ## Release Notes
-1. [docs/releases/v0.1.0.md](./docs/releases/v0.1.0.md)
-2. [docs/releases/v0.1.0.zh-CN.md](./docs/releases/v0.1.0.zh-CN.md)
+1. [docs/releases/v0.1.1.md](./docs/releases/v0.1.1.md)
+2. [docs/releases/v0.1.1.zh-CN.md](./docs/releases/v0.1.1.zh-CN.md)
+3. [docs/releases/v0.1.0.md](./docs/releases/v0.1.0.md)
+4. [docs/releases/v0.1.0.zh-CN.md](./docs/releases/v0.1.0.zh-CN.md)
 
 ## Unified CLI (Step 2)
 `mco review` is the unified entrypoint for running a review task.
