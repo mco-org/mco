@@ -20,6 +20,16 @@ class ParsingContractTests(unittest.TestCase):
         self.assertEqual(info["schema_valid_count"], 0)
         self.assertGreaterEqual(info["dropped_count"], 1)
 
+    def test_contract_json_allows_missing_optional_line_symbol(self) -> None:
+        text = (
+            '{"findings":[{"finding_id":"f1","severity":"low","category":"maintainability","title":"t",'
+            '"evidence":{"file":"a.py","snippet":"x"},"recommendation":"r","confidence":0.5,"fingerprint":"fp"}]}'
+        )
+        info = inspect_contract_output(text)
+        self.assertTrue(info["parse_ok"])
+        self.assertEqual(info["schema_valid_count"], 1)
+        self.assertEqual(info["dropped_count"], 0)
+
     def test_plain_text_with_findings_word_is_not_parse_ok(self) -> None:
         text = "we have findings but this is not json"
         info = inspect_contract_output(text)

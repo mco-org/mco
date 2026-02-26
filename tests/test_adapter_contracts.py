@@ -118,7 +118,25 @@ class AdapterContractTests(unittest.TestCase):
             adapter.cancel(ref)
             status = self._wait_terminal(adapter, ref)
             self.assertTrue(status.completed)
-            self.assertIn(status.attempt_state, ("FAILED", "SUCCEEDED"))
+            self.assertIn(status.attempt_state, ("FAILED", "SUCCEEDED", "EXPIRED"))
+
+    def test_run_handle_is_released_after_terminal_poll(self) -> None:
+        adapter = ClaudeAdapter()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task = TaskInput(
+                task_id="task-handle-release",
+                prompt="ignored",
+                repo_root=tmpdir,
+                target_paths=["."],
+                metadata={
+                    "artifact_root": tmpdir,
+                    "command_override": ["python3", "-c", "print('ok')"],
+                },
+            )
+            ref = adapter.run(task)
+            status = self._wait_terminal(adapter, ref)
+            self.assertTrue(status.completed)
+            self.assertNotIn(ref.run_id, adapter._runs)  # type: ignore[attr-defined]
 
     def test_gemini_adapter_run_poll_normalize(self) -> None:
         adapter = GeminiAdapter()

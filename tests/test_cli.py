@@ -20,8 +20,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(providers, ["codex", "claude", "gemini"])
 
     def test_parse_provider_timeouts_ignores_invalid(self) -> None:
-        parsed = _parse_provider_timeouts("codex=90,claude=120,broken,nope=-1,gemini=abc")
+        parsed = _parse_provider_timeouts("codex=90,claude=120")
         self.assertEqual(parsed, {"codex": 90, "claude": 120})
+
+    def test_parse_provider_timeouts_rejects_invalid_entries(self) -> None:
+        with self.assertRaises(ValueError):
+            _parse_provider_timeouts("codex=90,broken")
+        with self.assertRaises(ValueError):
+            _parse_provider_timeouts("codex=abc")
+        with self.assertRaises(ValueError):
+            _parse_provider_timeouts("codex=0")
 
     def test_parse_paths_defaults_to_dot(self) -> None:
         self.assertEqual(_parse_paths(""), ["."])
@@ -32,6 +40,14 @@ class CliTests(unittest.TestCase):
         parsed = _parse_provider_permissions_json(raw)
         self.assertEqual(parsed.get("codex"), {"sandbox": "workspace-write"})
         self.assertEqual(parsed.get("claude"), {"permission_mode": "plan"})
+
+    def test_parse_provider_permissions_json_rejects_invalid_payload(self) -> None:
+        with self.assertRaises(ValueError):
+            _parse_provider_permissions_json("{not-json}")
+        with self.assertRaises(ValueError):
+            _parse_provider_permissions_json('["x"]')
+        with self.assertRaises(ValueError):
+            _parse_provider_permissions_json('{"codex":"workspace-write"}')
 
     def test_resolve_config_applies_cli_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

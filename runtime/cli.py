@@ -75,18 +75,20 @@ def _parse_provider_timeouts(raw: str) -> Dict[str, int]:
         return result
     for chunk in raw.split(","):
         pair = chunk.strip()
-        if not pair or "=" not in pair:
+        if not pair:
             continue
+        if "=" not in pair:
+            raise ValueError(f"invalid provider timeout entry: {pair}")
         provider, timeout_text = pair.split("=", 1)
         provider_name = provider.strip()
         if not provider_name:
-            continue
+            raise ValueError(f"invalid provider timeout entry: {pair}")
         try:
             timeout = int(timeout_text.strip())
         except Exception:
-            continue
+            raise ValueError(f"invalid timeout value for provider '{provider_name}': {timeout_text.strip()}") from None
         if timeout <= 0:
-            continue
+            raise ValueError(f"timeout must be > 0 for provider '{provider_name}'")
         result[provider_name] = timeout
     return result
 
@@ -102,23 +104,24 @@ def _parse_provider_permissions_json(raw: str) -> Dict[str, Dict[str, str]]:
     try:
         payload = json.loads(raw)
     except Exception:
-        return {}
+        raise ValueError("--provider-permissions-json must be valid JSON") from None
     if not isinstance(payload, dict):
-        return {}
+        raise ValueError("--provider-permissions-json root must be an object")
 
     result: Dict[str, Dict[str, str]] = {}
     for provider, permissions in payload.items():
         provider_name = str(provider).strip()
-        if not provider_name or not isinstance(permissions, dict):
-            continue
+        if not provider_name:
+            raise ValueError("--provider-permissions-json contains empty provider name")
+        if not isinstance(permissions, dict):
+            raise ValueError(f"permissions for provider '{provider_name}' must be an object")
         normalized: Dict[str, str] = {}
         for key, value in permissions.items():
             key_name = str(key).strip()
             if not key_name:
-                continue
+                raise ValueError(f"provider '{provider_name}' contains empty permission key")
             normalized[key_name] = str(value)
-        if normalized:
-            result[provider_name] = normalized
+        result[provider_name] = normalized
     return result
 
 
@@ -263,7 +266,11 @@ def main(argv: List[str] | None = None) -> int:
         parser.error("unsupported command")
         return 2
 
-    cfg = _resolve_config(args)
+    try:
+        cfg = _resolve_config(args)
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
     repo_root = str(Path(args.repo).resolve())
     providers = [item for item in cfg.providers if item in ("claude", "codex", "gemini", "opencode", "qwen")]
     if not providers:
@@ -283,7 +290,11 @@ def main(argv: List[str] | None = None) -> int:
     )
     review_mode = args.command == "review"
     write_artifacts = args.result_mode in ("artifact", "both")
-    result = run_review(req, review_mode=review_mode, write_artifacts=write_artifacts)
+    try:
+        result = run_review(req, review_mode=review_mode, write_artifacts=write_artifacts)
+    except ValueError as exc:
+        print(f"Input error: {exc}", file=sys.stderr)
+        return 2
 
     payload = {
         "command": args.command,
