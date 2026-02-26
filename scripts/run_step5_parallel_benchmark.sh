@@ -29,6 +29,7 @@ run_case() {
     --repo "$ROOT_DIR" \
     --prompt "$PROMPT" \
     --providers "$PROVIDERS" \
+    --save-artifacts \
     --task-id "$task_id" \
     --idempotency-key "$task_id" \
     --max-provider-parallelism "$parallelism" \
