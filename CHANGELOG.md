@@ -7,6 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-26
+### Changed
+- Removed config-file mode from CLI; `mco` now uses built-in defaults with flag-only overrides.
+- Removed `--config` from `mco run` / `mco review`; passing it now errors as unsupported.
+- Updated benchmark automation to run without config files and to report provider set directly.
+- Updated README (EN/CN) to document zero-config usage with CLI flag overrides only.
+
+### Removed
+- Removed config file loading path (`load_review_config`) and related YAML/JSON config parsing.
+- Removed sample config files (`mco.example.json`, `mco.step3-baseline.json`).
+
 ## [0.1.3] - 2026-02-26
 ### Added
 - Added full Simplified Chinese README (`README.zh-CN.md`) with language switch links.
