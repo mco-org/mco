@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 
 from runtime.cli import (
@@ -123,6 +125,27 @@ class CliTests(unittest.TestCase):
         parser = build_parser()
         with self.assertRaises(SystemExit):
             parser.parse_args(["review", "--prompt", "x", "--config", "mco.json"])
+
+    def test_top_level_help_contains_positioning_and_examples(self) -> None:
+        parser = build_parser()
+        help_text = parser.format_help()
+        self.assertIn("MCO orchestrates multiple coding-agent CLIs", help_text)
+        self.assertIn("Use `mco run -h` or `mco review -h`", help_text)
+        self.assertIn("mco review --repo . --prompt", help_text)
+
+    def test_review_help_contains_groups_examples_and_exit_codes(self) -> None:
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                parser.parse_args(["review", "-h"])
+        help_text = output.getvalue()
+        self.assertIn("Execution Scope:", help_text)
+        self.assertIn("Timeout and Parallelism:", help_text)
+        self.assertIn("Access and Contracts:", help_text)
+        self.assertIn("Examples:", help_text)
+        self.assertIn("Exit codes:", help_text)
+        self.assertIn("INCONCLUSIVE", help_text)
+        self.assertIn("(default: 900)", help_text)
 
 
 if __name__ == "__main__":

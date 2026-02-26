@@ -9,6 +9,53 @@ from typing import Dict, List
 from .config import ReviewConfig, ReviewPolicy
 from .review_engine import ReviewRequest, run_review
 
+SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "opencode", "qwen")
+DEFAULT_CONFIG = ReviewConfig()
+DEFAULT_POLICY = DEFAULT_CONFIG.policy
+
+
+class _HelpFormatter(argparse.RawTextHelpFormatter):
+    def _get_help_string(self, action: argparse.Action) -> str:
+        help_text = action.help or ""
+        default = action.default
+        if default not in (None, "", False, argparse.SUPPRESS) and "%(default)" not in help_text:
+            help_text += " (default: %(default)s)"
+        return help_text
+
+
+TOP_LEVEL_DESCRIPTION = (
+    "MCO orchestrates multiple coding-agent CLIs with wait-all execution.\n"
+    "Use `run` for general tasks and `review` for structured findings."
+)
+
+TOP_LEVEL_EPILOG = (
+    "Examples:\n"
+    "  mco run --repo . --prompt \"Summarize this repo.\" --providers claude,codex\n"
+    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --json\n\n"
+    "Use `mco run -h` or `mco review -h` for full command options."
+)
+
+RUN_EPILOG = (
+    "Examples:\n"
+    "  mco run --repo . --prompt \"Summarize the architecture.\" --providers claude,codex\n"
+    "  mco run --repo . --prompt \"List risky files.\" --providers claude,codex,qwen --json\n"
+    "  mco run --repo . --prompt \"Analyze runtime.\" --result-mode stdout --json\n\n"
+    "Exit codes:\n"
+    "  0 = success\n"
+    "  2 = input/config/runtime failure"
+)
+
+REVIEW_EPILOG = (
+    "Examples:\n"
+    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex\n"
+    "  mco review --repo . --prompt \"Review for security issues.\" --providers claude,codex,qwen --json\n"
+    "  mco review --repo . --prompt \"Review runtime/ only.\" --target-paths runtime --strict-contract\n\n"
+    "Exit codes:\n"
+    "  0 = success\n"
+    "  2 = FAIL / input / config / runtime failure\n"
+    "  3 = INCONCLUSIVE (review mode only)"
+)
+
 
 def _render_user_readable_report(
     command: str,
@@ -138,84 +185,120 @@ def _merge_provider_permissions(
 
 
 def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--repo", default=".", help="Repository root path")
-    parser.add_argument("--prompt", required=True, help="Task prompt")
-    parser.add_argument("--providers", default="", help="Comma-separated providers, e.g. claude,codex")
-    parser.add_argument("--artifact-base", default="", help="Artifact base directory override")
-    parser.add_argument("--state-file", default="", help="Runtime state file override")
-    parser.add_argument("--task-id", default="", help="Optional stable task id")
-    parser.add_argument("--idempotency-key", default="", help="Optional stable idempotency key")
-    parser.add_argument("--target-paths", default=".", help="Comma-separated task scope paths")
-    parser.add_argument("--allow-paths", default="", help="Comma-separated allowed paths (default: .)")
-    parser.add_argument(
-        "--enforcement-mode",
-        choices=("strict", "best_effort"),
-        default="",
-        help="Permission enforcement mode (default: strict)",
+    scope = parser.add_argument_group("Execution Scope")
+    scope.add_argument("--repo", default=".", help="Repository root path")
+    scope.add_argument("--prompt", required=True, help="Task prompt")
+    scope.add_argument(
+        "--providers",
+        default=",".join(DEFAULT_CONFIG.providers),
+        help="Comma-separated providers. Supported: claude,codex,gemini,opencode,qwen",
     )
-    parser.add_argument(
-        "--provider-permissions-json",
-        default="",
-        help="Provider permission mapping as JSON, e.g. '{\"codex\":{\"sandbox\":\"workspace-write\"}}'",
-    )
-    parser.add_argument(
-        "--strict-contract",
-        action="store_true",
-        help="Enforce strict findings JSON contract in review mode",
-    )
-    parser.add_argument(
+    scope.add_argument("--target-paths", default=".", help="Comma-separated task scope paths")
+    scope.add_argument("--task-id", default="", help="Optional stable task id")
+    scope.add_argument("--idempotency-key", default="", help="Optional stable idempotency key")
+
+    timeouts = parser.add_argument_group("Timeout and Parallelism")
+    timeouts.add_argument(
         "--max-provider-parallelism",
         type=int,
-        default=None,
-        help="Override provider fan-out concurrency (0 means full parallelism)",
+        default=DEFAULT_POLICY.max_provider_parallelism,
+        help="Provider fan-out concurrency. 0 means full parallelism",
     )
-    parser.add_argument(
+    timeouts.add_argument(
         "--provider-timeouts",
         default="",
-        help="Comma-separated provider stall-timeout overrides, e.g. claude=120,codex=90",
+        help="Provider-specific stall-timeout overrides, e.g. claude=120,codex=90",
     )
-    parser.add_argument(
+    timeouts.add_argument(
         "--stall-timeout",
         type=int,
-        default=None,
-        help="Override default stall timeout seconds (no output progress => cancel)",
+        default=DEFAULT_POLICY.stall_timeout_seconds,
+        help="Cancel a provider when output progress is idle for N seconds",
     )
-    parser.add_argument(
+    timeouts.add_argument(
         "--poll-interval",
         type=float,
-        default=None,
-        help="Override poll interval seconds for provider status checks",
+        default=DEFAULT_POLICY.poll_interval_seconds,
+        help="Provider status polling interval in seconds",
     )
-    parser.add_argument(
+    timeouts.add_argument(
         "--review-hard-timeout",
         type=int,
-        default=None,
-        help="Override review-mode hard deadline seconds (0 disables hard deadline)",
+        default=DEFAULT_POLICY.review_hard_timeout_seconds,
+        help="Review-mode hard deadline in seconds (0 disables)",
     )
-    parser.add_argument(
+
+    output = parser.add_argument_group("Output")
+    output.add_argument(
+        "--artifact-base",
+        default=DEFAULT_CONFIG.artifact_base,
+        help="Artifact base directory",
+    )
+    output.add_argument(
+        "--state-file",
+        default=DEFAULT_CONFIG.state_file,
+        help="Runtime state file path",
+    )
+    output.add_argument(
         "--result-mode",
         choices=("artifact", "stdout", "both"),
         default="artifact",
-        help="Result delivery mode: artifact files, stdout payload, or both",
+        help="artifact: write files, stdout: print payload, both: do both",
     )
-    parser.add_argument("--json", action="store_true", help="Print machine-readable result JSON")
+    output.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+
+    access = parser.add_argument_group("Access and Contracts")
+    access.add_argument("--allow-paths", default=".", help="Comma-separated allowed paths under repo root")
+    access.add_argument(
+        "--enforcement-mode",
+        choices=("strict", "best_effort"),
+        default=DEFAULT_POLICY.enforcement_mode,
+        help="strict fails closed when permission requirements are unmet",
+    )
+    access.add_argument(
+        "--provider-permissions-json",
+        default="",
+        help="Provider permission mapping JSON, e.g. '{\"codex\":{\"sandbox\":\"workspace-write\"}}'",
+    )
+    access.add_argument(
+        "--strict-contract",
+        action="store_true",
+        help="Review mode only: enforce strict findings JSON contract",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="mco", description="MCO")
+    parser = argparse.ArgumentParser(
+        prog="mco",
+        description=TOP_LEVEL_DESCRIPTION,
+        epilog=TOP_LEVEL_EPILOG,
+        formatter_class=_HelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run = subparsers.add_parser("run", help="Run general multi-provider task execution")
+    run = subparsers.add_parser(
+        "run",
+        help="Run general multi-provider task execution",
+        description="Run a prompt across multiple providers without enforcing findings schema.",
+        epilog=RUN_EPILOG,
+        formatter_class=_HelpFormatter,
+    )
     _add_common_execution_args(run)
 
-    review = subparsers.add_parser("review", help="Run multi-provider review")
+    review = subparsers.add_parser(
+        "review",
+        help="Run multi-provider review",
+        description="Run structured multi-provider review with normalized findings and decisions.",
+        epilog=REVIEW_EPILOG,
+        formatter_class=_HelpFormatter,
+    )
     _add_common_execution_args(review)
     return parser
 
 
 def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
     cfg = ReviewConfig()
-    providers = _parse_providers(args.providers) if args.providers else cfg.providers
+    providers = _parse_providers(args.providers) if args.providers else list(cfg.providers)
     artifact_base = args.artifact_base or cfg.artifact_base
     state_file = args.state_file or cfg.state_file
     provider_timeouts = dict(cfg.policy.provider_timeouts)
@@ -225,19 +308,15 @@ def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
         cfg.policy.provider_permissions,
         _parse_provider_permissions_json(args.provider_permissions_json),
     )
-    max_provider_parallelism = cfg.policy.max_provider_parallelism
-    if args.max_provider_parallelism is not None:
-        max_provider_parallelism = args.max_provider_parallelism
+    max_provider_parallelism = args.max_provider_parallelism
+    if max_provider_parallelism < 0:
+        max_provider_parallelism = cfg.policy.max_provider_parallelism
     enforcement_mode = args.enforcement_mode or cfg.policy.enforcement_mode
-    stall_timeout_seconds = cfg.policy.stall_timeout_seconds
-    if args.stall_timeout is not None and args.stall_timeout > 0:
-        stall_timeout_seconds = args.stall_timeout
-    poll_interval_seconds = cfg.policy.poll_interval_seconds
-    if args.poll_interval is not None and args.poll_interval > 0:
-        poll_interval_seconds = args.poll_interval
-    review_hard_timeout_seconds = cfg.policy.review_hard_timeout_seconds
-    if args.review_hard_timeout is not None and args.review_hard_timeout >= 0:
-        review_hard_timeout_seconds = args.review_hard_timeout
+    stall_timeout_seconds = args.stall_timeout if args.stall_timeout > 0 else cfg.policy.stall_timeout_seconds
+    poll_interval_seconds = args.poll_interval if args.poll_interval > 0 else cfg.policy.poll_interval_seconds
+    review_hard_timeout_seconds = (
+        args.review_hard_timeout if args.review_hard_timeout >= 0 else cfg.policy.review_hard_timeout_seconds
+    )
     enforce_findings_contract = bool(args.strict_contract)
 
     policy = ReviewPolicy(
@@ -271,7 +350,7 @@ def main(argv: List[str] | None = None) -> int:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
     repo_root = str(Path(args.repo).resolve())
-    providers = [item for item in cfg.providers if item in ("claude", "codex", "gemini", "opencode", "qwen")]
+    providers = [item for item in cfg.providers if item in SUPPORTED_PROVIDERS]
     if not providers:
         print("No valid providers selected.", file=sys.stderr)
         return 2
