@@ -119,7 +119,8 @@ class CliTests(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["run", "--prompt", "x"])
         self.assertEqual(args.command, "run")
-        self.assertEqual(args.result_mode, "artifact")
+        self.assertEqual(args.result_mode, "stdout")
+        self.assertFalse(args.save_artifacts)
 
     def test_parser_rejects_config_flag(self) -> None:
         parser = build_parser()

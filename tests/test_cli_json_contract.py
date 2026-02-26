@@ -26,6 +26,10 @@ EXPECTED_JSON_KEYS = (
     "dropped_findings_count",
     "created_new_task",
 )
+EXPECTED_DETAILED_JSON_KEYS = EXPECTED_JSON_KEYS + (
+    "result_mode",
+    "provider_results",
+)
 
 
 class CliJsonContractTests(unittest.TestCase):
@@ -58,7 +62,8 @@ class CliJsonContractTests(unittest.TestCase):
             )
             self.assertEqual(exit_code, 0)
             self.assertEqual(payload["command"], "review")
-            self.assertEqual(tuple(payload.keys()), EXPECTED_JSON_KEYS)
+            self.assertEqual(tuple(payload.keys()), EXPECTED_DETAILED_JSON_KEYS)
+            self.assertEqual(payload["result_mode"], "stdout")
             self.assertIsInstance(payload["provider_success_count"], int)
             self.assertIsInstance(payload["provider_failure_count"], int)
             self.assertIsInstance(payload["created_new_task"], bool)
@@ -84,9 +89,43 @@ class CliJsonContractTests(unittest.TestCase):
             )
             self.assertEqual(exit_code, 0)
             self.assertEqual(payload["command"], "run")
-            self.assertEqual(tuple(payload.keys()), EXPECTED_JSON_KEYS)
+            self.assertEqual(tuple(payload.keys()), EXPECTED_DETAILED_JSON_KEYS)
+            self.assertEqual(payload["result_mode"], "stdout")
             self.assertEqual(payload["parse_success_count"], 0)
             self.assertEqual(payload["parse_failure_count"], 0)
+
+    def test_artifact_mode_json_contract_is_frozen(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = ReviewResult(
+                task_id="task-run-artifact-1",
+                artifact_root=f"{tmpdir}/reports/review/task-run-artifact-1",
+                decision="PASS",
+                terminal_state="COMPLETED",
+                provider_results={"codex": {"success": True}},
+                findings_count=0,
+                parse_success_count=0,
+                parse_failure_count=0,
+                schema_valid_count=0,
+                dropped_findings_count=0,
+                created_new_task=False,
+            )
+            exit_code, payload = self._invoke_json(
+                [
+                    "run",
+                    "--repo",
+                    tmpdir,
+                    "--prompt",
+                    "run",
+                    "--providers",
+                    "codex",
+                    "--result-mode",
+                    "artifact",
+                    "--json",
+                ],
+                result,
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(tuple(payload.keys()), EXPECTED_JSON_KEYS)
 
     def test_stdout_mode_json_includes_provider_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -158,6 +197,42 @@ class CliJsonContractTests(unittest.TestCase):
                     )
             self.assertEqual(exit_code, 0)
             self.assertEqual(mocked.call_args.kwargs.get("write_artifacts"), False)
+
+    def test_save_artifacts_promotes_stdout_mode_to_both(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = ReviewResult(
+                task_id="task-run-stdout-3",
+                artifact_root=f"{tmpdir}/reports/review/task-run-stdout-3",
+                decision="PASS",
+                terminal_state="COMPLETED",
+                provider_results={"codex": {"success": True}},
+                findings_count=0,
+                parse_success_count=0,
+                parse_failure_count=0,
+                schema_valid_count=0,
+                dropped_findings_count=0,
+                created_new_task=True,
+            )
+            with patch("runtime.cli.run_review", return_value=result) as mocked:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = main(
+                        [
+                            "run",
+                            "--repo",
+                            tmpdir,
+                            "--prompt",
+                            "run",
+                            "--providers",
+                            "codex",
+                            "--save-artifacts",
+                            "--json",
+                        ]
+                    )
+            payload = json.loads(output.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(mocked.call_args.kwargs.get("write_artifacts"), True)
+            self.assertEqual(payload.get("result_mode"), "both")
 
 
 if __name__ == "__main__":

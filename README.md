@@ -89,9 +89,11 @@ mco run \
 
 | Mode | Behavior |
 |------|----------|
-| `--result-mode artifact` | Write artifact files, print summary (default) |
-| `--result-mode stdout` | Print full result to stdout, skip artifact files |
+| `--result-mode stdout` | Print full result to stdout, skip artifact files (default) |
+| `--result-mode artifact` | Write artifact files, print summary |
 | `--result-mode both` | Write artifacts and print full result |
+
+Use `--save-artifacts` to keep stdout mode while still writing artifacts.
 
 ### Path Constraints
 
@@ -123,6 +125,7 @@ MCO is zero-config by default. You can run it directly with built-in defaults an
 | `--strict-contract` | off | Enforce strict findings JSON contract (review mode) |
 | `--provider-timeouts` | unset | Per-provider stall-timeout overrides (`provider=seconds`) |
 | `--provider-permissions-json` | unset | Provider permission mapping JSON (see below) |
+| `--save-artifacts` | off | Write artifacts while keeping stdout result delivery |
 | `--task-id` | auto-generated | Stable task identifier for artifact paths |
 | `--idempotency-key` | auto-generated | Deduplicate repeated runs with the same key |
 | `--artifact-base` | `reports/review` | Base directory for artifact output |
@@ -141,6 +144,7 @@ mco review \
   --repo . \
   --prompt "Review for bugs." \
   --providers claude,codex,qwen \
+  --save-artifacts \
   --stall-timeout 900 \
   --review-hard-timeout 1800 \
   --max-provider-parallelism 0 \
@@ -161,7 +165,7 @@ Run `mco review --help` for the full flag list.
 
 ```
 prompt ─> MCO ─┬─> Claude Code  ─┐
-               ├─> Codex CLI     ├─> aggregate ─> artifacts + JSON
+               ├─> Codex CLI     ├─> aggregate ─> JSON (+ optional artifacts)
                ├─> Gemini CLI    │
                ├─> OpenCode      │
                └─> Qwen Code   ──┘
@@ -189,7 +193,7 @@ MCO automatically strips the `CLAUDECODE` environment variable before spawning p
 
 ## Artifacts
 
-Each run produces a structured artifact tree (root configurable via `--artifact-base`):
+When artifact writing is enabled (`--save-artifacts` or `--result-mode artifact/both`), MCO writes:
 
 ```
 reports/review/<task_id>/

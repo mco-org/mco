@@ -89,9 +89,11 @@ mco run \
 
 | 模式 | 行为 |
 |------|------|
-| `--result-mode artifact` | 写产物文件，输出摘要（默认） |
-| `--result-mode stdout` | 完整结果输出到 stdout，不写产物文件 |
+| `--result-mode stdout` | 完整结果输出到 stdout，不写产物文件（默认） |
+| `--result-mode artifact` | 写产物文件，输出摘要 |
 | `--result-mode both` | 既写产物又输出完整结果 |
+
+使用 `--save-artifacts` 可在保持 stdout 返回的同时写入产物。
 
 ### 路径约束
 
@@ -123,6 +125,7 @@ MCO 默认零配置可用。直接运行即可，按需通过命令行参数覆�
 | `--strict-contract` | 关闭 | 强制 findings JSON 契约（review 模式） |
 | `--provider-timeouts` | 未设置 | provider 级 stall timeout 覆盖（`provider=seconds`） |
 | `--provider-permissions-json` | 未设置 | provider 权限映射 JSON（见下方） |
+| `--save-artifacts` | 关闭 | 在默认 stdout 模式下同时写入产物 |
 | `--task-id` | 自动生成 | 稳定的任务标识符，用于产物路径 |
 | `--idempotency-key` | 自动生成 | 相同 key 的重复运行返回缓存结果 |
 | `--artifact-base` | `reports/review` | 产物输出基础目录 |
@@ -141,6 +144,7 @@ mco review \
   --repo . \
   --prompt "Review for bugs." \
   --providers claude,codex,qwen \
+  --save-artifacts \
   --stall-timeout 900 \
   --review-hard-timeout 1800 \
   --max-provider-parallelism 0 \
@@ -161,7 +165,7 @@ mco review \
 
 ```
 prompt ─> MCO ─┬─> Claude Code  ─┐
-               ├─> Codex CLI     ├─> 聚合 ─> 产物 + JSON
+               ├─> Codex CLI     ├─> 聚合 ─> JSON（可选产物）
                ├─> Gemini CLI    │
                ├─> OpenCode      │
                └─> Qwen Code   ──┘
@@ -189,7 +193,7 @@ MCO 在启动 provider 子进程前会自动清理 `CLAUDECODE` 环境变量，�
 
 ## 产物结构
 
-每次执行生成结构化产物树（根目录可通过 `--artifact-base` 自定义）：
+当启用产物写入（`--save-artifacts` 或 `--result-mode artifact/both`）时，会生成：
 
 ```
 reports/review/<task_id>/

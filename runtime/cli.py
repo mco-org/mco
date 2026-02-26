@@ -39,7 +39,7 @@ RUN_EPILOG = (
     "Examples:\n"
     "  mco run --repo . --prompt \"Summarize the architecture.\" --providers claude,codex\n"
     "  mco run --repo . --prompt \"List risky files.\" --providers claude,codex,qwen --json\n"
-    "  mco run --repo . --prompt \"Analyze runtime.\" --result-mode stdout --json\n\n"
+    "  mco run --repo . --prompt \"Analyze runtime.\" --save-artifacts --json\n\n"
     "Exit codes:\n"
     "  0 = success\n"
     "  2 = input/config/runtime failure"
@@ -242,8 +242,13 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     output.add_argument(
         "--result-mode",
         choices=("artifact", "stdout", "both"),
-        default="artifact",
+        default="stdout",
         help="artifact: write files, stdout: print payload, both: do both",
+    )
+    output.add_argument(
+        "--save-artifacts",
+        action="store_true",
+        help="Force artifact writes when result-mode is stdout",
     )
     output.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
 
@@ -367,7 +372,10 @@ def main(argv: List[str] | None = None) -> int:
         target_paths=[item.strip() for item in args.target_paths.split(",") if item.strip()],
     )
     review_mode = args.command == "review"
-    write_artifacts = args.result_mode in ("artifact", "both")
+    effective_result_mode = args.result_mode
+    if args.save_artifacts and effective_result_mode == "stdout":
+        effective_result_mode = "both"
+    write_artifacts = effective_result_mode in ("artifact", "both")
     try:
         result = run_review(req, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
@@ -389,14 +397,14 @@ def main(argv: List[str] | None = None) -> int:
         "dropped_findings_count": result.dropped_findings_count,
         "created_new_task": result.created_new_task,
     }
-    if args.result_mode == "artifact":
+    if effective_result_mode == "artifact":
         if args.json:
             print(json.dumps(payload, ensure_ascii=True))
         else:
             print(
                 _render_user_readable_report(
                     args.command,
-                    args.result_mode,
+                    effective_result_mode,
                     providers,
                     payload,
                     result.provider_results,
@@ -404,7 +412,7 @@ def main(argv: List[str] | None = None) -> int:
             )
     else:
         detailed_payload = dict(payload)
-        detailed_payload["result_mode"] = args.result_mode
+        detailed_payload["result_mode"] = effective_result_mode
         detailed_payload["provider_results"] = result.provider_results
         if args.json:
             print(json.dumps(detailed_payload, ensure_ascii=True))
@@ -412,7 +420,7 @@ def main(argv: List[str] | None = None) -> int:
             print(
                 _render_user_readable_report(
                     args.command,
-                    args.result_mode,
+                    effective_result_mode,
                     providers,
                     payload,
                     result.provider_results,
