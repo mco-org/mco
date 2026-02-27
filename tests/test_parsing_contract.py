@@ -25,6 +25,13 @@ class ParsingContractTests(unittest.TestCase):
         )
         self.assertEqual(extract_final_text_from_output(text), "最终回答")
 
+    def test_extract_final_text_ignores_trailing_low_signal_tokens(self) -> None:
+        text = (
+            '[{"type":"assistant","message":{"content":[{"type":"text","text":"Final summary sentence for callers."}]}}'
+            ',{"type":"result","result":"Final summary sentence for callers.","stats":{"keywords":["cli","orchestrator","runtime"]}}]'
+        )
+        self.assertEqual(extract_final_text_from_output(text), "Final summary sentence for callers.")
+
     def test_contract_json_valid(self) -> None:
         text = '{"findings":[{"finding_id":"f1","severity":"low","category":"maintainability","title":"t","evidence":{"file":"a.py","line":1,"symbol":null,"snippet":"x"},"recommendation":"r","confidence":0.5,"fingerprint":"fp"}]}'
         info = inspect_contract_output(text)

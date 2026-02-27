@@ -76,6 +76,41 @@ def _append_text_candidate(candidates: List[str], value: str) -> None:
     candidates.append(normalized)
 
 
+def _text_candidate_score(value: str) -> int:
+    normalized = value.strip()
+    if not normalized:
+        return -100
+
+    score = 0
+    length = len(normalized)
+    if length >= 24:
+        score += 1
+    if length >= 80:
+        score += 2
+    if " " in normalized or "\n" in normalized:
+        score += 1
+    if re.search(r"[.!?。；;:]", normalized):
+        score += 1
+    if normalized.startswith("<path>") or "<content>" in normalized:
+        score -= 3
+    if re.fullmatch(r"[A-Za-z0-9_./*:-]+", normalized) and length < 40:
+        score -= 3
+    if "\n" not in normalized and " " not in normalized and length < 24:
+        score -= 3
+    return score
+
+
+def _select_best_text_candidate(candidates: List[str]) -> str:
+    best_index = 0
+    best_score = _text_candidate_score(candidates[0])
+    for index, candidate in enumerate(candidates[1:], start=1):
+        score = _text_candidate_score(candidate)
+        if score > best_score or (score == best_score and index > best_index):
+            best_index = index
+            best_score = score
+    return candidates[best_index]
+
+
 def _collect_final_text_candidates(payload: Any, candidates: List[str]) -> None:
     if isinstance(payload, dict):
         payload_type = payload.get("type")
@@ -130,7 +165,7 @@ def extract_final_text_from_output(text: str) -> str:
     for payload in payloads:
         _collect_final_text_candidates(payload, candidates)
 
-    return candidates[-1] if candidates else raw
+    return _select_best_text_candidate(candidates) if candidates else raw
 
 
 def extract_json_payloads(text: str) -> List[Any]:
