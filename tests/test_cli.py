@@ -128,7 +128,7 @@ class CliTests(unittest.TestCase):
         parser = build_parser()
         help_text = parser.format_help()
         self.assertIn("Any Prompt. Any Agent. Any IDE.", help_text)
-        self.assertIn("Use `mco run -h` or `mco review -h`", help_text)
+        self.assertIn("Use `mco doctor -h`, `mco run -h`, or `mco review -h`", help_text)
         self.assertIn("mco review --repo . --prompt", help_text)
 
     def test_review_help_contains_groups_examples_and_exit_codes(self) -> None:

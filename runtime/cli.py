@@ -4,9 +4,11 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Mapping
 
+from .adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
 from .config import ReviewConfig, ReviewPolicy
+from .contracts import ProviderPresence
 from .review_engine import ReviewRequest, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "opencode", "qwen")
@@ -30,9 +32,10 @@ TOP_LEVEL_DESCRIPTION = (
 
 TOP_LEVEL_EPILOG = (
     "Examples:\n"
+    "  mco doctor --json\n"
     "  mco run --repo . --prompt \"Summarize this repo.\" --providers claude,codex\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --json\n\n"
-    "Use `mco run -h` or `mco review -h` for full command options."
+    "Use `mco doctor -h`, `mco run -h`, or `mco review -h` for full command options."
 )
 
 RUN_EPILOG = (
@@ -55,6 +58,100 @@ REVIEW_EPILOG = (
     "  2 = FAIL / input / config / runtime failure\n"
     "  3 = INCONCLUSIVE (review mode only)"
 )
+
+DOCTOR_EPILOG = (
+    "Examples:\n"
+    "  mco doctor\n"
+    "  mco doctor --providers claude,codex --json\n\n"
+    "Exit codes:\n"
+    "  0 = command completed (read overall_ok in output)\n"
+    "  2 = invalid input"
+)
+
+
+def _doctor_adapter_registry() -> Mapping[str, object]:
+    return {
+        "claude": ClaudeAdapter(),
+        "codex": CodexAdapter(),
+        "gemini": GeminiAdapter(),
+        "opencode": OpenCodeAdapter(),
+        "qwen": QwenAdapter(),
+    }
+
+
+def _doctor_provider_presence(providers: List[str]) -> Dict[str, ProviderPresence]:
+    adapters = _doctor_adapter_registry()
+    presence: Dict[str, ProviderPresence] = {}
+    for provider in providers:
+        adapter = adapters.get(provider)
+        if adapter is None:
+            continue
+        try:
+            probe = adapter.detect()
+        except Exception as exc:
+            presence[provider] = ProviderPresence(
+                provider=provider,  # type: ignore[arg-type]
+                detected=False,
+                binary_path=None,
+                version=None,
+                auth_ok=False,
+                reason=f"probe_error:{exc.__class__.__name__}",
+            )
+            continue
+        presence[provider] = probe
+    return presence
+
+
+def _doctor_payload(providers: List[str], presence_map: Dict[str, ProviderPresence]) -> Dict[str, object]:
+    provider_payload: Dict[str, Dict[str, object]] = {}
+    ready_count = 0
+    for provider in providers:
+        presence = presence_map.get(
+            provider,
+            ProviderPresence(  # type: ignore[arg-type]
+                provider=provider, detected=False, binary_path=None, version=None, auth_ok=False, reason="not_checked"
+            ),
+        )
+        ready = bool(presence.detected and presence.auth_ok)
+        if ready:
+            ready_count += 1
+        provider_payload[provider] = {
+            "detected": bool(presence.detected),
+            "binary_path": presence.binary_path,
+            "version": presence.version,
+            "auth_ok": bool(presence.auth_ok),
+            "reason": presence.reason,
+            "ready": ready,
+        }
+    return {
+        "command": "doctor",
+        "overall_ok": ready_count == len(providers),
+        "ready_count": ready_count,
+        "provider_count": len(providers),
+        "providers": provider_payload,
+    }
+
+
+def _render_doctor_report(payload: Dict[str, object]) -> str:
+    lines: List[str] = ["Doctor Result", ""]
+    lines.append(f"- overall_ok: {payload.get('overall_ok')}")
+    lines.append(f"- ready/total: {payload.get('ready_count')}/{payload.get('provider_count')}")
+    lines.append("")
+    lines.append("Provider Checks")
+    providers = payload.get("providers", {})
+    if not isinstance(providers, dict):
+        return "\n".join(lines)
+    for provider in sorted(providers.keys()):
+        details = providers.get(provider, {})
+        if not isinstance(details, dict):
+            continue
+        status = "READY" if bool(details.get("ready")) else "NOT_READY"
+        reason = str(details.get("reason") or "")
+        lines.append(f"- {provider}: {status} (reason={reason})")
+        lines.append(f"  detected={bool(details.get('detected'))} auth_ok={bool(details.get('auth_ok'))}")
+        lines.append(f"  binary_path={details.get('binary_path')}")
+        lines.append(f"  version={details.get('version')}")
+    return "\n".join(lines)
 
 
 def _render_user_readable_report(
@@ -277,6 +374,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check provider installation/auth readiness",
+        description="Probe local provider binaries and auth status for each selected provider.",
+        epilog=DOCTOR_EPILOG,
+        formatter_class=_HelpFormatter,
+    )
+    doctor.add_argument(
+        "--providers",
+        default=",".join(DEFAULT_CONFIG.providers),
+        help="Comma-separated providers. Supported: claude,codex,gemini,opencode,qwen",
+    )
+    doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+
     run = subparsers.add_parser(
         "run",
         help="Run general multi-provider task execution",
@@ -340,6 +451,18 @@ def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "doctor":
+        providers = [item for item in _parse_providers(args.providers) if item in SUPPORTED_PROVIDERS]
+        if not providers:
+            print("No valid providers selected.", file=sys.stderr)
+            return 2
+        payload = _doctor_payload(providers, _doctor_provider_presence(providers))
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=True))
+        else:
+            print(_render_doctor_report(payload))
+        return 0
+
     if args.command not in ("run", "review"):
         parser.error("unsupported command")
         return 2
