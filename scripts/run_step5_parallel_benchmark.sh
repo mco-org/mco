@@ -31,7 +31,6 @@ run_case() {
     --providers "$PROVIDERS" \
     --save-artifacts \
     --task-id "$task_id" \
-    --idempotency-key "$task_id" \
     --max-provider-parallelism "$parallelism" \
     --json >"$stdout_log" 2>"$stderr_log"
   exit_code=$?

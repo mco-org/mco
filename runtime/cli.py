@@ -91,9 +91,6 @@ def _render_user_readable_report(
         lines.append(
             f"- {provider}: success={success}, attempts={attempts}, final_error={final_error}, parse_reason={parse_reason}, findings={findings_count}"
         )
-        excerpt = str(details.get("output_excerpt", "")).strip()
-        if excerpt:
-            lines.append(f"  excerpt: {excerpt}")
         output_text = str(details.get("output_text", ""))
         if output_text:
             lines.append("  output:")
@@ -200,7 +197,6 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     scope.add_argument("--target-paths", default=".", help="Comma-separated task scope paths")
     scope.add_argument("--task-id", default="", help="Optional stable task id")
-    scope.add_argument("--idempotency-key", default="", help="Optional request label (cache disabled)")
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
     timeouts.add_argument(
@@ -238,11 +234,6 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--artifact-base",
         default=DEFAULT_CONFIG.artifact_base,
         help="Artifact base directory",
-    )
-    output.add_argument(
-        "--state-file",
-        default=DEFAULT_CONFIG.state_file,
-        help="Runtime state file path",
     )
     output.add_argument(
         "--result-mode",
@@ -310,7 +301,6 @@ def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
     cfg = ReviewConfig()
     providers = _parse_providers(args.providers) if args.providers else list(cfg.providers)
     artifact_base = args.artifact_base or cfg.artifact_base
-    state_file = args.state_file or cfg.state_file
     provider_timeouts = dict(cfg.policy.provider_timeouts)
     provider_timeouts.update(_parse_provider_timeouts(args.provider_timeouts))
     allow_paths = _parse_paths(args.allow_paths) if args.allow_paths else list(cfg.policy.allow_paths)
@@ -344,7 +334,7 @@ def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
         provider_permissions=provider_permissions,
         enforcement_mode=enforcement_mode,
     )
-    return ReviewConfig(providers=providers, artifact_base=artifact_base, state_file=state_file, policy=policy)
+    return ReviewConfig(providers=providers, artifact_base=artifact_base, policy=policy)
 
 
 def main(argv: List[str] | None = None) -> int:
@@ -370,10 +360,8 @@ def main(argv: List[str] | None = None) -> int:
         prompt=args.prompt,
         providers=providers,  # type: ignore[arg-type]
         artifact_base=str(Path(cfg.artifact_base).resolve()),
-        state_file=str(Path(cfg.state_file).resolve()),
         policy=cfg.policy,
         task_id=args.task_id or None,
-        idempotency_key=args.idempotency_key or None,
         target_paths=[item.strip() for item in args.target_paths.split(",") if item.strip()],
     )
     review_mode = args.command == "review"
@@ -400,7 +388,6 @@ def main(argv: List[str] | None = None) -> int:
         "parse_failure_count": result.parse_failure_count,
         "schema_valid_count": result.schema_valid_count,
         "dropped_findings_count": result.dropped_findings_count,
-        "created_new_task": result.created_new_task,
     }
     if effective_result_mode == "artifact":
         if args.json:

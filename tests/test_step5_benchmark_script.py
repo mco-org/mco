@@ -67,7 +67,6 @@ class Step5BenchmarkScriptTests(unittest.TestCase):
                             "parse_failure_count": 0,
                             "schema_valid_count": 4,
                             "dropped_findings_count": 0,
-                            "created_new_task": True,
                         }
                     else:
                         provider_results = {provider: {"parse_ok": True, "findings_count": 1} for provider in providers}
@@ -81,7 +80,6 @@ class Step5BenchmarkScriptTests(unittest.TestCase):
                             "parse_failure_count": 0,
                             "schema_valid_count": 5,
                             "dropped_findings_count": 0,
-                            "created_new_task": True,
                         }
 
                     run_payload = {

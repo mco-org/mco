@@ -34,10 +34,8 @@ class ReviewRequest:
     prompt: str
     providers: List[ProviderId]
     artifact_base: str
-    state_file: str
     policy: ReviewPolicy
     task_id: Optional[str] = None
-    idempotency_key: Optional[str] = None
     target_paths: Optional[List[str]] = None
 
 
@@ -53,7 +51,6 @@ class ReviewResult:
     parse_failure_count: int
     schema_valid_count: int
     dropped_findings_count: int
-    created_new_task: bool
 
 
 def _sha(value: str) -> str:
@@ -67,28 +64,6 @@ def _stable_payload_hash(payload: object) -> str:
 
 def _default_task_id(repo_root: str, prompt: str) -> str:
     return f"task-{_sha(f'{repo_root}:{prompt}')[:16]}"
-
-
-def _default_idempotency_key(
-    repo_root: str,
-    prompt: str,
-    providers: List[ProviderId],
-    review_mode: bool,
-    policy: ReviewPolicy,
-) -> str:
-    mode = "review" if review_mode else "run"
-    policy_fingerprint = json.dumps(
-        {
-            "mode": mode,
-            "allow_paths": policy.allow_paths,
-            "enforcement_mode": policy.enforcement_mode,
-            "provider_permissions": policy.provider_permissions,
-            "provider_timeouts": policy.provider_timeouts,
-        },
-        sort_keys=True,
-        ensure_ascii=True,
-    )
-    return _sha(f"{repo_root}|{prompt}|{','.join(providers)}|{policy_fingerprint}|stage-b-v1")
 
 
 def _build_prompt(user_prompt: str, target_paths: List[str]) -> str:
@@ -124,14 +99,6 @@ def _write_json(path: Path, payload: object) -> None:
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-
-
-def _output_excerpt(stdout_text: str, stderr_text: str, limit: int = 240) -> str:
-    source = stdout_text.strip() or stderr_text.strip()
-    if not source:
-        return ""
-    compact = " ".join(source.split())
-    return compact[:limit]
 
 
 def _output_text(stdout_text: str, stderr_text: str) -> str:
@@ -284,7 +251,6 @@ def _run_provider(
     runtime: OrchestratorRuntime,
     adapter_map: Mapping[str, ProviderAdapter],
     resolved_task_id: str,
-    idempotency_key: str,
     full_prompt: str,
     target_paths: List[str],
     allow_paths: List[str],
@@ -352,7 +318,6 @@ def _run_provider(
             },
         )
 
-    dispatch_key = _sha(f"{idempotency_key}:{provider}:dispatch-v2")
     provider_stall_timeout = _provider_stall_timeout_seconds(request.policy, provider)
     poll_interval_seconds = _poll_interval_seconds(request.policy)
     review_hard_timeout_seconds = request.policy.review_hard_timeout_seconds if review_mode else 0
@@ -411,10 +376,7 @@ def _run_provider(
                         "cancel_reason": cancel_reason,
                         "wall_clock_seconds": round(now - started, 3),
                         "last_progress_at": _timestamp_to_iso(last_progress_at),
-                        "output_excerpt": _output_excerpt(timeout_stdout, timeout_stderr),
                         "output_text": _output_text(timeout_stdout, timeout_stderr),
-                        "output_stdout": timeout_stdout,
-                        "output_stderr": timeout_stderr,
                         "parse_ok": False,
                         "parse_reason": "",
                         "schema_valid_count": 0,
@@ -442,10 +404,7 @@ def _run_provider(
                     "cancel_reason": "provider_poll_timeout",
                     "wall_clock_seconds": round(time.time() - started, 3),
                     "last_progress_at": _timestamp_to_iso(last_progress_at),
-                    "output_excerpt": "",
                     "output_text": "",
-                    "output_stdout": "",
-                    "output_stderr": "",
                     "parse_ok": False,
                     "parse_reason": "",
                     "schema_valid_count": 0,
@@ -497,10 +456,7 @@ def _run_provider(
                 "cancel_reason": "",
                 "wall_clock_seconds": round(time.time() - started, 3),
                 "last_progress_at": _timestamp_to_iso(last_progress_at),
-                "output_excerpt": _output_excerpt(raw_stdout, raw_stderr),
                 "output_text": _output_text(raw_stdout, raw_stderr),
-                "output_stdout": raw_stdout,
-                "output_stderr": raw_stderr,
                 "parse_ok": parse_ok,
                 "parse_reason": parse_reason,
                 "schema_valid_count": schema_valid_count,
@@ -515,7 +471,7 @@ def _run_provider(
         except Exception as exc:  # pragma: no cover - guarded by contract tests
             return AttemptResult(success=False, error_kind=ErrorKind.NORMALIZATION_ERROR, stderr=str(exc))
 
-    run_result = runtime.run_with_retry(resolved_task_id, provider, dispatch_key, runner)
+    run_result = runtime.run_with_retry(resolved_task_id, provider, runner)
     output = run_result.output if isinstance(run_result.output, dict) else {}
     parse_ok = bool(output.get("parse_ok", False))
     provider_schema_valid = int(output.get("schema_valid_count", 0))
@@ -532,14 +488,10 @@ def _run_provider(
         "success": run_result.success,
         "attempts": run_result.attempts,
         "final_error": run_result.final_error.value if run_result.final_error else None,
-        "deduped_dispatch": run_result.deduped_dispatch,
         "cancel_reason": str(output.get("cancel_reason", "")),
         "wall_clock_seconds": wall_clock_seconds,
         "last_progress_at": str(output.get("last_progress_at", "")),
-        "output_excerpt": str(output.get("output_excerpt", "")),
         "output_text": str(output.get("output_text", "")),
-        "output_stdout": str(output.get("output_stdout", "")),
-        "output_stderr": str(output.get("output_stderr", "")),
         "parse_ok": parse_ok,
         "parse_reason": str(output.get("parse_reason", "")),
         "schema_valid_count": provider_schema_valid,
@@ -571,19 +523,10 @@ def run_review(
 ) -> ReviewResult:
     adapter_map = dict(adapters or _adapter_registry())
     task_id = request.task_id or _default_task_id(request.repo_root, request.prompt)
-    idempotency_key = request.idempotency_key or _default_idempotency_key(
-        request.repo_root,
-        request.prompt,
-        request.providers,
-        review_mode,
-        request.policy,
-    )
-
     runtime = OrchestratorRuntime(
         retry_policy=RetryPolicy(max_retries=request.policy.max_retries, base_delay_seconds=1.0, backoff_multiplier=2.0),
-        state_file=request.state_file,
     )
-    created_new_task, resolved_task_id = (True, task_id)
+    resolved_task_id = task_id
     artifact_root = str(task_artifact_root(request.artifact_base, resolved_task_id))
     root_path = Path(artifact_root)
     root_path.mkdir(parents=True, exist_ok=True)
@@ -619,7 +562,6 @@ def run_review(
                 runtime,
                 adapter_map,
                 resolved_task_id,
-                idempotency_key,
                 full_prompt,
                 normalized_targets,
                 normalized_allow_paths,
@@ -635,7 +577,6 @@ def run_review(
                     runtime,
                     adapter_map,
                     resolved_task_id,
-                    idempotency_key,
                     full_prompt,
                     normalized_targets,
                     normalized_allow_paths,
@@ -741,12 +682,14 @@ def run_review(
         success = bool(details.get("success"))
         parse_reason = str(details.get("parse_reason", ""))
         cancel_reason = str(details.get("cancel_reason", ""))
-        excerpt = str(details.get("output_excerpt", ""))
         summary.append(
             f"- {provider}: success={success}, final_error={details.get('final_error')}, parse_reason={parse_reason or '-'}, cancel_reason={cancel_reason or '-'}"
         )
-        if excerpt:
-            summary.append(f"  excerpt: {excerpt}")
+        output_text = str(details.get("output_text", ""))
+        if output_text:
+            summary.append("  output:")
+            for raw_line in output_text.splitlines():
+                summary.append(f"    {raw_line}")
     if write_artifacts:
         _write_text(root_path / "summary.md", "\n".join(summary))
 
@@ -768,7 +711,6 @@ def run_review(
     run_payload = {
         "task_id": resolved_task_id,
         "mode": "review" if review_mode else "run",
-        "created_new_task": created_new_task,
         "terminal_state": terminal_state.value,
         "decision": decision,
         "effective_cwd": str(Path(request.repo_root).resolve(strict=False)),
@@ -800,5 +742,4 @@ def run_review(
         parse_failure_count=parse_failure_count,
         schema_valid_count=schema_valid_count,
         dropped_findings_count=dropped_findings_count,
-        created_new_task=created_new_task,
     )

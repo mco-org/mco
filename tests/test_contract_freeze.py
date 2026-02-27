@@ -21,7 +21,7 @@ class ContractFreezeTests(unittest.TestCase):
     def test_run_result_fields_are_frozen(self) -> None:
         names = tuple(field.name for field in fields(RunResult))
         self.assertEqual(names, RUN_RESULT_FIELDS)
-        self.assertEqual(RUN_RESULT_SCHEMA_VERSION, "stage-a-v1")
+        self.assertEqual(RUN_RESULT_SCHEMA_VERSION, "stage-a-v2")
 
     def test_artifact_layout_contract(self) -> None:
         self.assertEqual(ARTIFACT_LAYOUT_VERSION, "stage-a-v1")

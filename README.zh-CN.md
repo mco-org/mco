@@ -161,7 +161,6 @@ MCO 默认零配置可用。直接运行即可，按需通过命令行参数覆�
 | `--provider-permissions-json` | 未设置 | provider 权限映射 JSON（见下方） |
 | `--save-artifacts` | 关闭 | 在默认 stdout 模式下同时写入产物 |
 | `--task-id` | 自动生成 | 稳定的任务标识符，用于产物路径 |
-| `--idempotency-key` | 未设置 | 可选请求标识（已禁用缓存，不做去重） |
 | `--artifact-base` | `reports/review` | 产物输出基础目录 |
 
 默认 provider 权限：

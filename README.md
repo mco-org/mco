@@ -161,7 +161,6 @@ MCO is zero-config by default. You can run it directly with built-in defaults an
 | `--provider-permissions-json` | unset | Provider permission mapping JSON (see below) |
 | `--save-artifacts` | off | Write artifacts while keeping stdout result delivery |
 | `--task-id` | auto-generated | Stable task identifier for artifact paths |
-| `--idempotency-key` | unset | Optional request label (cache disabled; no dedupe) |
 | `--artifact-base` | `reports/review` | Base directory for artifact output |
 
 Default provider permissions:

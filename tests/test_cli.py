@@ -60,8 +60,6 @@ class CliTests(unittest.TestCase):
                 "claude,codex,qwen",
                 "--artifact-base",
                 "reports/custom",
-                "--state-file",
-                ".mco/custom-state.json",
                 "--max-provider-parallelism",
                 "3",
                 "--provider-timeouts",
@@ -84,7 +82,6 @@ class CliTests(unittest.TestCase):
         resolved = _resolve_config(args)
         self.assertEqual(resolved.providers, ["claude", "codex", "qwen"])
         self.assertEqual(resolved.artifact_base, "reports/custom")
-        self.assertEqual(resolved.state_file, ".mco/custom-state.json")
         self.assertEqual(resolved.policy.max_provider_parallelism, 3)
         self.assertEqual(resolved.policy.provider_timeouts.get("qwen"), 240)
         self.assertEqual(resolved.policy.provider_timeouts.get("codex"), 120)

@@ -28,5 +28,4 @@ class ReviewPolicy:
 class ReviewConfig:
     providers: List[str] = field(default_factory=lambda: ["claude", "codex"])
     artifact_base: str = "reports/review"
-    state_file: str = ".mco/state.json"
     policy: ReviewPolicy = field(default_factory=ReviewPolicy)

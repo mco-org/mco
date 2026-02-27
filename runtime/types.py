@@ -19,18 +19,16 @@ class WarningKind(str, Enum):
     PROVIDER_WARNING_MCP_STARTUP = "provider_warning_mcp_startup"
 
 
-RUN_RESULT_SCHEMA_VERSION = "stage-a-v1"
+RUN_RESULT_SCHEMA_VERSION = "stage-a-v2"
 RUN_RESULT_FIELDS = (
     "task_id",
     "provider",
-    "dispatch_key",
     "success",
     "attempts",
     "delays_seconds",
     "output",
     "final_error",
     "warnings",
-    "deduped_dispatch",
 )
 
 
@@ -61,11 +59,9 @@ class AttemptResult:
 class RunResult:
     task_id: str
     provider: str
-    dispatch_key: str
     success: bool
     attempts: int
     delays_seconds: List[float]
     output: Optional[Dict[str, Any]]
     final_error: Optional[ErrorKind]
     warnings: List[WarningKind]
-    deduped_dispatch: bool = False

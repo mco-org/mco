@@ -40,7 +40,7 @@ fi
   echo "- CFG (review config loading defaults/overrides): covered by \`tests/test_config.py\`"
   echo "- S0 (interface + artifact contract freeze): covered by \`tests/test_contract_freeze.py\`"
   echo "- G (error taxonomy): covered by \`tests/test_error_taxonomy.py\`"
-  echo "- H (retry semantics + dispatch/notify idempotency): covered by \`tests/test_retry_semantics.py\`"
+  echo "- H (retry semantics): covered by \`tests/test_retry_semantics.py\`"
 } > "$REPORT_MD"
 
 jq -n \

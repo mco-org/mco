@@ -9,7 +9,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 - Disabled runtime idempotency/dispatch cache replay; repeated invocations now always re-execute providers.
 - Extended stdout payloads and human-readable output to include full per-provider output text (not only excerpt).
-- Updated CLI/README help text to clarify `--idempotency-key` is now a request label without dedupe semantics.
+- Removed legacy idempotency/state/cache knobs and fields (`--idempotency-key`, `--state-file`, `created_new_task`, `deduped_dispatch`, `dispatch_key`).
 
 ## [0.2.1] - 2026-02-26
 ### Changed

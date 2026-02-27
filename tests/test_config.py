@@ -10,7 +10,6 @@ class ConfigTests(unittest.TestCase):
         cfg = ReviewConfig()
         self.assertEqual(cfg.providers, ["claude", "codex"])
         self.assertEqual(cfg.artifact_base, "reports/review")
-        self.assertEqual(cfg.state_file, ".mco/state.json")
         self.assertEqual(cfg.policy.max_provider_parallelism, 0)
         self.assertEqual(cfg.policy.provider_timeouts, DEFAULT_PROVIDER_TIMEOUTS)
         self.assertEqual(cfg.policy.stall_timeout_seconds, 900)

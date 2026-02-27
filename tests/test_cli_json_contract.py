@@ -24,7 +24,6 @@ EXPECTED_JSON_KEYS = (
     "parse_failure_count",
     "schema_valid_count",
     "dropped_findings_count",
-    "created_new_task",
 )
 EXPECTED_DETAILED_JSON_KEYS = EXPECTED_JSON_KEYS + (
     "result_mode",
@@ -54,7 +53,6 @@ class CliJsonContractTests(unittest.TestCase):
                 parse_failure_count=0,
                 schema_valid_count=3,
                 dropped_findings_count=0,
-                created_new_task=True,
             )
             exit_code, payload = self._invoke_json(
                 ["review", "--repo", tmpdir, "--prompt", "review", "--providers", "codex", "--json"],
@@ -66,7 +64,6 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(payload["result_mode"], "stdout")
             self.assertIsInstance(payload["provider_success_count"], int)
             self.assertIsInstance(payload["provider_failure_count"], int)
-            self.assertIsInstance(payload["created_new_task"], bool)
 
     def test_run_json_contract_is_frozen(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -81,7 +78,6 @@ class CliJsonContractTests(unittest.TestCase):
                 parse_failure_count=0,
                 schema_valid_count=0,
                 dropped_findings_count=0,
-                created_new_task=False,
             )
             exit_code, payload = self._invoke_json(
                 ["run", "--repo", tmpdir, "--prompt", "run", "--providers", "codex", "--json"],
@@ -107,7 +103,6 @@ class CliJsonContractTests(unittest.TestCase):
                 parse_failure_count=0,
                 schema_valid_count=0,
                 dropped_findings_count=0,
-                created_new_task=False,
             )
             exit_code, payload = self._invoke_json(
                 [
@@ -134,13 +129,12 @@ class CliJsonContractTests(unittest.TestCase):
                 artifact_root=f"{tmpdir}/reports/review/task-run-stdout-1",
                 decision="PASS",
                 terminal_state="COMPLETED",
-                provider_results={"codex": {"success": True, "output_excerpt": "ok", "output_text": "full output"}},
+                provider_results={"codex": {"success": True, "output_text": "full output"}},
                 findings_count=0,
                 parse_success_count=0,
                 parse_failure_count=0,
                 schema_valid_count=0,
                 dropped_findings_count=0,
-                created_new_task=True,
             )
             exit_code, payload = self._invoke_json(
                 [
@@ -177,7 +171,6 @@ class CliJsonContractTests(unittest.TestCase):
                 parse_failure_count=0,
                 schema_valid_count=0,
                 dropped_findings_count=0,
-                created_new_task=True,
             )
             with patch("runtime.cli.run_review", return_value=result) as mocked:
                 output = io.StringIO()
@@ -212,7 +205,6 @@ class CliJsonContractTests(unittest.TestCase):
                 parse_failure_count=0,
                 schema_valid_count=0,
                 dropped_findings_count=0,
-                created_new_task=True,
             )
             with patch("runtime.cli.run_review", return_value=result) as mocked:
                 output = io.StringIO()

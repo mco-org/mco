@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
-import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set
 
 from .retry import RetryPolicy
 from .types import AttemptResult, ErrorKind, RunResult, TaskState
@@ -54,61 +51,15 @@ class OrchestratorRuntime:
     def __init__(
         self,
         retry_policy: Optional[RetryPolicy] = None,
-        state_file: Optional[str] = None,
         sleep_fn: Optional[Callable[[float], None]] = None,
     ) -> None:
         self.retry_policy = retry_policy or RetryPolicy()
         self.sleep_fn = sleep_fn or time.sleep
-        # Dispatch/task idempotency caching is intentionally disabled so each invocation
-        # executes against providers and returns fresh model output.
-        self.dispatch_cache: Dict[str, RunResult] = {}
-        self.idempotency_index: Dict[str, str] = {}
-        self.sent_notifications: Set[Tuple[str, str, str]] = set()
-        self.state_file = Path(state_file) if state_file else None
-        self._lock = threading.RLock()
-        if self.state_file:
-            self._load_state()
-
-    def _load_state(self) -> None:
-        with self._lock:
-            if not self.state_file:
-                return
-            if not self.state_file.exists():
-                return
-            data = json.loads(self.state_file.read_text(encoding="utf-8"))
-            self.sent_notifications = {
-                (item["task_id"], item["state"], item["channel"]) for item in data.get("sent_notifications", [])
-            }
-            # Legacy keys (idempotency_index/dispatch_cache) are ignored by design.
-
-    def _persist_state(self) -> None:
-        with self._lock:
-            if not self.state_file:
-                return
-            if not self.state_file.parent.exists():
-                self.state_file.parent.mkdir(parents=True, exist_ok=True)
-
-            payload = {
-                "sent_notifications": [
-                    {"task_id": task_id, "state": state, "channel": channel}
-                    for task_id, state, channel in sorted(self.sent_notifications)
-                ],
-            }
-
-            tmp = self.state_file.with_suffix(self.state_file.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-            tmp.replace(self.state_file)
-
-    def submit(self, task_id: str, idempotency_key: str) -> Tuple[bool, str]:
-        """Returns (created_new, task_id)."""
-        _ = idempotency_key
-        return (True, task_id)
 
     def run_with_retry(
         self,
         task_id: str,
         provider: str,
-        dispatch_key: str,
         runner: Callable[[int], AttemptResult],
     ) -> RunResult:
         attempts = 0
@@ -127,7 +78,6 @@ class OrchestratorRuntime:
                 final = RunResult(
                     task_id=task_id,
                     provider=provider,
-                    dispatch_key=dispatch_key,
                     success=True,
                     attempts=attempts,
                     delays_seconds=delays,
@@ -143,7 +93,6 @@ class OrchestratorRuntime:
                 final = RunResult(
                     task_id=task_id,
                     provider=provider,
-                    dispatch_key=dispatch_key,
                     success=False,
                     attempts=attempts,
                     delays_seconds=delays,
@@ -157,15 +106,6 @@ class OrchestratorRuntime:
             delay_seconds = self.retry_policy.compute_delay(retry_index)
             delays.append(delay_seconds)
             self.sleep_fn(delay_seconds)
-
-    def send_terminal_notification(self, task_id: str, state: TaskState, channel: str) -> bool:
-        with self._lock:
-            key = (task_id, state.value, channel)
-            if key in self.sent_notifications:
-                return False
-            self.sent_notifications.add(key)
-            self._persist_state()
-            return True
 
     def evaluate_terminal_state(self, required_provider_success: Dict[str, bool]) -> TaskState:
         if not required_provider_success:
