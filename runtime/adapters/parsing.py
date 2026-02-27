@@ -248,6 +248,112 @@ def extract_json_payloads(text: str) -> List[Any]:
     return payloads
 
 
+def _coerce_non_negative_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value >= 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if re.fullmatch(r"\d+", stripped):
+            return int(stripped)
+    return None
+
+
+def _token_candidate_from_dict(payload: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    prompt_keys = ("prompt_tokens", "input_tokens", "input", "prompt")
+    completion_keys = ("completion_tokens", "output_tokens", "output", "completion")
+    total_keys = ("total_tokens", "total")
+
+    prompt = None
+    completion = None
+    total = None
+
+    for key in prompt_keys:
+        value = _coerce_non_negative_int(payload.get(key))
+        if value is not None:
+            prompt = value
+            break
+
+    for key in completion_keys:
+        value = _coerce_non_negative_int(payload.get(key))
+        if value is not None:
+            completion = value
+            break
+
+    for key in total_keys:
+        value = _coerce_non_negative_int(payload.get(key))
+        if value is not None:
+            total = value
+            break
+
+    if prompt is None and completion is None and total is None:
+        return None
+
+    if total is None and prompt is not None and completion is not None:
+        total = prompt + completion
+
+    candidate: Dict[str, int] = {}
+    if prompt is not None:
+        candidate["prompt_tokens"] = prompt
+    if completion is not None:
+        candidate["completion_tokens"] = completion
+    if total is not None:
+        candidate["total_tokens"] = total
+    return candidate if candidate else None
+
+
+def _collect_token_usage_candidates(payload: Any, candidates: List[Dict[str, int]]) -> None:
+    if isinstance(payload, dict):
+        candidate = _token_candidate_from_dict(payload)
+        if candidate is not None:
+            candidates.append(candidate)
+        for value in payload.values():
+            if isinstance(value, (dict, list)):
+                _collect_token_usage_candidates(value, candidates)
+    elif isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, (dict, list)):
+                _collect_token_usage_candidates(item, candidates)
+
+
+def _token_candidate_score(candidate: Dict[str, int]) -> Tuple[int, int]:
+    score = 0
+    if "total_tokens" in candidate:
+        score += 4
+    if "prompt_tokens" in candidate:
+        score += 2
+    if "completion_tokens" in candidate:
+        score += 2
+    total_value = candidate.get("total_tokens")
+    if total_value is None:
+        total_value = candidate.get("prompt_tokens", 0) + candidate.get("completion_tokens", 0)
+    return (score, int(total_value))
+
+
+def extract_token_usage_from_output(text: str) -> Optional[Dict[str, int]]:
+    """
+    Best-effort token usage extraction from provider output/event streams.
+    Returns normalized keys: prompt_tokens, completion_tokens, total_tokens.
+    """
+    payloads = extract_json_payloads(text)
+    if not payloads:
+        return None
+
+    candidates: List[Dict[str, int]] = []
+    for payload in payloads:
+        _collect_token_usage_candidates(payload, candidates)
+    if not candidates:
+        return None
+
+    best = max(candidates, key=_token_candidate_score)
+    return dict(best)
+
+
 def _validate_finding_item(item: Any) -> Tuple[bool, Optional[Dict[str, Any]]]:
     if not isinstance(item, dict):
         return (False, None)

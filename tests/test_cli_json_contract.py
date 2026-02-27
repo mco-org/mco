@@ -263,6 +263,50 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(payload["command"], "review")
             self.assertEqual(tuple(payload.keys()), EXPECTED_DETAILED_JSON_KEYS)
 
+    def test_json_output_includes_token_usage_summary_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = ReviewResult(
+                task_id="task-review-json-usage-1",
+                artifact_root=None,
+                decision="PASS",
+                terminal_state="COMPLETED",
+                provider_results={
+                    "codex": {
+                        "success": True,
+                        "token_usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+                        "token_usage_completeness": "full",
+                    }
+                },
+                findings_count=0,
+                parse_success_count=0,
+                parse_failure_count=0,
+                schema_valid_count=0,
+                dropped_findings_count=0,
+                token_usage_summary={
+                    "providers_with_usage": 1,
+                    "provider_count": 1,
+                    "completeness": "full",
+                    "totals": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+                },
+            )
+            exit_code, payload = self._invoke_json(
+                [
+                    "run",
+                    "--repo",
+                    tmpdir,
+                    "--prompt",
+                    "run",
+                    "--providers",
+                    "codex",
+                    "--include-token-usage",
+                    "--json",
+                ],
+                result,
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["token_usage_summary"]["completeness"], "full")
+            self.assertEqual(payload["token_usage_summary"]["totals"]["total_tokens"], 14)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -178,6 +178,16 @@ def _render_user_readable_report(
     lines.append(f"- findings_count: {payload['findings_count']}")
     lines.append(f"- parse_success/failure: {payload['parse_success_count']}/{payload['parse_failure_count']}")
     lines.append(f"- schema_valid_count: {payload['schema_valid_count']}")
+    token_usage_summary = payload.get("token_usage_summary")
+    if isinstance(token_usage_summary, dict):
+        totals = token_usage_summary.get("totals", {})
+        if isinstance(totals, dict):
+            lines.append(
+                "- token_usage: "
+                f"completeness={token_usage_summary.get('completeness')}, "
+                f"providers_with_usage={token_usage_summary.get('providers_with_usage')}/{token_usage_summary.get('provider_count')}, "
+                f"prompt={totals.get('prompt_tokens', 0)}, completion={totals.get('completion_tokens', 0)}, total={totals.get('total_tokens', 0)}"
+            )
     lines.append("")
     lines.append("Provider Details")
     for provider in sorted(provider_results.keys()):
@@ -195,6 +205,15 @@ def _render_user_readable_report(
             lines.append("  output:")
             for raw_line in output_text.splitlines():
                 lines.append(f"    {raw_line}")
+        token_usage = details.get("token_usage")
+        if isinstance(token_usage, dict):
+            lines.append(
+                "  token_usage: "
+                f"completeness={details.get('token_usage_completeness')}, "
+                f"prompt={token_usage.get('prompt_tokens', '-')}, "
+                f"completion={token_usage.get('completion_tokens', '-')}, "
+                f"total={token_usage.get('total_tokens', '-')}"
+            )
     lines.append("")
     if result_mode in ("artifact", "both"):
         lines.append("Artifacts")
@@ -347,6 +366,11 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Human-readable output format when --json is not set. markdown-pr is review-only",
     )
     output.add_argument(
+        "--include-token-usage",
+        action="store_true",
+        help="Best-effort token usage extraction (provider and aggregate). Disabled by default for privacy/noise control",
+    )
+    output.add_argument(
         "--save-artifacts",
         action="store_true",
         help="Force artifact writes when result-mode is stdout",
@@ -494,6 +518,7 @@ def main(argv: List[str] | None = None) -> int:
         policy=cfg.policy,
         task_id=args.task_id or None,
         target_paths=[item.strip() for item in args.target_paths.split(",") if item.strip()],
+        include_token_usage=bool(args.include_token_usage),
     )
     review_mode = args.command == "review"
     if args.format == "markdown-pr" and not review_mode:
@@ -523,6 +548,8 @@ def main(argv: List[str] | None = None) -> int:
         "schema_valid_count": result.schema_valid_count,
         "dropped_findings_count": result.dropped_findings_count,
     }
+    if result.token_usage_summary is not None:
+        payload["token_usage_summary"] = result.token_usage_summary
     if effective_result_mode == "artifact":
         if args.json:
             print(json.dumps(payload, ensure_ascii=True))

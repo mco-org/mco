@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Set, Tuple
 
 from .adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
-from .adapters.parsing import extract_final_text_from_output, inspect_contract_output
+from .adapters.parsing import extract_final_text_from_output, extract_token_usage_from_output, inspect_contract_output
 from .artifacts import expected_paths, task_artifact_root
 from .config import ReviewPolicy
 from .contracts import Evidence, NormalizeContext, NormalizedFinding, ProviderAdapter, ProviderId, TaskInput
@@ -39,6 +39,7 @@ class ReviewRequest:
     policy: ReviewPolicy
     task_id: Optional[str] = None
     target_paths: Optional[List[str]] = None
+    include_token_usage: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class ReviewResult:
     schema_valid_count: int
     dropped_findings_count: int
     findings: List[Dict[str, object]] = field(default_factory=list)
+    token_usage_summary: Optional[Dict[str, object]] = None
 
 
 def _sha(value: str) -> str:
@@ -116,6 +118,49 @@ def _response_quality(success: bool, output_text: str, final_text: str) -> Tuple
     if final_text.strip() == output_text.strip():
         return (True, "raw_text")
     return (True, "extracted_final_text")
+
+
+def _token_usage_completeness(usage: Optional[Dict[str, int]]) -> str:
+    if not usage:
+        return "unavailable"
+    has_prompt = "prompt_tokens" in usage
+    has_completion = "completion_tokens" in usage
+    has_total = "total_tokens" in usage
+    if has_prompt and has_completion and has_total:
+        return "full"
+    return "partial"
+
+
+def _aggregate_token_usage_summary(provider_results: Dict[str, Dict[str, object]]) -> Dict[str, object]:
+    totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    provider_count = len(provider_results)
+    providers_with_usage = 0
+    all_full = True
+    for details in provider_results.values():
+        usage = details.get("token_usage")
+        completeness = str(details.get("token_usage_completeness", "unavailable"))
+        if isinstance(usage, dict):
+            providers_with_usage += 1
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                value = usage.get(key)
+                if isinstance(value, int):
+                    totals[key] += value
+        if completeness != "full":
+            all_full = False
+
+    if providers_with_usage == 0:
+        summary_completeness = "unavailable"
+    elif providers_with_usage == provider_count and all_full:
+        summary_completeness = "full"
+    else:
+        summary_completeness = "partial"
+
+    return {
+        "providers_with_usage": providers_with_usage,
+        "provider_count": provider_count,
+        "completeness": summary_completeness,
+        "totals": totals,
+    }
 
 
 @dataclass(frozen=True)
@@ -580,6 +625,8 @@ def _run_provider(
     output_text = str(output.get("output_text", ""))
     final_text = str(output.get("final_text", ""))
     response_ok, response_reason = _response_quality(run_result.success, output_text, final_text)
+    token_usage = extract_token_usage_from_output(output_text) if request.include_token_usage else None
+    token_usage_completeness = _token_usage_completeness(token_usage) if request.include_token_usage else None
 
     wall_clock_value = output.get("wall_clock_seconds")
     try:
@@ -613,6 +660,9 @@ def _run_provider(
         "unknown_permission_keys": unknown_permission_keys,
         "enforcement_mode": request.policy.enforcement_mode,
     }
+    if request.include_token_usage:
+        provider_result["token_usage"] = token_usage
+        provider_result["token_usage_completeness"] = token_usage_completeness
     _ensure_if_persisting()
     return _ProviderExecutionOutcome(
         provider=provider,
@@ -744,6 +794,8 @@ def run_review(
                 schema_valid_count += outcome.schema_valid_count
                 dropped_findings_count += outcome.dropped_count
 
+        token_usage_summary = _aggregate_token_usage_summary(provider_results) if request.include_token_usage else None
+
         terminal_state = runtime.evaluate_terminal_state(required_provider_success)
         aggregated_findings.sort(key=lambda item: (item.provider, item.finding_id, item.fingerprint))
         merged_findings = _merge_findings_across_providers(aggregated_findings)
@@ -850,6 +902,8 @@ def run_review(
             "schema_valid_count": schema_valid_count,
             "dropped_findings_count": dropped_findings_count,
         }
+        if token_usage_summary is not None:
+            run_payload["token_usage_summary"] = token_usage_summary
         if write_artifacts and root_path:
             _write_json(root_path / "run.json", run_payload)
 
@@ -865,6 +919,7 @@ def run_review(
             schema_valid_count=schema_valid_count,
             dropped_findings_count=dropped_findings_count,
             findings=findings_json,
+            token_usage_summary=token_usage_summary,
         )
     finally:
         if temp_artifact_dir is not None:

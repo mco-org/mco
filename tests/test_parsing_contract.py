@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from runtime.adapters.parsing import _append_text_candidate, extract_final_text_from_output, inspect_contract_output
+from runtime.adapters.parsing import (
+    _append_text_candidate,
+    extract_final_text_from_output,
+    extract_token_usage_from_output,
+    inspect_contract_output,
+)
 
 
 class ParsingContractTests(unittest.TestCase):
@@ -49,6 +54,26 @@ class ParsingContractTests(unittest.TestCase):
             ',{"type":"result","result":"Final summary sentence for callers.","stats":{"keywords":["cli","orchestrator","runtime"]}}]'
         )
         self.assertEqual(extract_final_text_from_output(text), "Final summary sentence for callers.")
+
+    def test_extract_token_usage_from_result_usage_payload(self) -> None:
+        text = '{"type":"result","usage":{"input_tokens":120,"output_tokens":30,"total_tokens":150}}'
+        self.assertEqual(
+            extract_token_usage_from_output(text),
+            {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150},
+        )
+
+    def test_extract_token_usage_prefers_highest_cumulative_candidate(self) -> None:
+        text = (
+            '{"type":"step_finish","part":{"tokens":{"input":100,"output":20,"total":120}}}\n'
+            '{"type":"step_finish","part":{"tokens":{"input":150,"output":30,"total":180}}}'
+        )
+        self.assertEqual(
+            extract_token_usage_from_output(text),
+            {"prompt_tokens": 150, "completion_tokens": 30, "total_tokens": 180},
+        )
+
+    def test_extract_token_usage_returns_none_without_json_payload(self) -> None:
+        self.assertIsNone(extract_token_usage_from_output("plain text only"))
 
     def test_contract_json_valid(self) -> None:
         text = '{"findings":[{"finding_id":"f1","severity":"low","category":"maintainability","title":"t","evidence":{"file":"a.py","line":1,"symbol":null,"snippet":"x"},"recommendation":"r","confidence":0.5,"fingerprint":"fp"}]}'

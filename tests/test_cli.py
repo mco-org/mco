@@ -118,6 +118,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.command, "run")
         self.assertEqual(args.result_mode, "stdout")
         self.assertEqual(args.format, "report")
+        self.assertFalse(args.include_token_usage)
         self.assertFalse(args.save_artifacts)
 
     def test_parser_rejects_config_flag(self) -> None:

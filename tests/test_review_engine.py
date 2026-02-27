@@ -361,6 +361,32 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(details.get("response_ok"), True)
             self.assertEqual(details.get("response_reason"), "extracted_final_text")
 
+    def test_run_mode_token_usage_is_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw = (
+                '{"type":"thread.started"}\n'
+                '{"type":"result","result":"ok","usage":{"input_tokens":10,"output_tokens":4,"total_tokens":14}}'
+            )
+            adapter = FakeAdapter("codex", raw)
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="summarize",
+                providers=["codex"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+                include_token_usage=True,
+            )
+            result = run_review(req, adapters={"codex": adapter}, review_mode=False)
+            details = result.provider_results["codex"]
+            self.assertEqual(
+                details.get("token_usage"),
+                {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+            )
+            self.assertEqual(details.get("token_usage_completeness"), "full")
+            self.assertIsNotNone(result.token_usage_summary)
+            self.assertEqual(result.token_usage_summary.get("providers_with_usage"), 1)  # type: ignore[union-attr]
+            self.assertEqual(result.token_usage_summary.get("completeness"), "full")  # type: ignore[union-attr]
+
     def test_wait_all_keeps_fast_provider_when_other_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fast = FakeAdapter(
