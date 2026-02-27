@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.3.3] - 2026-02-27
 ### Added
 - Added `mco doctor` command with human-readable and `--json` outputs to probe provider binary/auth readiness.
 - Added `--format markdown-pr` (review-only) to render PR-ready Markdown summaries from aggregated findings.

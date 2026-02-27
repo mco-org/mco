@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mco"
-version = "0.3.2"
+version = "0.3.3"
 description = "Neutral multi-provider CLI orchestrator for agent-style run/review workflows."
 readme = "README.md"
 requires-python = ">=3.10"
