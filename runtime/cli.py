@@ -43,6 +43,7 @@ RUN_EPILOG = (
     "Examples:\n"
     "  mco run --repo . --prompt \"Summarize the architecture.\" --providers claude,codex\n"
     "  mco run --repo . --prompt \"List risky files.\" --providers claude,codex,qwen --json\n"
+    "  mco run --repo . --prompt \"Compare provider outputs.\" --providers claude,codex,qwen --synthesize\n"
     "  mco run --repo . --prompt \"Analyze runtime.\" --save-artifacts --json\n\n"
     "Exit codes:\n"
     "  0 = success\n"
@@ -53,6 +54,7 @@ REVIEW_EPILOG = (
     "Examples:\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex\n"
     "  mco review --repo . --prompt \"Review for security issues.\" --providers claude,codex,qwen --json\n"
+    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --synthesize --synth-provider claude\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format markdown-pr\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format sarif\n"
     "  mco review --repo . --prompt \"Review runtime/ only.\" --target-paths runtime --strict-contract\n\n"
@@ -189,6 +191,12 @@ def _render_user_readable_report(
                 f"providers_with_usage={token_usage_summary.get('providers_with_usage')}/{token_usage_summary.get('provider_count')}, "
                 f"prompt={totals.get('prompt_tokens', 0)}, completion={totals.get('completion_tokens', 0)}, total={totals.get('total_tokens', 0)}"
             )
+    synthesis = payload.get("synthesis")
+    if isinstance(synthesis, dict):
+        lines.append(
+            "- synthesis: "
+            f"provider={synthesis.get('provider')}, success={synthesis.get('success')}, reason={synthesis.get('reason')}"
+        )
     lines.append("")
     lines.append("Provider Details")
     for provider in sorted(provider_results.keys()):
@@ -372,6 +380,16 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Best-effort token usage extraction (provider and aggregate). Disabled by default for privacy/noise control",
     )
     output.add_argument(
+        "--synthesize",
+        action="store_true",
+        help="Run one extra synthesis pass to produce consensus/divergence summary (default: disabled)",
+    )
+    output.add_argument(
+        "--synth-provider",
+        default="",
+        help="Provider to run synthesis pass (must be included in --providers). Defaults to claude when available",
+    )
+    output.add_argument(
         "--save-artifacts",
         action="store_true",
         help="Force artifact writes when result-mode is stdout",
@@ -510,6 +528,11 @@ def main(argv: List[str] | None = None) -> int:
     if not providers:
         print("No valid providers selected.", file=sys.stderr)
         return 2
+    synth_provider = args.synth_provider.strip() if isinstance(args.synth_provider, str) else ""
+    synthesize = bool(args.synthesize or synth_provider)
+    if synth_provider and synth_provider not in providers:
+        print("--synth-provider must be one of selected providers", file=sys.stderr)
+        return 2
 
     req = ReviewRequest(
         repo_root=repo_root,
@@ -520,6 +543,8 @@ def main(argv: List[str] | None = None) -> int:
         task_id=args.task_id or None,
         target_paths=[item.strip() for item in args.target_paths.split(",") if item.strip()],
         include_token_usage=bool(args.include_token_usage),
+        synthesize=synthesize,
+        synthesis_provider=synth_provider or None,
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
@@ -551,6 +576,8 @@ def main(argv: List[str] | None = None) -> int:
     }
     if result.token_usage_summary is not None:
         payload["token_usage_summary"] = result.token_usage_summary
+    if result.synthesis is not None:
+        payload["synthesis"] = result.synthesis
     if effective_result_mode == "artifact":
         if args.json:
             print(json.dumps(payload, ensure_ascii=True))

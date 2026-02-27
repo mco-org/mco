@@ -40,6 +40,8 @@ class ReviewRequest:
     task_id: Optional[str] = None
     target_paths: Optional[List[str]] = None
     include_token_usage: bool = False
+    synthesize: bool = False
+    synthesis_provider: Optional[ProviderId] = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ class ReviewResult:
     dropped_findings_count: int
     findings: List[Dict[str, object]] = field(default_factory=list)
     token_usage_summary: Optional[Dict[str, object]] = None
+    synthesis: Optional[Dict[str, object]] = None
 
 
 def _sha(value: str) -> str:
@@ -161,6 +164,78 @@ def _aggregate_token_usage_summary(provider_results: Dict[str, Dict[str, object]
         "completeness": summary_completeness,
         "totals": totals,
     }
+
+
+def _resolve_synthesis_provider(
+    provider_order: List[str],
+    requested_provider: Optional[str],
+) -> Optional[str]:
+    if requested_provider:
+        return requested_provider if requested_provider in provider_order else None
+    if "claude" in provider_order:
+        return "claude"
+    return provider_order[0] if provider_order else None
+
+
+def _truncate_synthesis_text(text: str, limit: int = 1200) -> str:
+    normalized = text.strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit].rstrip() + "..."
+
+
+def _build_synthesis_prompt(
+    review_mode: bool,
+    decision: str,
+    terminal_state: str,
+    provider_results: Dict[str, Dict[str, object]],
+    merged_findings: List[Dict[str, object]],
+) -> str:
+    provider_summaries: List[Dict[str, object]] = []
+    for provider, details in provider_results.items():
+        text = str(details.get("final_text", "")) or str(details.get("output_text", ""))
+        provider_summaries.append(
+            {
+                "provider": provider,
+                "success": bool(details.get("success")),
+                "final_error": details.get("final_error"),
+                "findings_count": int(details.get("findings_count", 0)),
+                "summary_text": _truncate_synthesis_text(text),
+            }
+        )
+
+    findings_for_prompt = [
+        {
+            "severity": finding.get("severity"),
+            "category": finding.get("category"),
+            "title": finding.get("title"),
+            "location": (
+                f"{finding.get('evidence', {}).get('file')}:{finding.get('evidence', {}).get('line')}"
+                if isinstance(finding.get("evidence"), dict)
+                else ""
+            ),
+            "detected_by": finding.get("detected_by", []),
+            "recommendation": finding.get("recommendation", ""),
+            "confidence": finding.get("confidence", 0.0),
+        }
+        for finding in merged_findings[:40]
+    ]
+
+    mode = "review" if review_mode else "run"
+    return (
+        f"You are synthesizing outputs from multiple coding agents for a {mode} task.\n\n"
+        f"Decision: {decision}\nTerminal state: {terminal_state}\n\n"
+        "Provider outputs (JSON):\n"
+        f"{json.dumps(provider_summaries, ensure_ascii=True)}\n\n"
+        "Merged findings (JSON):\n"
+        f"{json.dumps(findings_for_prompt, ensure_ascii=True)}\n\n"
+        "Produce concise markdown with these headings only:\n"
+        "## Consensus\n## Divergence\n## Recommended Next Steps\n\n"
+        "Constraints:\n"
+        "- Max 220 words\n"
+        "- No code fences\n"
+        "- Be concrete and action-oriented\n"
+    )
 
 
 @dataclass(frozen=True)
@@ -824,6 +899,83 @@ def run_review(
             decision = "PASS"
 
         findings_json = merged_findings
+        synthesis: Optional[Dict[str, object]] = None
+        if request.synthesize:
+            selected_synthesis_provider = _resolve_synthesis_provider(provider_order, request.synthesis_provider)
+            if selected_synthesis_provider is None:
+                synthesis = {
+                    "provider": request.synthesis_provider,
+                    "success": False,
+                    "reason": (
+                        "requested_provider_not_selected"
+                        if request.synthesis_provider
+                        else "no_provider_available"
+                    ),
+                    "text": "",
+                }
+            else:
+                synthesis_prompt = _build_synthesis_prompt(
+                    review_mode,
+                    decision,
+                    terminal_state.value,
+                    provider_results,
+                    merged_findings,
+                )
+                with tempfile.TemporaryDirectory(prefix="mco-synthesis-") as synthesis_artifact_base:
+                    synthesis_request = ReviewRequest(
+                        repo_root=request.repo_root,
+                        prompt=synthesis_prompt,
+                        providers=[selected_synthesis_provider],  # type: ignore[list-item]
+                        artifact_base=synthesis_artifact_base,
+                        policy=request.policy,
+                        task_id=request.task_id,
+                        target_paths=request.target_paths,
+                        include_token_usage=request.include_token_usage,
+                        synthesize=False,
+                        synthesis_provider=None,
+                    )
+                    synthesis_outcome = _run_provider(
+                        synthesis_request,
+                        runtime,
+                        adapter_map,
+                        resolved_task_id,
+                        synthesis_artifact_base,
+                        False,
+                        synthesis_prompt,
+                        normalized_targets,
+                        normalized_allow_paths,
+                        False,
+                        selected_synthesis_provider,
+                    )
+                synthesis_provider_result = synthesis_outcome.provider_result
+                synthesis_text = str(synthesis_provider_result.get("final_text", "")) or str(
+                    synthesis_provider_result.get("output_text", "")
+                )
+                synthesis_success = bool(synthesis_provider_result.get("success")) and bool(synthesis_text.strip())
+                failure_reason = synthesis_provider_result.get("final_error")
+                if failure_reason is None:
+                    failure_reason = synthesis_provider_result.get("response_reason")
+                if failure_reason is None:
+                    failure_reason = synthesis_provider_result.get("reason")
+                synthesis_reason = "ok" if synthesis_success else (
+                    str(failure_reason) if failure_reason not in (None, "") else "synthesis_failed"
+                )
+                synthesis = {
+                    "provider": selected_synthesis_provider,
+                    "success": synthesis_success,
+                    "reason": synthesis_reason,
+                    "text": synthesis_text,
+                    "attempts": synthesis_provider_result.get("attempts"),
+                    "final_error": synthesis_provider_result.get("final_error"),
+                    "wall_clock_seconds": synthesis_provider_result.get("wall_clock_seconds"),
+                    "response_ok": synthesis_provider_result.get("response_ok"),
+                    "response_reason": synthesis_provider_result.get("response_reason"),
+                }
+                if request.include_token_usage:
+                    synthesis["token_usage"] = synthesis_provider_result.get("token_usage")
+                    synthesis["token_usage_completeness"] = synthesis_provider_result.get(
+                        "token_usage_completeness",
+                    )
 
         if review_mode and write_artifacts and root_path:
             _write_json(root_path / "findings.json", findings_json)
@@ -863,6 +1015,17 @@ def run_review(
             if output_text:
                 summary.append("  output:")
                 for raw_line in output_text.splitlines():
+                    summary.append(f"    {raw_line}")
+        if synthesis is not None:
+            summary.append("")
+            summary.append("## Synthesis")
+            summary.append(f"- provider: {synthesis.get('provider')}")
+            summary.append(f"- success: {synthesis.get('success')}")
+            summary.append(f"- reason: {synthesis.get('reason')}")
+            text = str(synthesis.get("text", ""))
+            if text:
+                summary.append("  output:")
+                for raw_line in text.splitlines():
                     summary.append(f"    {raw_line}")
         if write_artifacts and root_path:
             _write_text(root_path / "summary.md", "\n".join(summary))
@@ -904,6 +1067,8 @@ def run_review(
         }
         if token_usage_summary is not None:
             run_payload["token_usage_summary"] = token_usage_summary
+        if synthesis is not None:
+            run_payload["synthesis"] = synthesis
         if write_artifacts and root_path:
             _write_json(root_path / "run.json", run_payload)
 
@@ -920,6 +1085,7 @@ def run_review(
             dropped_findings_count=dropped_findings_count,
             findings=findings_json,
             token_usage_summary=token_usage_summary,
+            synthesis=synthesis,
         )
     finally:
         if temp_artifact_dir is not None:

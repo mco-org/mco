@@ -4,7 +4,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from runtime.cli import main
@@ -339,6 +339,66 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(payload["token_usage_summary"]["completeness"], "full")
             self.assertEqual(payload["token_usage_summary"]["totals"]["total_tokens"], 14)
+
+    def test_json_output_includes_synthesis_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = ReviewResult(
+                task_id="task-run-synthesis-1",
+                artifact_root=None,
+                decision="PASS",
+                terminal_state="COMPLETED",
+                provider_results={"codex": {"success": True}},
+                findings_count=0,
+                parse_success_count=0,
+                parse_failure_count=0,
+                schema_valid_count=0,
+                dropped_findings_count=0,
+                synthesis={
+                    "provider": "codex",
+                    "success": True,
+                    "reason": "ok",
+                    "text": "## Consensus\nAligned.",
+                },
+            )
+            exit_code, payload = self._invoke_json(
+                [
+                    "run",
+                    "--repo",
+                    tmpdir,
+                    "--prompt",
+                    "run",
+                    "--providers",
+                    "codex",
+                    "--synthesize",
+                    "--json",
+                ],
+                result,
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertIn("synthesis", payload)
+            self.assertEqual(payload["synthesis"]["provider"], "codex")
+            self.assertEqual(payload["synthesis"]["success"], True)
+
+    def test_invalid_synth_provider_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = main(
+                    [
+                        "run",
+                        "--repo",
+                        tmpdir,
+                        "--prompt",
+                        "run",
+                        "--providers",
+                        "codex",
+                        "--synth-provider",
+                        "claude",
+                        "--json",
+                    ]
+                )
+            self.assertEqual(exit_code, 2)
+            self.assertIn("--synth-provider must be one of selected providers", stderr.getvalue())
 
 
 if __name__ == "__main__":

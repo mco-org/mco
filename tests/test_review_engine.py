@@ -27,6 +27,7 @@ class FakeAdapter:
         self._raw_stdout = raw_stdout
         self.runs = 0
         self._run_state: _RunState | None = None
+        self.received_prompts: list[str] = []
 
     def detect(self) -> ProviderPresence:
         return ProviderPresence(provider=self.id, detected=True, binary_path="/bin/fake", version="1.0", auth_ok=True)
@@ -43,6 +44,7 @@ class FakeAdapter:
         )
 
     def run(self, input_task: TaskInput) -> TaskRunRef:
+        self.received_prompts.append(input_task.prompt)
         self.runs += 1
         artifact_root = Path(input_task.metadata["artifact_root"]) / input_task.task_id
         raw_dir = artifact_root / "raw"
@@ -83,6 +85,17 @@ class FakeAdapter:
     def normalize(self, raw: object, ctx: NormalizeContext):
         text = raw if isinstance(raw, str) else ""
         return normalize_findings_from_text(text, ctx, self.id)  # type: ignore[arg-type]
+
+
+class SequencedFakeAdapter(FakeAdapter):
+    def __init__(self, provider: str, outputs: list[str]) -> None:
+        super().__init__(provider, outputs[0] if outputs else "")
+        self._outputs = outputs or [""]
+
+    def run(self, input_task: TaskInput) -> TaskRunRef:
+        index = self.runs if self.runs < len(self._outputs) else len(self._outputs) - 1
+        self._raw_stdout = self._outputs[index]
+        return super().run(input_task)
 
 
 class TimedFakeAdapter(FakeAdapter):
@@ -386,6 +399,102 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertIsNotNone(result.token_usage_summary)
             self.assertEqual(result.token_usage_summary.get("providers_with_usage"), 1)  # type: ignore[union-attr]
             self.assertEqual(result.token_usage_summary.get("completeness"), "full")  # type: ignore[union-attr]
+
+    def test_synthesis_runs_extra_pass_with_default_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = SequencedFakeAdapter(
+                "claude",
+                [
+                    "First response from claude",
+                    "## Consensus\nMost providers agree on scope.\n## Divergence\nMinor phrasing differences.\n## Recommended Next Steps\nImplement and validate.",
+                ],
+            )
+            qwen = FakeAdapter("qwen", "Response from qwen")
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="summarize",
+                providers=["claude", "qwen"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+                synthesize=True,
+            )
+            result = run_review(req, adapters={"claude": claude, "qwen": qwen}, review_mode=False, write_artifacts=False)
+            self.assertIsNotNone(result.synthesis)
+            synthesis = result.synthesis or {}
+            self.assertEqual(synthesis.get("provider"), "claude")
+            self.assertEqual(synthesis.get("success"), True)
+            self.assertEqual(synthesis.get("reason"), "ok")
+            self.assertIn("## Consensus", str(synthesis.get("text", "")))
+            self.assertEqual(claude.runs, 2)
+            self.assertEqual(qwen.runs, 1)
+            self.assertGreaterEqual(len(claude.received_prompts), 2)
+            self.assertIn("You are synthesizing outputs from multiple coding agents", claude.received_prompts[1])
+
+    def test_synthesis_honors_explicit_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = FakeAdapter("claude", "First response from claude")
+            codex = SequencedFakeAdapter(
+                "codex",
+                [
+                    "First response from codex",
+                    "## Consensus\ncodex synthesis output",
+                ],
+            )
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="summarize",
+                providers=["claude", "codex"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+                synthesize=True,
+                synthesis_provider="codex",
+            )
+            result = run_review(req, adapters={"claude": claude, "codex": codex}, review_mode=False, write_artifacts=False)
+            self.assertIsNotNone(result.synthesis)
+            self.assertEqual((result.synthesis or {}).get("provider"), "codex")
+            self.assertEqual(codex.runs, 2)
+            self.assertEqual(claude.runs, 1)
+
+    def test_synthesis_with_unselected_provider_reports_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = FakeAdapter("claude", "First response from claude")
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="summarize",
+                providers=["claude"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+                synthesize=True,
+                synthesis_provider="codex",
+            )
+            result = run_review(req, adapters={"claude": claude}, review_mode=False, write_artifacts=False)
+            self.assertIsNotNone(result.synthesis)
+            synthesis = result.synthesis or {}
+            self.assertEqual(synthesis.get("success"), False)
+            self.assertEqual(synthesis.get("reason"), "requested_provider_not_selected")
+            self.assertEqual(claude.runs, 1)
+
+    def test_synthesis_is_written_to_run_payload_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = SequencedFakeAdapter(
+                "claude",
+                [
+                    "First response from claude",
+                    "## Consensus\nSynthesis payload",
+                ],
+            )
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="summarize",
+                providers=["claude"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+                synthesize=True,
+            )
+            result = run_review(req, adapters={"claude": claude}, review_mode=False, write_artifacts=True)
+            run_payload = json.loads(Path(result.artifact_root or "", "run.json").read_text(encoding="utf-8"))
+            self.assertIn("synthesis", run_payload)
+            self.assertEqual(run_payload["synthesis"].get("provider"), "claude")
 
     def test_wait_all_keeps_fast_provider_when_other_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
