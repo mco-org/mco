@@ -6,8 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.3.2] - 2026-02-27
 ### Changed
 - Added run-mode answer extraction fields per provider: `final_text`, `response_ok`, and `response_reason`, while keeping `output_text` as raw output for debugging.
+- Improved `final_text` extraction quality for event-stream outputs by preferring high-signal answer candidates over trailing low-signal tokens.
 
 ## [0.3.1] - 2026-02-27
 ### Changed
