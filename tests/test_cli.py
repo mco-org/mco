@@ -144,6 +144,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("Access and Contracts:", help_text)
         self.assertIn("Examples:", help_text)
         self.assertIn("--format markdown-pr", help_text)
+        self.assertIn("--format sarif", help_text)
         self.assertIn("Exit codes:", help_text)
         self.assertIn("INCONCLUSIVE", help_text)
         self.assertIn("(default: 900)", help_text)

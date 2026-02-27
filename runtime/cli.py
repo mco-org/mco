@@ -9,7 +9,7 @@ from typing import Dict, List, Mapping
 from .adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
 from .config import ReviewConfig, ReviewPolicy
 from .contracts import ProviderPresence
-from .formatters import format_markdown_pr
+from .formatters import format_markdown_pr, format_sarif
 from .review_engine import ReviewRequest, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "opencode", "qwen")
@@ -54,6 +54,7 @@ REVIEW_EPILOG = (
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex\n"
     "  mco review --repo . --prompt \"Review for security issues.\" --providers claude,codex,qwen --json\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format markdown-pr\n"
+    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format sarif\n"
     "  mco review --repo . --prompt \"Review runtime/ only.\" --target-paths runtime --strict-contract\n\n"
     "Exit codes:\n"
     "  0 = success\n"
@@ -361,9 +362,9 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     output.add_argument(
         "--format",
-        choices=("report", "markdown-pr"),
+        choices=("report", "markdown-pr", "sarif"),
         default="report",
-        help="Human-readable output format when --json is not set. markdown-pr is review-only",
+        help="Output format when --json is not set. markdown-pr/sarif are review-only",
     )
     output.add_argument(
         "--include-token-usage",
@@ -521,8 +522,8 @@ def main(argv: List[str] | None = None) -> int:
         include_token_usage=bool(args.include_token_usage),
     )
     review_mode = args.command == "review"
-    if args.format == "markdown-pr" and not review_mode:
-        print("--format markdown-pr is supported only for review command", file=sys.stderr)
+    if args.format in ("markdown-pr", "sarif") and not review_mode:
+        print(f"--format {args.format} is supported only for review command", file=sys.stderr)
         return 2
     effective_result_mode = args.result_mode
     if args.save_artifacts and effective_result_mode == "stdout":
@@ -556,6 +557,8 @@ def main(argv: List[str] | None = None) -> int:
         else:
             if args.format == "markdown-pr":
                 print(format_markdown_pr(payload, result.findings))
+            elif args.format == "sarif":
+                print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
             else:
                 print(
                     _render_user_readable_report(
@@ -575,6 +578,8 @@ def main(argv: List[str] | None = None) -> int:
         else:
             if args.format == "markdown-pr":
                 print(format_markdown_pr(payload, result.findings))
+            elif args.format == "sarif":
+                print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
             else:
                 print(
                     _render_user_readable_report(
