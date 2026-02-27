@@ -119,6 +119,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.result_mode, "stdout")
         self.assertEqual(args.format, "report")
         self.assertFalse(args.include_token_usage)
+        self.assertFalse(args.synthesize)
+        self.assertEqual(args.synth_provider, "")
         self.assertFalse(args.save_artifacts)
 
     def test_parser_rejects_config_flag(self) -> None:
@@ -145,6 +147,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("Examples:", help_text)
         self.assertIn("--format markdown-pr", help_text)
         self.assertIn("--format sarif", help_text)
+        self.assertIn("--synthesize", help_text)
+        self.assertIn("--synth-provider", help_text)
         self.assertIn("Exit codes:", help_text)
         self.assertIn("INCONCLUSIVE", help_text)
         self.assertIn("(default: 900)", help_text)
