@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import time
 import unittest
@@ -264,6 +265,67 @@ class AdapterContractTests(unittest.TestCase):
             status = self._wait_terminal(adapter, ref)
             self.assertTrue(status.completed)
             self.assertEqual(status.attempt_state, "SUCCEEDED")
+
+    def test_detect_uses_which_result_for_binary_path(self) -> None:
+        adapter = CodexAdapter()
+        with patch("runtime.adapters.shim.shutil.which", return_value="/mock/bin/codex") as mocked_which:
+            with patch.object(adapter, "_probe_version", return_value="codex-cli 0.105.0"):
+                with patch.object(adapter, "_probe_auth", return_value=(False, "probe_config_error")):
+                    presence = adapter.detect()
+        mocked_which.assert_called_once()
+        self.assertEqual(presence.binary_path, "/mock/bin/codex")
+        self.assertFalse(presence.auth_ok)
+        self.assertEqual(presence.reason, "probe_config_error")
+
+    def test_probe_version_uses_sanitized_env(self) -> None:
+        adapter = CodexAdapter()
+        with patch.dict("os.environ", {"CLAUDECODE": "1", "PATH": "/tmp/bin"}):
+            with patch("runtime.adapters.shim.subprocess.run") as mocked_run:
+                mocked_run.return_value = subprocess.CompletedProcess(
+                    args=["codex", "--version"],
+                    returncode=0,
+                    stdout="codex-cli 0.105.0\n",
+                    stderr="",
+                )
+                version = adapter._probe_version("/mock/bin/codex")  # type: ignore[attr-defined]
+        self.assertEqual(version, "codex-cli 0.105.0")
+        kwargs = mocked_run.call_args.kwargs
+        self.assertIn("env", kwargs)
+        self.assertNotIn("CLAUDECODE", kwargs["env"])
+        self.assertEqual(kwargs["env"].get("PATH"), "/tmp/bin")
+
+    def test_probe_auth_reason_classification(self) -> None:
+        adapter = CodexAdapter()
+        with patch("runtime.adapters.shim.subprocess.run") as mocked_run:
+            mocked_run.return_value = subprocess.CompletedProcess(
+                args=["codex", "login", "status"],
+                returncode=1,
+                stdout="",
+                stderr="Configuration error: unknown key model_reasoning_effort",
+            )
+            ok, reason = adapter._probe_auth("/mock/bin/codex")  # type: ignore[attr-defined]
+            self.assertFalse(ok)
+            self.assertEqual(reason, "probe_config_error")
+
+            mocked_run.return_value = subprocess.CompletedProcess(
+                args=["codex", "login", "status"],
+                returncode=1,
+                stdout="",
+                stderr="Not logged in. Please run codex login",
+            )
+            ok, reason = adapter._probe_auth("/mock/bin/codex")  # type: ignore[attr-defined]
+            self.assertFalse(ok)
+            self.assertEqual(reason, "auth_check_failed")
+
+            mocked_run.return_value = subprocess.CompletedProcess(
+                args=["codex", "login", "status"],
+                returncode=1,
+                stdout="",
+                stderr="unexpected runtime failure",
+            )
+            ok, reason = adapter._probe_auth("/mock/bin/codex")  # type: ignore[attr-defined]
+            self.assertFalse(ok)
+            self.assertEqual(reason, "probe_unknown_error")
 
 
 if __name__ == "__main__":

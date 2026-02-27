@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -75,14 +76,14 @@ class ShimAdapterBase:
             )
 
         version = self._probe_version(binary)
-        auth_ok = self._probe_auth(binary)
+        auth_ok, reason = self._probe_auth(binary)
         return ProviderPresence(
             provider=self.id,
             detected=True,
             binary_path=binary,
             version=version,
             auth_ok=auth_ok,
-            reason="ok" if auth_ok else "auth_check_failed",
+            reason=reason,
         )
 
     def capabilities(self) -> CapabilitySet:
@@ -249,24 +250,40 @@ class ShimAdapterBase:
         raise NotImplementedError
 
     def _resolve_binary(self) -> Optional[str]:
+        env = _sanitize_env()
+        return shutil.which(self.binary_name, path=env.get("PATH"))
+
+    def _probe_version(self, binary: str) -> Optional[str]:
         result = subprocess.run(
-            ["bash", "-lc", f"command -v {self.binary_name}"],
+            [binary, "--version"],
             capture_output=True,
             text=True,
             check=False,
+            env=_sanitize_env(),
         )
-        value = result.stdout.strip()
-        return value if value else None
-
-    def _probe_version(self, binary: str) -> Optional[str]:
-        result = subprocess.run([binary, "--version"], capture_output=True, text=True, check=False)
         lines = (result.stdout or result.stderr).splitlines()
         return lines[-1].strip() if lines else None
 
-    def _probe_auth(self, binary: str) -> bool:
+    def _probe_auth(self, binary: str) -> tuple[bool, str]:
         cmd = self._auth_check_command(binary)
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        return result.returncode == 0
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_sanitize_env(),
+        )
+        if result.returncode == 0:
+            return True, "ok"
+
+        output = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+        config_markers = ("configuration", "config", "unknown key", "invalid", "toml", "yaml")
+        if any(marker in output for marker in config_markers):
+            return False, "probe_config_error"
+        auth_markers = ("not logged", "auth", "unauthorized", "token", "api key", "login")
+        if any(marker in output for marker in auth_markers):
+            return False, "auth_check_failed"
+        return False, "probe_unknown_error"
 
     def _auth_check_command(self, binary: str) -> List[str]:
         raise NotImplementedError

@@ -153,6 +153,24 @@ class PermissionAwareFakeAdapter(FakeAdapter):
         return super().run(input_task)
 
 
+class UnavailableFakeAdapter(FakeAdapter):
+    def __init__(self, provider: str, reason: str, binary_path: str | None, version: str | None) -> None:
+        super().__init__(provider, "")
+        self._reason = reason
+        self._binary_path = binary_path
+        self._version = version
+
+    def detect(self) -> ProviderPresence:
+        return ProviderPresence(
+            provider=self.id,
+            detected=bool(self._binary_path),
+            binary_path=self._binary_path,
+            version=self._version,
+            auth_ok=False,
+            reason=self._reason,
+        )
+
+
 class ReviewEngineTests(unittest.TestCase):
     def test_review_with_findings_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -579,6 +597,28 @@ class ReviewEngineTests(unittest.TestCase):
             result = run_review(req, adapters={"claude": adapter}, review_mode=True, write_artifacts=False)
             self.assertIsNone(result.artifact_root)
             self.assertFalse(Path(tmpdir, "artifacts").exists())
+
+    def test_provider_unavailable_surfaces_presence_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = UnavailableFakeAdapter(
+                "codex",
+                reason="probe_config_error",
+                binary_path="/opt/homebrew/bin/codex",
+                version="codex-cli 0.46.0",
+            )
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="run",
+                providers=["codex"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+            )
+            result = run_review(req, adapters={"codex": adapter}, review_mode=False, write_artifacts=False)
+            details = result.provider_results["codex"]
+            self.assertEqual(details.get("reason"), "provider_unavailable")
+            self.assertEqual(details.get("presence_reason"), "probe_config_error")
+            self.assertEqual(details.get("binary_path"), "/opt/homebrew/bin/codex")
+            self.assertEqual(details.get("version"), "codex-cli 0.46.0")
 
 
 if __name__ == "__main__":

@@ -292,6 +292,9 @@ def _run_provider(
                 "reason": "provider_unavailable",
                 "detected": presence.detected,
                 "auth_ok": presence.auth_ok,
+                "presence_reason": presence.reason,
+                "binary_path": presence.binary_path,
+                "version": presence.version,
             },
         )
 

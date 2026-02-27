@@ -9,6 +9,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 - Made stdout mode truly non-persistent by default: no artifact files are written unless `--save-artifacts` or `--result-mode artifact/both` is used.
 - In stdout mode without artifact writes, `artifact_root` and provider `output_path` now return `null`.
+- Unified adapter detect/probe binary resolution and environment handling with runtime execution (`shutil.which` + sanitized env) and refined auth probe reason classification (`auth_check_failed`, `probe_config_error`, `probe_unknown_error`).
 
 ## [0.3.0] - 2026-02-27
 ### Changed
