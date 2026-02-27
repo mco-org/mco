@@ -577,13 +577,8 @@ class ReviewEngineTests(unittest.TestCase):
                 ),
             )
             result = run_review(req, adapters={"claude": adapter}, review_mode=True, write_artifacts=False)
-            root = Path(result.artifact_root)
-            self.assertFalse((root / "summary.md").exists())
-            self.assertFalse((root / "decision.md").exists())
-            self.assertFalse((root / "findings.json").exists())
-            self.assertFalse((root / "run.json").exists())
-            self.assertTrue((root / "providers" / "claude.json").exists())
-            self.assertTrue((root / "raw" / "claude.stdout.log").exists())
+            self.assertIsNone(result.artifact_root)
+            self.assertFalse(Path(tmpdir, "artifacts").exists())
 
 
 if __name__ == "__main__":

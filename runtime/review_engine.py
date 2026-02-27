@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -42,7 +43,7 @@ class ReviewRequest:
 @dataclass(frozen=True)
 class ReviewResult:
     task_id: str
-    artifact_root: str
+    artifact_root: Optional[str]
     decision: str
     terminal_state: str
     provider_results: Dict[str, Dict[str, object]]
@@ -251,15 +252,21 @@ def _run_provider(
     runtime: OrchestratorRuntime,
     adapter_map: Mapping[str, ProviderAdapter],
     resolved_task_id: str,
+    runtime_artifact_base: str,
+    persist_artifacts: bool,
     full_prompt: str,
     target_paths: List[str],
     allow_paths: List[str],
     review_mode: bool,
     provider: str,
 ) -> _ProviderExecutionOutcome:
+    def _ensure_if_persisting() -> None:
+        if persist_artifacts:
+            _ensure_provider_artifacts(runtime_artifact_base, resolved_task_id, provider)
+
     adapter = adapter_map.get(provider)
     if adapter is None:
-        _ensure_provider_artifacts(request.artifact_base, resolved_task_id, provider)
+        _ensure_if_persisting()
         return _ProviderExecutionOutcome(
             provider=provider,
             success=False,
@@ -272,7 +279,7 @@ def _run_provider(
 
     presence = adapter.detect()
     if not presence.detected or not presence.auth_ok:
-        _ensure_provider_artifacts(request.artifact_base, resolved_task_id, provider)
+        _ensure_if_persisting()
         return _ProviderExecutionOutcome(
             provider=provider,
             success=False,
@@ -300,7 +307,7 @@ def _run_provider(
         if str(key).strip() in supported_keys
     }
     if unknown_permission_keys and request.policy.enforcement_mode == "strict":
-        _ensure_provider_artifacts(request.artifact_base, resolved_task_id, provider)
+        _ensure_if_persisting()
         return _ProviderExecutionOutcome(
             provider=provider,
             success=False,
@@ -326,7 +333,7 @@ def _run_provider(
         run_ref = None
         try:
             metadata = {
-                "artifact_root": request.artifact_base,
+                "artifact_root": runtime_artifact_base,
                 "allow_paths": allow_paths,
                 "provider_permissions": effective_permissions,
                 "enforcement_mode": request.policy.enforcement_mode,
@@ -497,13 +504,17 @@ def _run_provider(
         "schema_valid_count": provider_schema_valid,
         "dropped_count": provider_dropped,
         "findings_count": len(findings),
-        "output_path": output.get("status", {}).get("output_path") if isinstance(output.get("status"), dict) else None,
+        "output_path": (
+            output.get("status", {}).get("output_path")
+            if persist_artifacts and isinstance(output.get("status"), dict)
+            else None
+        ),
         "requested_permissions": requested_permissions,
         "applied_permissions": effective_permissions,
         "unknown_permission_keys": unknown_permission_keys,
         "enforcement_mode": request.policy.enforcement_mode,
     }
-    _ensure_provider_artifacts(request.artifact_base, resolved_task_id, provider)
+    _ensure_if_persisting()
     return _ProviderExecutionOutcome(
         provider=provider,
         success=run_result.success,
@@ -521,225 +532,240 @@ def run_review(
     review_mode: bool = True,
     write_artifacts: bool = True,
 ) -> ReviewResult:
+    temp_artifact_dir: Optional[tempfile.TemporaryDirectory[str]] = None
     adapter_map = dict(adapters or _adapter_registry())
     task_id = request.task_id or _default_task_id(request.repo_root, request.prompt)
     runtime = OrchestratorRuntime(
         retry_policy=RetryPolicy(max_retries=request.policy.max_retries, base_delay_seconds=1.0, backoff_multiplier=2.0),
     )
     resolved_task_id = task_id
-    artifact_root = str(task_artifact_root(request.artifact_base, resolved_task_id))
-    root_path = Path(artifact_root)
-    root_path.mkdir(parents=True, exist_ok=True)
+    artifact_root = str(task_artifact_root(request.artifact_base, resolved_task_id)) if write_artifacts else None
+    runtime_artifact_base = request.artifact_base
+    if not write_artifacts:
+        temp_artifact_dir = tempfile.TemporaryDirectory(prefix="mco-stdout-")
+        runtime_artifact_base = temp_artifact_dir.name
+    root_path = Path(artifact_root) if artifact_root else None
+    if write_artifacts and root_path:
+        root_path.mkdir(parents=True, exist_ok=True)
 
-    normalized_targets, normalized_allow_paths = _normalize_scopes(
-        request.repo_root,
-        request.target_paths or ["."],
-        request.policy.allow_paths or ["."],
-    )
-    full_prompt = (
-        _build_prompt(request.prompt, normalized_targets)
-        if review_mode
-        else _build_run_prompt(request.prompt, normalized_targets, normalized_allow_paths)
-    )
-    provider_order: List[str] = []
-    provider_seen = set()
-    for provider in request.providers:
-        if provider in provider_seen:
-            continue
-        provider_seen.add(provider)
-        provider_order.append(provider)
-    provider_order = sorted(provider_order)
+    try:
+        normalized_targets, normalized_allow_paths = _normalize_scopes(
+            request.repo_root,
+            request.target_paths or ["."],
+            request.policy.allow_paths or ["."],
+        )
+        full_prompt = (
+            _build_prompt(request.prompt, normalized_targets)
+            if review_mode
+            else _build_run_prompt(request.prompt, normalized_targets, normalized_allow_paths)
+        )
+        provider_order: List[str] = []
+        provider_seen = set()
+        for provider in request.providers:
+            if provider in provider_seen:
+                continue
+            provider_seen.add(provider)
+            provider_order.append(provider)
+        provider_order = sorted(provider_order)
 
-    if request.policy.max_provider_parallelism <= 0:
-        max_workers = max(1, len(provider_order))
-    else:
-        max_workers = max(1, min(len(provider_order), request.policy.max_provider_parallelism))
-    outcomes: Dict[str, _ProviderExecutionOutcome] = {}
-    if max_workers <= 1:
-        for provider in provider_order:
-            outcomes[provider] = _run_provider(
-                request,
-                runtime,
-                adapter_map,
-                resolved_task_id,
-                full_prompt,
-                normalized_targets,
-                normalized_allow_paths,
-                review_mode,
-                provider,
-            )
-    else:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _run_provider,
+        if request.policy.max_provider_parallelism <= 0:
+            max_workers = max(1, len(provider_order))
+        else:
+            max_workers = max(1, min(len(provider_order), request.policy.max_provider_parallelism))
+        outcomes: Dict[str, _ProviderExecutionOutcome] = {}
+        if max_workers <= 1:
+            for provider in provider_order:
+                outcomes[provider] = _run_provider(
                     request,
                     runtime,
                     adapter_map,
                     resolved_task_id,
+                    runtime_artifact_base,
+                    write_artifacts,
                     full_prompt,
                     normalized_targets,
                     normalized_allow_paths,
                     review_mode,
                     provider,
-                ): provider
-                for provider in provider_order
-            }
-            for future in as_completed(futures):
-                provider = futures[future]
-                try:
-                    outcomes[provider] = future.result()
-                except Exception as exc:  # pragma: no cover - protective guard
-                    _ensure_provider_artifacts(request.artifact_base, resolved_task_id, provider)
-                    outcomes[provider] = _ProviderExecutionOutcome(
-                        provider=provider,
-                        success=False,
-                        parse_ok=False,
-                        schema_valid_count=0,
-                        dropped_count=0,
-                        findings=[],
-                        provider_result={"success": False, "reason": "internal_error", "error": str(exc)},
-                    )
+                )
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        _run_provider,
+                        request,
+                        runtime,
+                        adapter_map,
+                        resolved_task_id,
+                        runtime_artifact_base,
+                        write_artifacts,
+                        full_prompt,
+                        normalized_targets,
+                        normalized_allow_paths,
+                        review_mode,
+                        provider,
+                    ): provider
+                    for provider in provider_order
+                }
+                for future in as_completed(futures):
+                    provider = futures[future]
+                    try:
+                        outcomes[provider] = future.result()
+                    except Exception as exc:  # pragma: no cover - protective guard
+                        if write_artifacts:
+                            _ensure_provider_artifacts(runtime_artifact_base, resolved_task_id, provider)
+                        outcomes[provider] = _ProviderExecutionOutcome(
+                            provider=provider,
+                            success=False,
+                            parse_ok=False,
+                            schema_valid_count=0,
+                            dropped_count=0,
+                            findings=[],
+                            provider_result={"success": False, "reason": "internal_error", "error": str(exc)},
+                        )
 
-    provider_results: Dict[str, Dict[str, object]] = {}
-    required_provider_success: Dict[str, bool] = {}
-    aggregated_findings: List[NormalizedFinding] = []
-    parse_success_count = 0
-    parse_failure_count = 0
-    schema_valid_count = 0
-    dropped_findings_count = 0
+        provider_results: Dict[str, Dict[str, object]] = {}
+        required_provider_success: Dict[str, bool] = {}
+        aggregated_findings: List[NormalizedFinding] = []
+        parse_success_count = 0
+        parse_failure_count = 0
+        schema_valid_count = 0
+        dropped_findings_count = 0
 
-    for provider in provider_order:
-        outcome = outcomes[provider]
-        provider_results[provider] = outcome.provider_result
-        required_provider_success[provider] = outcome.success
-        aggregated_findings.extend(outcome.findings)
+        for provider in provider_order:
+            outcome = outcomes[provider]
+            provider_results[provider] = outcome.provider_result
+            required_provider_success[provider] = outcome.success
+            aggregated_findings.extend(outcome.findings)
+            if review_mode:
+                if outcome.parse_ok:
+                    parse_success_count += 1
+                else:
+                    parse_failure_count += 1
+                schema_valid_count += outcome.schema_valid_count
+                dropped_findings_count += outcome.dropped_count
+
+        terminal_state = runtime.evaluate_terminal_state(required_provider_success)
+        aggregated_findings.sort(key=lambda item: (item.provider, item.finding_id, item.fingerprint))
+
+        counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for finding in aggregated_findings:
+            counts[finding.severity] = counts.get(finding.severity, 0) + 1
+
+        if review_mode and counts.get("critical", 0) > 0:
+            decision = "FAIL"
+        elif review_mode and counts.get("high", 0) >= request.policy.high_escalation_threshold:
+            decision = "ESCALATE"
+        elif review_mode and request.policy.enforce_findings_contract and len(aggregated_findings) == 0:
+            decision = "INCONCLUSIVE"
+        elif review_mode and terminal_state == TaskState.FAILED:
+            decision = "FAIL"
+        elif review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
+            decision = "PARTIAL"
+        elif not review_mode and terminal_state == TaskState.FAILED:
+            decision = "FAIL"
+        elif not review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
+            decision = "PARTIAL"
+        else:
+            decision = "PASS"
+
+        findings_json = [
+            asdict(item)
+            for item in aggregated_findings
+        ]
+
+        if review_mode and write_artifacts and root_path:
+            _write_json(root_path / "findings.json", findings_json)
+
+        summary = [
+            f"# {'Review' if review_mode else 'Run'} Summary ({resolved_task_id})",
+            "",
+            f"- Decision: {decision}",
+            f"- Terminal state: {terminal_state.value}",
+            f"- Providers: {', '.join(provider_order)}",
+            f"- Findings total: {len(aggregated_findings)}",
+            f"- Parse success count: {parse_success_count}",
+            f"- Parse failure count: {parse_failure_count}",
+            f"- Schema valid finding count: {schema_valid_count}",
+            f"- Dropped finding count: {dropped_findings_count}",
+            f"- Allow paths: {', '.join(normalized_allow_paths)}",
+            f"- Enforcement mode: {request.policy.enforcement_mode}",
+            f"- Strict contract: {request.policy.enforce_findings_contract}",
+            "",
+            "## Severity Counts",
+            f"- critical: {counts['critical']}",
+            f"- high: {counts['high']}",
+            f"- medium: {counts['medium']}",
+            f"- low: {counts['low']}",
+            "",
+            "## Provider Results",
+        ]
+        for provider in provider_order:
+            details = provider_results.get(provider, {})
+            success = bool(details.get("success"))
+            parse_reason = str(details.get("parse_reason", ""))
+            cancel_reason = str(details.get("cancel_reason", ""))
+            summary.append(
+                f"- {provider}: success={success}, final_error={details.get('final_error')}, parse_reason={parse_reason or '-'}, cancel_reason={cancel_reason or '-'}"
+            )
+            output_text = str(details.get("output_text", ""))
+            if output_text:
+                summary.append("  output:")
+                for raw_line in output_text.splitlines():
+                    summary.append(f"    {raw_line}")
+        if write_artifacts and root_path:
+            _write_text(root_path / "summary.md", "\n".join(summary))
+
+        decision_lines = [f"# {'Review' if review_mode else 'Run'} Decision ({resolved_task_id})", ""]
+        decision_lines.append(f"- decision: {decision}")
+        decision_lines.append(f"- terminal_state: {terminal_state.value}")
         if review_mode:
-            if outcome.parse_ok:
-                parse_success_count += 1
-            else:
-                parse_failure_count += 1
-            schema_valid_count += outcome.schema_valid_count
-            dropped_findings_count += outcome.dropped_count
+            decision_lines.append(
+                f"- rule_trace: critical={counts['critical']}, high={counts['high']}, findings={len(aggregated_findings)}"
+            )
+        else:
+            success_count = sum(1 for value in required_provider_success.values() if value)
+            decision_lines.append(
+                f"- run_trace: providers={len(required_provider_success)}, success={success_count}, failed={len(required_provider_success) - success_count}"
+            )
+        if write_artifacts and root_path:
+            _write_text(root_path / "decision.md", "\n".join(decision_lines))
 
-    terminal_state = runtime.evaluate_terminal_state(required_provider_success)
-    aggregated_findings.sort(key=lambda item: (item.provider, item.finding_id, item.fingerprint))
+        run_payload = {
+            "task_id": resolved_task_id,
+            "mode": "review" if review_mode else "run",
+            "terminal_state": terminal_state.value,
+            "decision": decision,
+            "effective_cwd": str(Path(request.repo_root).resolve(strict=False)),
+            "allow_paths": normalized_allow_paths,
+            "allow_paths_hash": _stable_payload_hash(normalized_allow_paths),
+            "target_paths": normalized_targets,
+            "enforcement_mode": request.policy.enforcement_mode,
+            "enforce_findings_contract": request.policy.enforce_findings_contract,
+            "provider_permissions": request.policy.provider_permissions,
+            "permissions_hash": _stable_payload_hash(request.policy.provider_permissions),
+            "provider_results": provider_results,
+            "findings_count": len(aggregated_findings),
+            "parse_success_count": parse_success_count,
+            "parse_failure_count": parse_failure_count,
+            "schema_valid_count": schema_valid_count,
+            "dropped_findings_count": dropped_findings_count,
+        }
+        if write_artifacts and root_path:
+            _write_json(root_path / "run.json", run_payload)
 
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for finding in aggregated_findings:
-        counts[finding.severity] = counts.get(finding.severity, 0) + 1
-
-    if review_mode and counts.get("critical", 0) > 0:
-        decision = "FAIL"
-    elif review_mode and counts.get("high", 0) >= request.policy.high_escalation_threshold:
-        decision = "ESCALATE"
-    elif review_mode and request.policy.enforce_findings_contract and len(aggregated_findings) == 0:
-        decision = "INCONCLUSIVE"
-    elif review_mode and terminal_state == TaskState.FAILED:
-        decision = "FAIL"
-    elif review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
-        decision = "PARTIAL"
-    elif not review_mode and terminal_state == TaskState.FAILED:
-        decision = "FAIL"
-    elif not review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
-        decision = "PARTIAL"
-    else:
-        decision = "PASS"
-
-    findings_json = [
-        asdict(item)
-        for item in aggregated_findings
-    ]
-
-    if review_mode and write_artifacts:
-        _write_json(root_path / "findings.json", findings_json)
-
-    summary = [
-        f"# {'Review' if review_mode else 'Run'} Summary ({resolved_task_id})",
-        "",
-        f"- Decision: {decision}",
-        f"- Terminal state: {terminal_state.value}",
-        f"- Providers: {', '.join(provider_order)}",
-        f"- Findings total: {len(aggregated_findings)}",
-        f"- Parse success count: {parse_success_count}",
-        f"- Parse failure count: {parse_failure_count}",
-        f"- Schema valid finding count: {schema_valid_count}",
-        f"- Dropped finding count: {dropped_findings_count}",
-        f"- Allow paths: {', '.join(normalized_allow_paths)}",
-        f"- Enforcement mode: {request.policy.enforcement_mode}",
-        f"- Strict contract: {request.policy.enforce_findings_contract}",
-        "",
-        "## Severity Counts",
-        f"- critical: {counts['critical']}",
-        f"- high: {counts['high']}",
-        f"- medium: {counts['medium']}",
-        f"- low: {counts['low']}",
-        "",
-        "## Provider Results",
-    ]
-    for provider in provider_order:
-        details = provider_results.get(provider, {})
-        success = bool(details.get("success"))
-        parse_reason = str(details.get("parse_reason", ""))
-        cancel_reason = str(details.get("cancel_reason", ""))
-        summary.append(
-            f"- {provider}: success={success}, final_error={details.get('final_error')}, parse_reason={parse_reason or '-'}, cancel_reason={cancel_reason or '-'}"
+        return ReviewResult(
+            task_id=resolved_task_id,
+            artifact_root=artifact_root,
+            decision=decision,
+            terminal_state=terminal_state.value,
+            provider_results=provider_results,
+            findings_count=len(aggregated_findings),
+            parse_success_count=parse_success_count,
+            parse_failure_count=parse_failure_count,
+            schema_valid_count=schema_valid_count,
+            dropped_findings_count=dropped_findings_count,
         )
-        output_text = str(details.get("output_text", ""))
-        if output_text:
-            summary.append("  output:")
-            for raw_line in output_text.splitlines():
-                summary.append(f"    {raw_line}")
-    if write_artifacts:
-        _write_text(root_path / "summary.md", "\n".join(summary))
-
-    decision_lines = [f"# {'Review' if review_mode else 'Run'} Decision ({resolved_task_id})", ""]
-    decision_lines.append(f"- decision: {decision}")
-    decision_lines.append(f"- terminal_state: {terminal_state.value}")
-    if review_mode:
-        decision_lines.append(
-            f"- rule_trace: critical={counts['critical']}, high={counts['high']}, findings={len(aggregated_findings)}"
-        )
-    else:
-        success_count = sum(1 for value in required_provider_success.values() if value)
-        decision_lines.append(
-            f"- run_trace: providers={len(required_provider_success)}, success={success_count}, failed={len(required_provider_success) - success_count}"
-        )
-    if write_artifacts:
-        _write_text(root_path / "decision.md", "\n".join(decision_lines))
-
-    run_payload = {
-        "task_id": resolved_task_id,
-        "mode": "review" if review_mode else "run",
-        "terminal_state": terminal_state.value,
-        "decision": decision,
-        "effective_cwd": str(Path(request.repo_root).resolve(strict=False)),
-        "allow_paths": normalized_allow_paths,
-        "allow_paths_hash": _stable_payload_hash(normalized_allow_paths),
-        "target_paths": normalized_targets,
-        "enforcement_mode": request.policy.enforcement_mode,
-        "enforce_findings_contract": request.policy.enforce_findings_contract,
-        "provider_permissions": request.policy.provider_permissions,
-        "permissions_hash": _stable_payload_hash(request.policy.provider_permissions),
-        "provider_results": provider_results,
-        "findings_count": len(aggregated_findings),
-        "parse_success_count": parse_success_count,
-        "parse_failure_count": parse_failure_count,
-        "schema_valid_count": schema_valid_count,
-        "dropped_findings_count": dropped_findings_count,
-    }
-    if write_artifacts:
-        _write_json(root_path / "run.json", run_payload)
-
-    return ReviewResult(
-        task_id=resolved_task_id,
-        artifact_root=artifact_root,
-        decision=decision,
-        terminal_state=terminal_state.value,
-        provider_results=provider_results,
-        findings_count=len(aggregated_findings),
-        parse_success_count=parse_success_count,
-        parse_failure_count=parse_failure_count,
-        schema_valid_count=schema_valid_count,
-        dropped_findings_count=dropped_findings_count,
-    )
+    finally:
+        if temp_artifact_dir is not None:
+            temp_artifact_dir.cleanup()

@@ -44,7 +44,7 @@ class CliJsonContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = ReviewResult(
                 task_id="task-review-1",
-                artifact_root=f"{tmpdir}/reports/review/task-review-1",
+                artifact_root=None,
                 decision="PASS",
                 terminal_state="COMPLETED",
                 provider_results={"codex": {"success": True}},
@@ -62,6 +62,7 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(payload["command"], "review")
             self.assertEqual(tuple(payload.keys()), EXPECTED_DETAILED_JSON_KEYS)
             self.assertEqual(payload["result_mode"], "stdout")
+            self.assertIsNone(payload["artifact_root"])
             self.assertIsInstance(payload["provider_success_count"], int)
             self.assertIsInstance(payload["provider_failure_count"], int)
 
@@ -69,7 +70,7 @@ class CliJsonContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = ReviewResult(
                 task_id="task-run-1",
-                artifact_root=f"{tmpdir}/reports/review/task-run-1",
+                artifact_root=None,
                 decision="PASS",
                 terminal_state="COMPLETED",
                 provider_results={"codex": {"success": True}},
@@ -87,6 +88,7 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(payload["command"], "run")
             self.assertEqual(tuple(payload.keys()), EXPECTED_DETAILED_JSON_KEYS)
             self.assertEqual(payload["result_mode"], "stdout")
+            self.assertIsNone(payload["artifact_root"])
             self.assertEqual(payload["parse_success_count"], 0)
             self.assertEqual(payload["parse_failure_count"], 0)
 
@@ -126,7 +128,7 @@ class CliJsonContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = ReviewResult(
                 task_id="task-run-stdout-1",
-                artifact_root=f"{tmpdir}/reports/review/task-run-stdout-1",
+                artifact_root=None,
                 decision="PASS",
                 terminal_state="COMPLETED",
                 provider_results={"codex": {"success": True, "output_text": "full output"}},
@@ -154,6 +156,7 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(payload["command"], "run")
             self.assertEqual(payload["result_mode"], "stdout")
+            self.assertIsNone(payload["artifact_root"])
             self.assertIn("provider_results", payload)
             self.assertIn("codex", payload["provider_results"])
             self.assertEqual(payload["provider_results"]["codex"]["output_text"], "full output")
@@ -162,7 +165,7 @@ class CliJsonContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = ReviewResult(
                 task_id="task-run-stdout-2",
-                artifact_root=f"{tmpdir}/reports/review/task-run-stdout-2",
+                artifact_root=None,
                 decision="PASS",
                 terminal_state="COMPLETED",
                 provider_results={"codex": {"success": True}},
