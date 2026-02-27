@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
+import re
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
@@ -256,6 +257,81 @@ def _deserialize_findings(payload: object) -> List[NormalizedFinding]:
             continue
         findings.append(finding)
     return findings
+
+
+_SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _normalize_for_dedupe(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _finding_dedupe_key(item: NormalizedFinding) -> str:
+    line_value = str(item.evidence.line) if isinstance(item.evidence.line, int) else ""
+    symbol_value = _normalize_for_dedupe(item.evidence.symbol or "")
+    return _sha(
+        "||".join(
+            [
+                _normalize_for_dedupe(item.category),
+                _normalize_for_dedupe(item.title),
+                _normalize_for_dedupe(item.evidence.file.replace("\\", "/")),
+                line_value,
+                symbol_value,
+            ]
+        )
+    )
+
+
+def _merge_findings_across_providers(findings: List[NormalizedFinding]) -> List[Dict[str, object]]:
+    merged: Dict[str, Dict[str, object]] = {}
+    for item in findings:
+        key = _finding_dedupe_key(item)
+        existing = merged.get(key)
+        if existing is None:
+            payload = asdict(item)
+            payload["detected_by"] = [item.provider]
+            merged[key] = payload
+            continue
+
+        detected_by = existing.get("detected_by")
+        if not isinstance(detected_by, list):
+            detected_by = []
+            existing["detected_by"] = detected_by
+        if item.provider not in detected_by:
+            detected_by.append(item.provider)
+
+        current_confidence = float(existing.get("confidence", 0.0))
+        if item.confidence > current_confidence:
+            existing["confidence"] = item.confidence
+
+        current_severity = str(existing.get("severity", "low")).lower()
+        if _SEVERITY_ORDER.get(item.severity, 99) < _SEVERITY_ORDER.get(current_severity, 99):
+            existing["severity"] = item.severity
+
+    merged_findings = list(merged.values())
+    for payload in merged_findings:
+        detected_by = payload.get("detected_by")
+        if isinstance(detected_by, list):
+            payload["detected_by"] = sorted({str(item) for item in detected_by if str(item)})
+
+    def _sort_key(entry: Dict[str, object]) -> Tuple[int, str, int, str]:
+        severity = str(entry.get("severity", "low")).lower()
+        evidence = entry.get("evidence")
+        file_path = ""
+        line = 0
+        if isinstance(evidence, dict):
+            file_path = str(evidence.get("file", ""))
+            line_raw = evidence.get("line")
+            line = line_raw if isinstance(line_raw, int) else 0
+        return (
+            _SEVERITY_ORDER.get(severity, 99),
+            file_path,
+            line,
+            str(entry.get("title", "")),
+        )
+
+    merged_findings.sort(key=_sort_key)
+    return merged_findings
 
 
 def _run_provider(
@@ -670,16 +746,19 @@ def run_review(
 
         terminal_state = runtime.evaluate_terminal_state(required_provider_success)
         aggregated_findings.sort(key=lambda item: (item.provider, item.finding_id, item.fingerprint))
+        merged_findings = _merge_findings_across_providers(aggregated_findings)
 
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-        for finding in aggregated_findings:
-            counts[finding.severity] = counts.get(finding.severity, 0) + 1
+        for finding in merged_findings:
+            severity = str(finding.get("severity", "")).lower()
+            if severity in counts:
+                counts[severity] = counts.get(severity, 0) + 1
 
         if review_mode and counts.get("critical", 0) > 0:
             decision = "FAIL"
         elif review_mode and counts.get("high", 0) >= request.policy.high_escalation_threshold:
             decision = "ESCALATE"
-        elif review_mode and request.policy.enforce_findings_contract and len(aggregated_findings) == 0:
+        elif review_mode and request.policy.enforce_findings_contract and len(merged_findings) == 0:
             decision = "INCONCLUSIVE"
         elif review_mode and terminal_state == TaskState.FAILED:
             decision = "FAIL"
@@ -692,10 +771,7 @@ def run_review(
         else:
             decision = "PASS"
 
-        findings_json = [
-            asdict(item)
-            for item in aggregated_findings
-        ]
+        findings_json = merged_findings
 
         if review_mode and write_artifacts and root_path:
             _write_json(root_path / "findings.json", findings_json)
@@ -706,7 +782,7 @@ def run_review(
             f"- Decision: {decision}",
             f"- Terminal state: {terminal_state.value}",
             f"- Providers: {', '.join(provider_order)}",
-            f"- Findings total: {len(aggregated_findings)}",
+            f"- Findings total: {len(merged_findings)}",
             f"- Parse success count: {parse_success_count}",
             f"- Parse failure count: {parse_failure_count}",
             f"- Schema valid finding count: {schema_valid_count}",
@@ -744,7 +820,7 @@ def run_review(
         decision_lines.append(f"- terminal_state: {terminal_state.value}")
         if review_mode:
             decision_lines.append(
-                f"- rule_trace: critical={counts['critical']}, high={counts['high']}, findings={len(aggregated_findings)}"
+                f"- rule_trace: critical={counts['critical']}, high={counts['high']}, findings={len(merged_findings)}"
             )
         else:
             success_count = sum(1 for value in required_provider_success.values() if value)
@@ -768,7 +844,7 @@ def run_review(
             "provider_permissions": request.policy.provider_permissions,
             "permissions_hash": _stable_payload_hash(request.policy.provider_permissions),
             "provider_results": provider_results,
-            "findings_count": len(aggregated_findings),
+            "findings_count": len(merged_findings),
             "parse_success_count": parse_success_count,
             "parse_failure_count": parse_failure_count,
             "schema_valid_count": schema_valid_count,
@@ -783,7 +859,7 @@ def run_review(
             decision=decision,
             terminal_state=terminal_state.value,
             provider_results=provider_results,
-            findings_count=len(aggregated_findings),
+            findings_count=len(merged_findings),
             parse_success_count=parse_success_count,
             parse_failure_count=parse_failure_count,
             schema_valid_count=schema_valid_count,

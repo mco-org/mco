@@ -10,6 +10,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added `mco doctor` command with human-readable and `--json` outputs to probe provider binary/auth readiness.
 - Added `--format markdown-pr` (review-only) to render PR-ready Markdown summaries from aggregated findings.
 
+### Changed
+- Added deterministic cross-provider findings deduplication in review aggregation and `findings.json`, with merged `detected_by` provenance and max-confidence rollup.
+
 ## [0.3.2] - 2026-02-27
 ### Changed
 - Added run-mode answer extraction fields per provider: `final_text`, `response_ok`, and `response_reason`, while keeping `output_text` as raw output for debugging.

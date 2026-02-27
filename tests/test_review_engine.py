@@ -393,6 +393,39 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(result.decision, "PARTIAL")
             self.assertGreaterEqual(slow.cancel_calls, 1)
 
+    def test_review_deduplicates_same_finding_across_providers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw = (
+                '{"findings":[{"finding_id":"f1","severity":"high","category":"bug","title":"Shared issue",'
+                '"evidence":{"file":"runtime/cli.py","line":123,"snippet":"x"},"recommendation":"fix",'
+                '"confidence":0.7,"fingerprint":"fp1"}]}'
+            )
+            raw_variant = (
+                '{"findings":[{"finding_id":"f2","severity":"high","category":"bug","title":"Shared issue",'
+                '"evidence":{"file":"runtime/cli.py","line":123,"snippet":"x"},"recommendation":"fix",'
+                '"confidence":0.9,"fingerprint":"fp2"}]}'
+            )
+            claude = FakeAdapter("claude", raw)
+            qwen = FakeAdapter("qwen", raw_variant)
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude", "qwen"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=True),
+            )
+            result = run_review(req, adapters={"claude": claude, "qwen": qwen})
+            self.assertEqual(result.findings_count, 1)
+            self.assertEqual(len(result.findings), 1)
+            merged = result.findings[0]
+            self.assertEqual(merged.get("detected_by"), ["claude", "qwen"])
+            self.assertEqual(merged.get("confidence"), 0.9)
+
+            findings_path = Path(result.artifact_root or "", "findings.json")
+            payload = json.loads(findings_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload), 1)
+            self.assertEqual(payload[0].get("detected_by"), ["claude", "qwen"])
+
     def test_progress_output_prevents_stall_timeout_in_run_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             progressive = ProgressTimedFakeAdapter(
