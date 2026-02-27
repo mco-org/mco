@@ -247,4 +247,4 @@ reports/review/<task_id>/
 
 ## License
 
-UNLICENSED
+MIT — see [LICENSE](./LICENSE)

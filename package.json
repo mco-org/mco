@@ -2,7 +2,7 @@
   "name": "@tt-a1i/mco",
   "version": "0.3.0",
   "description": "Node wrapper for the mco CLI (Python runtime required).",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "bin": {
     "mco": "bin/mco.js"
   },
