@@ -1,14 +1,14 @@
-<h1 style="text-align:center;">MCO</h1>
+<h1 align="center">MCO</h1>
 
-<div style="text-align:center;">
-  <img src="./docs/assets/logos/mco-logo-readme.svg" alt="MCO Logo" width="520" style="display:block;margin:0 auto;" />
-</div>
+<p align="center">
+  <img src="./docs/assets/logos/mco-logo-readme.svg" alt="MCO Logo" width="520" />
+</p>
 
-<div style="text-align:center;">
-  <img src="https://img.shields.io/npm/v/@tt-a1i/mco" alt="npm version" />&nbsp;
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" />&nbsp;
+<p align="center">
+  <img src="https://img.shields.io/npm/v/@tt-a1i/mco" alt="npm version" />
+  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" />
   <img src="https://img.shields.io/badge/providers-5%20built--in-green" alt="Providers: 5 built-in" />
-</div>
+</p>
 
 <p align="center"><strong>MCO — Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.</strong></p>
 
