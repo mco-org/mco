@@ -26,6 +26,7 @@
     <td align="center"><a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=96" alt="Codex CLI" width="48" /></a></td>
     <td align="center"><a href="https://github.com/sst/opencode"><img src="https://raw.githubusercontent.com/sst/opencode/master/packages/console/app/src/asset/brand/opencode-logo-light-square.svg" alt="OpenCode" width="48" /></a></td>
     <td align="center"><a href="https://github.com/QwenLM/qwen-code"><img src="https://github.com/QwenLM.png?size=96" alt="Qwen Code" width="48" /></a></td>
+    <td align="center"><a href="https://github.com/open-claw/open-claw"><img src="https://github.com/open-claw.png?size=96" alt="OpenClaw" width="48" /></a></td>
   </tr>
   <tr>
     <td align="center"><strong>Claude Code</strong></td>
@@ -33,6 +34,7 @@
     <td align="center"><strong>Codex CLI</strong></td>
     <td align="center"><strong>OpenCode</strong></td>
     <td align="center"><strong>Qwen Code</strong></td>
+    <td align="center"><strong>OpenClaw 🦞</strong></td>
   </tr>
   <tr>
     <td align="center"><code>claude</code></td>
@@ -40,6 +42,7 @@
     <td align="center"><code>codex</code></td>
     <td align="center"><code>opencode</code></td>
     <td align="center"><code>qwen</code></td>
+    <td align="center"><code>openclaw</code></td>
   </tr>
 </table>
 
