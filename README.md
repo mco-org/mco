@@ -26,7 +26,7 @@
     <td align="center"><a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=96" alt="Codex CLI" width="48" /></a></td>
     <td align="center"><a href="https://github.com/sst/opencode"><img src="https://raw.githubusercontent.com/sst/opencode/master/packages/console/app/src/asset/brand/opencode-logo-light-square.svg" alt="OpenCode" width="48" /></a></td>
     <td align="center"><a href="https://github.com/QwenLM/qwen-code"><img src="https://github.com/QwenLM.png?size=96" alt="Qwen Code" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/open-claw/open-claw"><img src="https://github.com/open-claw.png?size=96" alt="OpenClaw" width="48" /></a></td>
+    <td align="center"><a href="https://github.com/open-claw/open-claw"><img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f99e.svg" alt="OpenClaw" width="48" /></a></td>
   </tr>
   <tr>
     <td align="center"><strong>Claude Code</strong></td>
