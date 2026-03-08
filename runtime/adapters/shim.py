@@ -111,15 +111,20 @@ class ShimAdapterBase:
 
         stdout_file = stdout_path.open("w", encoding="utf-8")
         stderr_file = stderr_path.open("w", encoding="utf-8")
-        process = subprocess.Popen(
-            cmd,
-            cwd=input_task.repo_root,
-            stdout=stdout_file,
-            stderr=stderr_file,
-            text=True,
-            start_new_session=True,
-            env=_sanitize_env(),
-        )
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=input_task.repo_root,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                start_new_session=True,
+                env=_sanitize_env(),
+            )
+        except Exception:
+            stdout_file.close()
+            stderr_file.close()
+            raise
         self._runs[run_id] = ShimRunHandle(
             process=process,
             stdout_path=stdout_path,
@@ -142,11 +147,11 @@ class ShimAdapterBase:
     def _close_io(handle: ShimRunHandle) -> None:
         try:
             handle.stdout_file.close()
-        except Exception:
+        except OSError:
             pass
         try:
             handle.stderr_file.close()
-        except Exception:
+        except OSError:
             pass
 
     def poll(self, ref: TaskRunRef) -> TaskStatus:
@@ -229,7 +234,7 @@ class ShimAdapterBase:
             return
         try:
             os.killpg(os.getpgid(handle.process.pid), signal.SIGTERM)
-        except ProcessLookupError:
+        except (ProcessLookupError, OSError):
             self._close_io(handle)
             self._runs.pop(ref.run_id, None)
             return
@@ -237,7 +242,7 @@ class ShimAdapterBase:
         if handle.process.poll() is None:
             try:
                 os.killpg(os.getpgid(handle.process.pid), signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, OSError):
                 self._close_io(handle)
                 self._runs.pop(ref.run_id, None)
                 return
