@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Mapping
 
-from .adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
+from .adapters import adapter_registry
 from .config import ReviewConfig, ReviewPolicy
 from .contracts import ProviderPresence
 from .formatters import format_markdown_pr, format_sarif
@@ -75,13 +75,7 @@ DOCTOR_EPILOG = (
 
 
 def _doctor_adapter_registry() -> Mapping[str, object]:
-    return {
-        "claude": ClaudeAdapter(),
-        "codex": CodexAdapter(),
-        "gemini": GeminiAdapter(),
-        "opencode": OpenCodeAdapter(),
-        "qwen": QwenAdapter(),
-    }
+    return adapter_registry()
 
 
 def _doctor_provider_presence(providers: List[str]) -> Dict[str, ProviderPresence]:

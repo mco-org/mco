@@ -4,13 +4,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import re
+import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Set, Tuple
 
-from .adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
+from .adapters import adapter_registry
 from .adapters.parsing import extract_final_text_from_output, extract_token_usage_from_output, inspect_contract_output
 from .artifacts import expected_paths, task_artifact_root
 from .config import ReviewPolicy
@@ -86,13 +87,7 @@ def _build_run_prompt(user_prompt: str, target_paths: List[str], allow_paths: Li
 
 
 def _adapter_registry() -> Mapping[str, ProviderAdapter]:
-    return {
-        "claude": ClaudeAdapter(),
-        "codex": CodexAdapter(),
-        "gemini": GeminiAdapter(),
-        "opencode": OpenCodeAdapter(),
-        "qwen": QwenAdapter(),
-    }
+    return adapter_registry()
 
 
 def _read_text(path: Path) -> str:
@@ -297,7 +292,7 @@ def _supported_permission_keys(adapter: ProviderAdapter) -> Set[str]:
         return set()
     try:
         keys = fn()
-    except Exception:
+    except (TypeError, AttributeError):
         return set()
     if not isinstance(keys, list):
         return set()
@@ -308,7 +303,8 @@ def _provider_stall_timeout_seconds(policy: ReviewPolicy, provider: str) -> int:
     timeout = policy.provider_timeouts.get(provider, policy.stall_timeout_seconds)
     try:
         value = int(timeout)
-    except Exception:
+    except (TypeError, ValueError):
+        print(f"[mco] warning: invalid stall timeout for '{provider}', using default", file=sys.stderr)
         value = policy.stall_timeout_seconds
     return value if value > 0 else policy.stall_timeout_seconds
 
@@ -316,7 +312,8 @@ def _provider_stall_timeout_seconds(policy: ReviewPolicy, provider: str) -> int:
 def _poll_interval_seconds(policy: ReviewPolicy) -> float:
     try:
         value = float(policy.poll_interval_seconds)
-    except Exception:
+    except (TypeError, ValueError):
+        print("[mco] warning: invalid poll interval, using default 1.0s", file=sys.stderr)
         value = 1.0
     return value if value > 0 else 1.0
 
@@ -373,7 +370,7 @@ def _deserialize_findings(payload: object) -> List[NormalizedFinding]:
                 fingerprint=str(item.get("fingerprint", "")),
                 raw_ref=str(item.get("raw_ref", "")),
             )
-        except Exception:
+        except (KeyError, TypeError, ValueError):
             continue
         findings.append(finding)
     return findings
@@ -584,7 +581,7 @@ def _run_provider(
                     if run_ref is not None:
                         try:
                             adapter.cancel(run_ref)
-                        except Exception:
+                        except (OSError, ProcessLookupError):
                             pass
                     raw_dir = Path(run_ref.artifact_path) / "raw"
                     timeout_stdout = _read_text(raw_dir / f"{provider}.stdout.log")
@@ -831,22 +828,40 @@ def run_review(
                     ): provider
                     for provider in provider_order
                 }
-                for future in as_completed(futures):
-                    provider = futures[future]
-                    try:
-                        outcomes[provider] = future.result()
-                    except Exception as exc:  # pragma: no cover - protective guard
-                        if write_artifacts:
-                            _ensure_provider_artifacts(runtime_artifact_base, resolved_task_id, provider)
-                        outcomes[provider] = _ProviderExecutionOutcome(
-                            provider=provider,
-                            success=False,
-                            parse_ok=False,
-                            schema_valid_count=0,
-                            dropped_count=0,
-                            findings=[],
-                            provider_result={"success": False, "reason": "internal_error", "error": str(exc)},
-                        )
+                # Compute a generous outer timeout: hard timeout (or stall timeout * 2) + buffer
+                _hard = request.policy.review_hard_timeout_seconds
+                _stall = request.policy.stall_timeout_seconds
+                _outer_timeout = (_hard if _hard > 0 else _stall * 2) + 60
+                try:
+                    for future in as_completed(futures, timeout=_outer_timeout):
+                        provider = futures[future]
+                        try:
+                            outcomes[provider] = future.result()
+                        except Exception as exc:  # pragma: no cover - protective guard
+                            if write_artifacts:
+                                _ensure_provider_artifacts(runtime_artifact_base, resolved_task_id, provider)
+                            outcomes[provider] = _ProviderExecutionOutcome(
+                                provider=provider,
+                                success=False,
+                                parse_ok=False,
+                                schema_valid_count=0,
+                                dropped_count=0,
+                                findings=[],
+                                provider_result={"success": False, "reason": "internal_error", "error": str(exc)},
+                            )
+                except TimeoutError:
+                    for future, provider in futures.items():
+                        if provider not in outcomes:
+                            future.cancel()
+                            outcomes[provider] = _ProviderExecutionOutcome(
+                                provider=provider,
+                                success=False,
+                                parse_ok=False,
+                                schema_valid_count=0,
+                                dropped_count=0,
+                                findings=[],
+                                provider_result={"success": False, "reason": "executor_timeout"},
+                            )
 
         provider_results: Dict[str, Dict[str, object]] = {}
         required_provider_success: Dict[str, bool] = {}
