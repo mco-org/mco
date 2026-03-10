@@ -7,7 +7,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-## [0.3.4] - 2026-03-10
+## [0.3.5] - 2026-03-10
 ### Changed
 - Default providers list now includes all 5 supported providers (claude, codex, gemini, opencode, qwen) instead of only claude and codex.
 - Claude adapter: permission mode `plan` → `bypassPermissions` for full tool execution.
