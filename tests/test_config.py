@@ -8,7 +8,7 @@ from runtime.config import DEFAULT_PROVIDER_TIMEOUTS, ReviewConfig
 class ConfigTests(unittest.TestCase):
     def test_default_config(self) -> None:
         cfg = ReviewConfig()
-        self.assertEqual(cfg.providers, ["claude", "codex"])
+        self.assertEqual(cfg.providers, ["claude", "codex", "gemini", "opencode", "qwen"])
         self.assertEqual(cfg.artifact_base, "reports/review")
         self.assertEqual(cfg.policy.max_provider_parallelism, 0)
         self.assertEqual(cfg.policy.provider_timeouts, DEFAULT_PROVIDER_TIMEOUTS)
@@ -23,9 +23,9 @@ class ConfigTests(unittest.TestCase):
     def test_default_mutable_fields_are_isolated(self) -> None:
         first = ReviewConfig()
         second = ReviewConfig()
-        first.providers.append("qwen")
-        first.policy.provider_timeouts["qwen"] = 900
-        self.assertEqual(second.providers, ["claude", "codex"])
+        first.providers.append("extra")
+        first.policy.provider_timeouts["extra"] = 900
+        self.assertEqual(second.providers, ["claude", "codex", "gemini", "opencode", "qwen"])
         self.assertEqual(second.policy.provider_timeouts, DEFAULT_PROVIDER_TIMEOUTS)
 
 
