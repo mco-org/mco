@@ -30,7 +30,7 @@ class ClaudeAdapter(ShimAdapterBase):
         return ["permission_mode"]
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
-        permission_mode = "plan"
+        permission_mode = "bypassPermissions"
         raw_permissions = input_task.metadata.get("provider_permissions")
         if isinstance(raw_permissions, dict):
             value = raw_permissions.get("permission_mode")
@@ -47,7 +47,7 @@ class ClaudeAdapter(ShimAdapterBase):
         ]
 
     def _build_command_for_record(self) -> List[str]:
-        return ["claude", "-p", "--permission-mode", "plan", "--output-format", "text", "<prompt>"]
+        return ["claude", "-p", "--permission-mode", "bypassPermissions", "--output-format", "text", "<prompt>"]
 
     def _is_success(self, return_code: int, stdout_text: str, stderr_text: str) -> bool:
         if return_code != 0:
