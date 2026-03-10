@@ -27,10 +27,10 @@ class GeminiAdapter(ShimAdapterBase):
         return [binary, "-p", "Reply with exactly OK"]
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
-        return ["gemini", "-p", input_task.prompt]
+        return ["gemini", "-p", input_task.prompt, "-y"]
 
     def _build_command_for_record(self) -> List[str]:
-        return ["gemini", "-p", "<prompt>"]
+        return ["gemini", "-p", "<prompt>", "-y"]
 
     def _is_success(self, return_code: int, stdout_text: str, stderr_text: str) -> bool:
         if return_code != 0:
