@@ -27,7 +27,7 @@ Frozen enums/sets:
 Runtime source of truth: `runtime/types.py`.
 
 Schema version:
-- `RUN_RESULT_SCHEMA_VERSION = "stage-a-v1"`
+- `RUN_RESULT_SCHEMA_VERSION = "stage-a-v2"`
 
 Frozen field order:
 1. `task_id`
