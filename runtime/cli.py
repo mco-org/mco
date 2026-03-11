@@ -409,6 +409,18 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Review mode only: enforce strict findings JSON contract",
     )
 
+    memory = parser.add_argument_group("Memory")
+    memory.add_argument(
+        "--memory",
+        action="store_true",
+        help="Enable memory layer (requires evermemos-mcp). Injects history context and writes back findings",
+    )
+    memory.add_argument(
+        "--space",
+        default="",
+        help="Explicit evermemos space slug (default: auto-inferred from git remote). Requires --memory",
+    )
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -528,6 +540,11 @@ def main(argv: List[str] | None = None) -> int:
         print("--synth-provider must be one of selected providers", file=sys.stderr)
         return 2
 
+    memory_space = args.space.strip() if isinstance(args.space, str) else ""
+    if memory_space and not args.memory:
+        print("--space requires --memory", file=sys.stderr)
+        return 2
+
     req = ReviewRequest(
         repo_root=repo_root,
         prompt=args.prompt,
@@ -539,6 +556,8 @@ def main(argv: List[str] | None = None) -> int:
         include_token_usage=bool(args.include_token_usage),
         synthesize=synthesize,
         synthesis_provider=synth_provider or None,
+        memory_enabled=bool(args.memory),
+        memory_space=memory_space or None,
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
