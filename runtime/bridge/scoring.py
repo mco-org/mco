@@ -6,6 +6,7 @@ false-positive (rejected) rates.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
@@ -150,3 +151,53 @@ def merge_agent_score(old: AgentScore, new: AgentScore) -> AgentScore:
         finding_eval_count=total_eval,
         last_updated=_now_iso(),
     )
+
+
+def update_stack_aggregate(
+    client: Any,
+    stack_space: str,
+    new_scores: Dict[Tuple[str, str], AgentScore],
+) -> None:
+    """Aggregate agent scores across repos into a tech-stack-level space.
+
+    Reads existing scores from *stack_space*, merges incoming *new_scores*
+    using :func:`merge_agent_score`, and writes the merged results back.
+    This feeds cold-start priors for new repos that share the same stack.
+
+    Args:
+        client: An :class:`~runtime.bridge.evermemos_client.EverMemosClient`
+            (or compatible mock).
+        stack_space: The evermemos space id, e.g. ``"coding:stacks--python"``.
+        new_scores: Mapping of ``(agent, task_category)`` to new
+            :class:`AgentScore` instances from the current run.
+    """
+    from .evermemos_client import EverMemosClient
+
+    # Step 1-3: Read existing stack-level scores and build lookup
+    existing_by_key: Dict[Tuple[str, str], AgentScore] = {}
+    try:
+        raw = client.fetch_history(
+            space=stack_space, memory_type="episodic_memory", limit=100,
+        )
+        for item in raw:
+            content = item.get("content", "")
+            if not EverMemosClient.is_agent_score_entry(content):
+                continue
+            try:
+                score_dict = EverMemosClient.deserialize_agent_score(content)
+                score_obj = AgentScore.from_dict(score_dict)
+                key = (score_obj.agent, score_obj.task_category)
+                existing_by_key[key] = score_obj
+            except (ValueError, json.JSONDecodeError, KeyError):
+                continue
+    except Exception:
+        pass  # cold start or connection issue — proceed with empty history
+
+    # Step 4-5: Merge and write back
+    for key, new_score in new_scores.items():
+        if key in existing_by_key:
+            merged = merge_agent_score(existing_by_key[key], new_score)
+        else:
+            merged = new_score
+        content = EverMemosClient.serialize_agent_score(merged.to_dict())
+        client.remember(space=stack_space, content=content)

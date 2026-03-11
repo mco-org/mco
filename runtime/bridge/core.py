@@ -393,6 +393,11 @@ def _post_run_impl(
     if scores_written:
         print(f"[mco-bridge] Wrote {scores_written} agent scores to {agents_space}", file=sys.stderr)
 
+    # --- Update stack aggregate for cold-start priors ---
+    from .scoring import update_stack_aggregate
+    stack_space = f"coding:stacks--{ctx.stack}"
+    update_stack_aggregate(client, stack_space, new_scores)
+
     # --- Status polling for critical/high findings ---
     if critical_high_request_ids:
         from .status_poller import poll_until_searchable
