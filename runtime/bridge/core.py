@@ -28,6 +28,11 @@ class BridgeContext:
     memory_space_override: Optional[str] = None
     space_slug: Optional[str] = None
     client: Optional[EverMemosClient] = None
+    # Phase 2-4 additions:
+    stack: str = "unknown"
+    run_count: int = 0
+    agent_weights: Dict[str, float] = field(default_factory=dict)
+    total_agents: int = 0
 
     def get_client(self) -> EverMemosClient:
         if self.client is None:
@@ -68,6 +73,31 @@ def _changed_files_since(repo_root: str, since_commit: str) -> set:
     except OSError:
         pass
     return set()
+
+
+def _load_agent_rates(client: EverMemosClient, space: str) -> Dict[str, float]:
+    """Read agent scores from an evermemos space and return {agent: cross_validated_rate}.
+
+    Returns an empty dict on any error (missing space, network issue, etc.).
+    """
+    try:
+        raw = client.fetch_history(space=space, memory_type="episodic_memory", limit=100)
+    except Exception:
+        return {}
+
+    rates: Dict[str, float] = {}
+    for item in raw:
+        content = item.get("content", "")
+        if not EverMemosClient.is_agent_score_entry(content):
+            continue
+        try:
+            score_dict = EverMemosClient.deserialize_agent_score(content)
+            agent = score_dict.get("agent", "")
+            if agent:
+                rates[agent] = float(score_dict.get("cross_validated_rate", 0.0))
+        except (ValueError, json.JSONDecodeError):
+            continue
+    return rates
 
 
 def _merge_finding_with_existing(
@@ -133,6 +163,7 @@ def _pre_run_impl(
     # Step 2: Get historical findings via fetch_history
     open_findings: List[Dict[str, Any]] = []
     accepted_risks: List[Dict[str, Any]] = []
+    raw_history: List[Dict[str, Any]] = []
     if space_exists:
         raw_history = client.fetch_history(
             space=findings_space,
@@ -153,12 +184,37 @@ def _pre_run_impl(
             elif status in ("accepted", "wontfix"):
                 accepted_risks.append(finding)
 
-    # Step 3: Build augmented prompt
+    # Step 3: Detect tech stack
+    from .stack_detector import detect_stack
+    ctx.stack = detect_stack(repo_root)
+
+    # Step 4: Count runs from history for alpha calculation
+    ctx.run_count = len([
+        item for item in raw_history
+        if EverMemosClient.is_finding_entry(item.get("content", ""))
+    ]) if space_exists else 0
+
+    # Step 5: Retrieve agent scores for weight computation
+    from .cold_start import get_agent_weights
+    agents_space = f"coding:{slug}--agents"
+    stack_space = f"coding:stacks--{ctx.stack}"
+    global_space = "coding:global--agents"
+
+    repo_scores = _load_agent_rates(client, agents_space)
+    stack_scores = _load_agent_rates(client, stack_space)
+    global_scores = _load_agent_rates(client, global_space)
+
+    ctx.agent_weights = get_agent_weights(repo_scores, stack_scores, global_scores, ctx.run_count)
+    ctx.total_agents = len(providers)
+
+    # Step 6: Build augmented prompt
     injected = build_injected_prompt(
         original=prompt,
         context=context,
         known_open=open_findings,
         accepted_risks=accepted_risks,
+        agent_weights=ctx.agent_weights,
+        total_agents=ctx.total_agents,
     )
 
     if injected != prompt:
@@ -221,7 +277,12 @@ def _post_run_impl(
     except Exception:
         pass  # cold start or connection issue — proceed with empty history
 
+    # --- Confidence calculation (before remember) ---
+    from .confidence import finding_confidence as _finding_confidence
+
     written = 0
+    written_persisted: List[Dict[str, Any]] = []
+    critical_high_request_ids: List[str] = []
     current_hashes: set = set()
     for raw_finding in findings:
         title = str(raw_finding.get("title", ""))
@@ -268,12 +329,74 @@ def _post_run_impl(
                 "confidence": float(raw_finding.get("confidence", 0.5)),
             }
 
+        # Compute confidence BEFORE remember()
+        persisted["confidence"] = _finding_confidence(
+            detected_by=persisted.get("detected_by", []),
+            total_agents=ctx.total_agents if ctx.total_agents > 0 else len(providers),
+            agent_weights=ctx.agent_weights,
+            occurrence_count=persisted.get("occurrence_count", 1),
+        )
+
         content = EverMemosClient.serialize_finding(persisted)
-        client.remember(space=findings_space, content=content)
+        result = client.remember(space=findings_space, content=content)
         written += 1
+        written_persisted.append(persisted)
+
+        # Track request_ids for critical/high findings for status polling
+        severity = persisted.get("severity", "medium").lower()
+        request_id = result.get("request_id") if isinstance(result, dict) else None
+        if severity in ("critical", "high") and request_id:
+            critical_high_request_ids.append(request_id)
 
     if written:
         print(f"[mco-bridge] Wrote {written} findings to {findings_space}", file=sys.stderr)
+
+    # --- Task classification ---
+    from .classifier import classify_task
+    task_category = classify_task(prompt, findings)
+
+    # --- Agent scoring ---
+    from .scoring import update_scores_from_findings, merge_agent_score, AgentScore
+    new_scores = update_scores_from_findings(written_persisted, slug, task_category, {})
+
+    agents_space = f"coding:{slug}--agents"
+    # Read existing agent scores, merge, and write back
+    existing_agent_scores: Dict[str, AgentScore] = {}
+    try:
+        agent_history = client.fetch_history(
+            space=agents_space, memory_type="episodic_memory", limit=100,
+        )
+        for item in agent_history:
+            content = item.get("content", "")
+            if not EverMemosClient.is_agent_score_entry(content):
+                continue
+            try:
+                score_dict = EverMemosClient.deserialize_agent_score(content)
+                score_obj = AgentScore.from_dict(score_dict)
+                key = (score_obj.agent, score_obj.task_category)
+                existing_agent_scores[key] = score_obj
+            except (ValueError, json.JSONDecodeError, KeyError):
+                continue
+    except Exception:
+        pass
+
+    scores_written = 0
+    for key, new_score in new_scores.items():
+        if key in existing_agent_scores:
+            merged_score = merge_agent_score(existing_agent_scores[key], new_score)
+        else:
+            merged_score = new_score
+        score_content = EverMemosClient.serialize_agent_score(merged_score.to_dict())
+        client.remember(space=agents_space, content=score_content)
+        scores_written += 1
+
+    if scores_written:
+        print(f"[mco-bridge] Wrote {scores_written} agent scores to {agents_space}", file=sys.stderr)
+
+    # --- Status polling for critical/high findings ---
+    if critical_high_request_ids:
+        from .status_poller import poll_until_searchable
+        poll_until_searchable(client, critical_high_request_ids, timeout_s=30, interval_s=3)
 
     # --- Passive confirmation ---
     # Get files changed since the earliest last_seen_commit in existing findings

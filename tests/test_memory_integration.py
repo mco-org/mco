@@ -294,15 +294,22 @@ class TestRealBridgePath(unittest.TestCase):
                     repo_root=tmpdir, prompt="test", providers=["claude", "gemini"],
                 )
 
-            # Verify remember was called
-            self.assertEqual(len(remembered_contents), 1)
+            # Verify remember was called (finding + agent scores)
+            finding_contents = [c for c in remembered_contents if EverMemosClient.is_finding_entry(c)]
+            self.assertEqual(len(finding_contents), 1)
             # Deserialize and check merge happened
-            persisted = EverMemosClient.deserialize_finding(remembered_contents[0])
+            persisted = EverMemosClient.deserialize_finding(finding_contents[0])
             self.assertEqual(persisted["occurrence_count"], 2)  # merged, not appended
             self.assertIn("claude", persisted["detected_by"])
             self.assertIn("gemini", persisted["detected_by"])
             self.assertEqual(persisted["last_seen_commit"], "abc123")
             self.assertEqual(persisted["first_seen"], "2026-03-01T00:00:00Z")  # preserved
+            # Verify confidence was computed (not just the raw value)
+            self.assertIn("confidence", persisted)
+            self.assertIsInstance(persisted["confidence"], float)
+            # Verify agent scores were written
+            score_contents = [c for c in remembered_contents if EverMemosClient.is_agent_score_entry(c)]
+            self.assertGreater(len(score_contents), 0)
 
 
 class TestPassiveConfirmTriggeredInPostRun(unittest.TestCase):
