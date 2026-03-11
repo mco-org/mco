@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Mapping
@@ -71,6 +72,27 @@ DOCTOR_EPILOG = (
     "Exit codes:\n"
     "  0 = command completed (read overall_ok in output)\n"
     "  2 = invalid input"
+)
+
+FINDINGS_EPILOG = (
+    "Examples:\n"
+    "  mco findings list --repo .\n"
+    "  mco findings list --repo . --status open --json\n"
+    "  mco findings confirm sha256:abc123 --status accepted --repo .\n\n"
+    "Exit codes:\n"
+    "  0 = success\n"
+    "  2 = input/config/runtime failure"
+)
+
+MEMORY_EPILOG = (
+    "Examples:\n"
+    "  mco memory agent-stats --repo .\n"
+    "  mco memory agent-stats --repo . --space my-repo --json\n"
+    "  mco memory priors --repo . --category security\n"
+    "  mco memory status --repo .\n\n"
+    "Exit codes:\n"
+    "  0 = success\n"
+    "  2 = input/config/runtime failure"
 )
 
 
@@ -463,6 +485,77 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=_HelpFormatter,
     )
     _add_common_execution_args(review)
+
+    findings = subparsers.add_parser(
+        "findings",
+        help="List and manage persisted findings",
+        description="List and confirm findings stored in evermemos memory.",
+        epilog=FINDINGS_EPILOG,
+        formatter_class=_HelpFormatter,
+    )
+    findings_sub = findings.add_subparsers(dest="findings_action", required=True)
+
+    findings_list = findings_sub.add_parser(
+        "list",
+        help="List findings",
+        formatter_class=_HelpFormatter,
+    )
+    findings_list.add_argument("--repo", default=".", help="Repository root path")
+    findings_list.add_argument("--status", default=None, help="Filter by status (e.g. open, accepted, rejected)")
+    findings_list.add_argument("--space", default="", help="Space slug override")
+    findings_list.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+
+    findings_confirm = findings_sub.add_parser(
+        "confirm",
+        help="Update finding status",
+        formatter_class=_HelpFormatter,
+    )
+    findings_confirm.add_argument("hash", help="Finding hash to confirm")
+    findings_confirm.add_argument(
+        "--status",
+        required=True,
+        choices=("accepted", "rejected", "wontfix"),
+        help="New status for the finding",
+    )
+    findings_confirm.add_argument("--repo", default=".", help="Repository root path")
+    findings_confirm.add_argument("--space", default="", help="Space slug override")
+
+    # ── memory subcommand ──────────────────────────────────────
+    memory_cmd = subparsers.add_parser(
+        "memory",
+        help="View agent stats, priors, and memory space status",
+        description="Inspect memory layer data: agent scores, blended priors, and space status.",
+        epilog=MEMORY_EPILOG,
+        formatter_class=_HelpFormatter,
+    )
+    memory_sub = memory_cmd.add_subparsers(dest="memory_action", required=True)
+
+    mem_agent_stats = memory_sub.add_parser(
+        "agent-stats",
+        help="Show agent reliability scores",
+        formatter_class=_HelpFormatter,
+    )
+    mem_agent_stats.add_argument("--repo", default=".", help="Repository root path")
+    mem_agent_stats.add_argument("--space", default="", help="Space slug override")
+    mem_agent_stats.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+
+    mem_priors = memory_sub.add_parser(
+        "priors",
+        help="Show blended agent weight priors",
+        formatter_class=_HelpFormatter,
+    )
+    mem_priors.add_argument("--repo", default=".", help="Repository root path")
+    mem_priors.add_argument("--category", required=True, help="Task category for display context")
+    mem_priors.add_argument("--space", default="", help="Space slug override")
+
+    mem_status = memory_sub.add_parser(
+        "status",
+        help="Show memory space status overview",
+        formatter_class=_HelpFormatter,
+    )
+    mem_status.add_argument("--repo", default=".", help="Repository root path")
+    mem_status.add_argument("--space", default="", help="Space slug override")
+
     return parser
 
 
@@ -506,6 +599,99 @@ def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
     return ReviewConfig(providers=providers, artifact_base=artifact_base, policy=policy)
 
 
+def _handle_findings(args: argparse.Namespace) -> int:
+    """Handle the findings subcommand (list / confirm)."""
+    from .bridge.evermemos_client import EverMemosClient
+    from .bridge.space import infer_space_slug
+    from .findings_cli import confirm_finding, list_findings, render_findings_table
+
+    api_key = os.environ.get("EVERMEMOS_API_KEY", "")
+    if not api_key:
+        print("EVERMEMOS_API_KEY environment variable is required for findings.", file=sys.stderr)
+        return 2
+
+    repo_root = str(Path(args.repo).resolve())
+    space_override = args.space.strip() if isinstance(args.space, str) else ""
+    slug = infer_space_slug(repo_root, explicit=space_override or None)
+    findings_space = f"coding:{slug}--findings"
+
+    client = EverMemosClient(api_key=api_key)
+
+    if args.findings_action == "list":
+        status_filter = args.status if args.status else None
+        findings = list_findings(client, findings_space, status_filter=status_filter)
+        if getattr(args, "json", False):
+            print(json.dumps(findings, ensure_ascii=True))
+        else:
+            if not findings:
+                print("No findings found.")
+            else:
+                print(render_findings_table(findings))
+        return 0
+
+    if args.findings_action == "confirm":
+        finding_hash = args.hash
+        new_status = args.status
+        ok = confirm_finding(client, findings_space, finding_hash, new_status)
+        if ok:
+            print(f"Finding {finding_hash} updated to '{new_status}'.")
+            return 0
+        else:
+            print(f"Finding with hash '{finding_hash}' not found.", file=sys.stderr)
+            return 2
+
+    print("Unknown findings action.", file=sys.stderr)
+    return 2
+
+
+def _handle_memory(args: argparse.Namespace) -> int:
+    """Handle the memory subcommand (agent-stats / priors / status)."""
+    from .bridge.evermemos_client import EverMemosClient
+    from .bridge.space import infer_space_slug
+    from .memory_cli import show_agent_stats, show_priors, show_status
+
+    api_key = os.environ.get("EVERMEMOS_API_KEY", "")
+    if not api_key:
+        print("EVERMEMOS_API_KEY environment variable is required for memory.", file=sys.stderr)
+        return 2
+
+    repo_root = str(Path(args.repo).resolve())
+    space_override = args.space.strip() if isinstance(args.space, str) else ""
+    slug = infer_space_slug(repo_root, explicit=space_override or None)
+
+    client = EverMemosClient(api_key=api_key)
+
+    if args.memory_action == "agent-stats":
+        agents_space = f"coding:{slug}--agents"
+        if getattr(args, "json", False):
+            # For JSON output, fetch raw scores
+            raw = client.fetch_history(space=agents_space, memory_type="episodic_memory", limit=100)
+            scores = []
+            for item in raw:
+                content = item.get("content", "")
+                if EverMemosClient.is_agent_score_entry(content):
+                    try:
+                        scores.append(EverMemosClient.deserialize_agent_score(content))
+                    except (ValueError, json.JSONDecodeError):
+                        continue
+            print(json.dumps(scores, ensure_ascii=True))
+        else:
+            print(show_agent_stats(client, agents_space))
+        return 0
+
+    if args.memory_action == "priors":
+        category = args.category
+        print(show_priors(client, repo_root, slug, category))
+        return 0
+
+    if args.memory_action == "status":
+        print(show_status(client, slug))
+        return 0
+
+    print("Unknown memory action.", file=sys.stderr)
+    return 2
+
+
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -520,6 +706,12 @@ def main(argv: List[str] | None = None) -> int:
         else:
             print(_render_doctor_report(payload))
         return 0
+
+    if args.command == "findings":
+        return _handle_findings(args)
+
+    if args.command == "memory":
+        return _handle_memory(args)
 
     if args.command not in ("run", "review"):
         parser.error("unsupported command")
