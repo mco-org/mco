@@ -49,8 +49,8 @@ class EverMemosClient:
         from mcp.client.stdio import stdio_client  # type: ignore[import-untyped]
 
         server_params = StdioServerParameters(
-            command="npx",
-            args=["-y", "@anthropic-ai/evermemos-mcp"],
+            command="uvx",
+            args=["evermemos-mcp@latest"],
             env={**os.environ, "EVERMEMOS_API_KEY": self.api_key},
         )
         async with stdio_client(server_params) as (read, write):
