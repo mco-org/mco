@@ -374,9 +374,11 @@ class TestPassiveConfirmTriggeredInPostRun(unittest.TestCase):
                     repo_root=tmpdir, prompt="test", providers=["claude"],
                 )
 
-            # Verify remember was called with the passive_fix_candidate update
-            self.assertEqual(len(remembered_contents), 1)
-            persisted = EverMemosClient.deserialize_finding(remembered_contents[0])
+            # Verify remember was called — filter for finding entries only
+            # (run markers and other entries are also written)
+            finding_contents = [c for c in remembered_contents if EverMemosClient.is_finding_entry(c)]
+            self.assertEqual(len(finding_contents), 1)
+            persisted = EverMemosClient.deserialize_finding(finding_contents[0])
             self.assertTrue(persisted["passive_fix_candidate"])
             self.assertEqual(persisted["status"], "open")
             self.assertEqual(persisted["finding_hash"], real_hash)

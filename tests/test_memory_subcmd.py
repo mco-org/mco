@@ -71,7 +71,7 @@ class TestShowStatus(unittest.TestCase):
 
     def test_shows_space_info(self):
         """show_status lists space existence and counts."""
-        findings_entry = {"content": EverMemosClient.serialize_finding({"title": "test"})}
+        findings_entry = {"content": EverMemosClient.serialize_finding({"finding_hash": "sha256:abc123", "title": "test"})}
         agent_entry = {"content": EverMemosClient.serialize_agent_score({
             "agent": "claude", "repo": "r", "task_category": "c",
         })}

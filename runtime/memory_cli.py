@@ -29,6 +29,13 @@ def show_agent_stats(client: Any, space: str) -> str:
         except (ValueError, json.JSONDecodeError):
             continue
 
+    # Deduplicate: keep only the latest version per (agent, task_category)
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for s in scores:
+        key = "{agent}:{cat}".format(agent=s.get("agent", ""), cat=s.get("task_category", ""))
+        by_key[key] = s
+    scores = list(by_key.values())
+
     if not scores:
         return "No agent scores found in space: {space}".format(space=space)
 
@@ -73,14 +80,15 @@ def show_priors(client: Any, repo_root: str, space_slug: str, category: str) -> 
     stack_scores = _load_agent_rates(client, stack_space)
     global_scores = _load_agent_rates(client, global_space)
 
-    # Count run_count from repo agent history for alpha calculation
+    # Count actual runs from context-space run markers (not entry count)
     run_count = 0
     try:
-        from .bridge.evermemos_client import EverMemosClient
-        raw = client.fetch_history(space=agents_space, memory_type="episodic_memory", limit=100)
+        from .bridge.core import MCO_RUN_MARKER_PREFIX
+        context_space = "coding:{slug}--context".format(slug=space_slug)
+        raw = client.fetch_history(space=context_space, memory_type="episodic_memory", limit=100)
         run_count = sum(
             1 for item in raw
-            if EverMemosClient.is_agent_score_entry(item.get("content", ""))
+            if str(item.get("content", "")).startswith(MCO_RUN_MARKER_PREFIX)
         )
     except Exception:
         pass
@@ -151,28 +159,48 @@ def show_status(client: Any, space_slug: str) -> str:
 
     lines.append("")
 
-    # Findings count
+    # Findings count (deduplicated — unique finding_hashes, not raw entries)
     findings_count = 0
     if findings_space in available:
         try:
             raw = client.fetch_history(space=findings_space, memory_type="episodic_memory", limit=100)
-            findings_count = sum(
-                1 for item in raw
-                if EverMemosClient.is_finding_entry(item.get("content", ""))
-            )
+            seen_hashes: set = set()
+            for item in raw:
+                content = item.get("content", "")
+                if not EverMemosClient.is_finding_entry(content):
+                    continue
+                try:
+                    finding = EverMemosClient.deserialize_finding(content)
+                    fhash = finding.get("finding_hash", "")
+                    if fhash:
+                        seen_hashes.add(fhash)
+                except (ValueError, Exception):
+                    continue
+            findings_count = len(seen_hashes)
         except Exception:
             pass
     lines.append("Findings: {count}".format(count=findings_count))
 
-    # Agent scores count
+    # Agent scores count (deduplicated by agent+category)
     scores_count = 0
     if agents_space in available:
         try:
             raw = client.fetch_history(space=agents_space, memory_type="episodic_memory", limit=100)
-            scores_count = sum(
-                1 for item in raw
-                if EverMemosClient.is_agent_score_entry(item.get("content", ""))
-            )
+            seen_keys: set = set()
+            for item in raw:
+                content = item.get("content", "")
+                if not EverMemosClient.is_agent_score_entry(content):
+                    continue
+                try:
+                    score_dict = EverMemosClient.deserialize_agent_score(content)
+                    key = "{a}:{c}".format(
+                        a=score_dict.get("agent", ""),
+                        c=score_dict.get("task_category", ""),
+                    )
+                    seen_keys.add(key)
+                except (ValueError, Exception):
+                    continue
+            scores_count = len(seen_keys)
         except Exception:
             pass
     lines.append("Agent Scores: {count}".format(count=scores_count))

@@ -11,14 +11,15 @@ where its file has changed, we infer it was fixed.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 
 def check_passive_fixes(
     existing_findings: List[Dict[str, Any]],
     current_hashes: Set[str],
     current_commit: str,
-    changed_files: Set[str],
+    changed_files: Optional[Set[str]] = None,
+    changed_files_by_commit: Optional[Dict[str, Set[str]]] = None,
 ) -> List[Dict[str, Any]]:
     """Check existing findings against current run results for passive fix inference.
 
@@ -26,7 +27,11 @@ def check_passive_fixes(
         existing_findings: Previously persisted findings from memory.
         current_hashes: Set of finding_hash values detected in the current run.
         current_commit: The current HEAD commit identifier.
-        changed_files: Set of file paths that changed since the last run.
+        changed_files: (Legacy) Flat set of changed file paths for all findings.
+            Used when changed_files_by_commit is not provided.
+        changed_files_by_commit: Per-commit changed-files cache.  Each finding
+            looks up its own ``last_seen_commit`` so that only changes since
+            *that specific commit* are considered.
 
     Returns:
         List of finding dicts (copies) that need status updates.
@@ -51,8 +56,18 @@ def check_passive_fixes(
                 updates.append(updated)
             continue
 
-        # Finding is absent from current run
-        file_changed = file_path in changed_files
+        # Finding is absent from current run — determine if its file changed
+        last_commit = finding.get("last_seen_commit", "")
+        if changed_files_by_commit is not None:
+            # Per-finding lookup: only files changed since THIS finding's commit
+            per_finding_changed = changed_files_by_commit.get(last_commit, set())
+            file_changed = file_path in per_finding_changed
+        elif changed_files is not None:
+            # Legacy flat set
+            file_changed = file_path in changed_files
+        else:
+            file_changed = False
+
         if not file_changed:
             # File not touched — no inference possible
             continue

@@ -29,7 +29,8 @@ def list_findings(
         space=space, memory_type="episodic_memory", limit=100
     )
 
-    findings: List[Dict[str, Any]] = []
+    # Parse all findings, then deduplicate by finding_hash (keep latest)
+    all_findings: List[Dict[str, Any]] = []
     for item in raw_history:
         content = item.get("content", "")
         if not EverMemosClient.is_finding_entry(content):
@@ -38,11 +39,21 @@ def list_findings(
             finding = EverMemosClient.deserialize_finding(content)
         except (ValueError, Exception):
             continue
-        if status_filter is not None and finding.get("status") != status_filter:
-            continue
-        findings.append(finding)
+        all_findings.append(finding)
 
-    return findings
+    # Deduplicate: keep only the latest version of each finding_hash
+    by_hash: Dict[str, Dict[str, Any]] = {}
+    for f in all_findings:
+        fhash = f.get("finding_hash", "")
+        if fhash:
+            by_hash[fhash] = f
+        else:
+            by_hash[id(f)] = f  # no hash, keep as-is
+    deduped = list(by_hash.values())
+
+    if status_filter is not None:
+        return [f for f in deduped if f.get("status") == status_filter]
+    return deduped
 
 
 def confirm_finding(
