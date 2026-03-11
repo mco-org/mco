@@ -348,6 +348,49 @@ reports/review/<task_id>/
   raw/                # Raw stdout/stderr logs
 ```
 
+## Cross-Session Memory (Optional)
+
+MCO can persist findings and agent reliability scores across runs via [evermemos-mcp](https://pypi.org/project/evermemos-mcp/). This is fully opt-in — without `--memory`, MCO behaves exactly as before.
+
+```bash
+# Install the optional dependency
+pip install mco[memory]
+
+# Run with memory enabled
+mco review \
+  --repo . \
+  --prompt "Review for security issues." \
+  --providers claude,codex,gemini \
+  --memory
+```
+
+When `--memory` is enabled, MCO will:
+
+- **Pre-run**: Load prior findings and agent reliability scores, inject confidence-graded context into the prompt
+- **Post-run**: Persist new findings, update agent scores, and auto-confirm passively fixed issues
+
+### Memory Subcommands
+
+```bash
+mco memory status                  # Show memory spaces and stats
+mco memory agent-stats             # View per-agent reliability scores
+mco memory priors --category security  # Show blended agent weight priors
+
+mco findings list                  # List all persisted findings
+mco findings list --status open    # Filter by status
+mco findings confirm <hash>        # Manually confirm a finding as fixed
+```
+
+### How It Works
+
+- Findings are hashed (`sha256(repo + file + category + title)`) for cross-run stability
+- Agent reliability is tracked per task category (security, performance, logic, etc.)
+- Cold-start weight mixing blends repo-specific, tech-stack, and global baseline scores
+- Passive fix detection: if a finding disappears and its file was changed, it's auto-confirmed after two consecutive absences
+- Storage backend: [evermemos-mcp](https://pypi.org/project/evermemos-mcp/) via `uvx evermemos-mcp@latest`
+
+Requires `EVERMEMOS_TOKEN` environment variable. See `mco review --help` for `--space` and other memory flags.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE)
