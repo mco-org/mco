@@ -418,7 +418,8 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     memory.add_argument(
         "--space",
         default="",
-        help="Explicit evermemos space slug (default: auto-inferred from git remote). Requires --memory",
+        help="Space slug, e.g. 'my-repo' (default: auto-inferred from git remote). "
+             "Do NOT include 'coding:' prefix — it is added automatically. Requires --memory",
     )
 
 
@@ -543,6 +544,13 @@ def main(argv: List[str] | None = None) -> int:
     memory_space = args.space.strip() if isinstance(args.space, str) else ""
     if memory_space and not args.memory:
         print("--space requires --memory", file=sys.stderr)
+        return 2
+    if memory_space and ":" in memory_space:
+        print(
+            "--space takes a slug (e.g. 'my-repo'), not a full space_id.\n"
+            "The 'coding:' prefix and '--findings'/'--context' suffixes are added automatically.",
+            file=sys.stderr,
+        )
         return 2
 
     req = ReviewRequest(

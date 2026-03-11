@@ -25,13 +25,18 @@ class TestMemoryCliArgs(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args([
             "review", "--repo", ".", "--prompt", "test",
-            "--memory", "--space", "coding:my-repo",
+            "--memory", "--space", "my-repo",
         ])
-        self.assertEqual(args.space, "coding:my-repo")
+        self.assertEqual(args.space, "my-repo")
 
     def test_space_without_memory_returns_exit_code_2(self):
         """--space without --memory should return 2 (not SystemExit from argparse)."""
-        exit_code = main(["review", "--repo", ".", "--prompt", "test", "--space", "coding:my-repo"])
+        exit_code = main(["review", "--repo", ".", "--prompt", "test", "--space", "my-repo"])
+        self.assertEqual(exit_code, 2)
+
+    def test_space_with_colon_rejected(self):
+        """--space 'coding:foo' should be rejected — slug only, no prefix."""
+        exit_code = main(["review", "--repo", ".", "--prompt", "test", "--memory", "--space", "coding:foo"])
         self.assertEqual(exit_code, 2)
 
     def test_no_memory_flag_defaults_false(self):
@@ -54,10 +59,10 @@ class TestReviewRequestMemoryField(unittest.TestCase):
             artifact_base="/tmp/artifacts",
             policy=ReviewPolicy(),
             memory_enabled=True,
-            memory_space="coding:test-repo",
+            memory_space="test-repo",
         )
         self.assertTrue(req.memory_enabled)
-        self.assertEqual(req.memory_space, "coding:test-repo")
+        self.assertEqual(req.memory_space, "test-repo")
 
     def test_review_request_memory_defaults(self):
         from runtime.review_engine import ReviewRequest

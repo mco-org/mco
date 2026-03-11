@@ -5,7 +5,7 @@ import io
 import os
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestMemoryErrorUX(unittest.TestCase):
@@ -14,9 +14,18 @@ class TestMemoryErrorUX(unittest.TestCase):
         from runtime.cli import main
         captured = io.StringIO()
         with patch("sys.stderr", captured):
-            exit_code = main(["review", "--repo", ".", "--prompt", "test", "--space", "coding:foo"])
+            exit_code = main(["review", "--repo", ".", "--prompt", "test", "--space", "my-repo"])
         self.assertEqual(exit_code, 2)
         self.assertIn("--space requires --memory", captured.getvalue())
+
+    def test_space_with_colon_shows_slug_hint(self):
+        """--space 'coding:foo' prints hint about slug-only format."""
+        from runtime.cli import main
+        captured = io.StringIO()
+        with patch("sys.stderr", captured):
+            exit_code = main(["review", "--repo", ".", "--prompt", "test", "--memory", "--space", "coding:foo"])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("slug", captured.getvalue())
 
     def test_memory_without_api_key_shows_message(self):
         """--memory without EVERMEMOS_API_KEY shows actionable install hint."""
@@ -49,12 +58,21 @@ class TestMemoryErrorUX(unittest.TestCase):
                 client._ensure_mcp_sdk()
             self.assertIn("pip install mco[memory]", str(ctx.exception))
 
-    def test_npx_not_found_message(self):
-        """If npx is not available, error should be understandable."""
+    def test_uvx_not_found_surfaces_file_not_found(self):
+        """If uvx binary is missing, _call_tool_sync should raise with context."""
         from runtime.bridge.evermemos_client import EverMemosClient
         client = EverMemosClient(api_key="fake-key")
-        # We just verify the client can be constructed without npx check at init
-        self.assertEqual(client.api_key, "fake-key")
+
+        # Mock _ensure_mcp_sdk to pass, but mock _call_tool to raise FileNotFoundError
+        # (simulating uvx not being on PATH)
+        async def failing_call_tool(name, arguments):
+            raise FileNotFoundError("[Errno 2] No such file or directory: 'uvx'")
+
+        with patch.object(client, "_ensure_mcp_sdk"), \
+             patch.object(client, "_call_tool", side_effect=failing_call_tool):
+            with self.assertRaises(FileNotFoundError) as ctx:
+                client._call_tool_sync("list_spaces", {})
+            self.assertIn("uvx", str(ctx.exception))
 
 
 if __name__ == "__main__":
