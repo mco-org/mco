@@ -130,6 +130,22 @@ class TestCategoryAwareAgentRates(unittest.TestCase):
         rates = _load_agent_rates(client, "coding:test--agents", category="performance")
         self.assertEqual(rates, {})
 
+    @patch("runtime.bridge.stack_detector.detect_stack", return_value="python")
+    @patch("runtime.bridge.core._load_agent_rates")
+    def test_show_priors_passes_category_through(self, mock_load_rates, mock_detect):
+        """show_priors() must forward the category argument to _load_agent_rates()."""
+        from runtime.memory_cli import show_priors
+
+        mock_load_rates.return_value = {"claude": 0.8}
+        client = MagicMock()
+        client.fetch_history.return_value = []
+
+        show_priors(client, "/tmp/repo", "my-repo", "security")
+
+        # All three calls (repo, stack, global) should include category="security"
+        for call_args in mock_load_rates.call_args_list:
+            self.assertEqual(call_args.kwargs.get("category"), "security")
+
 
 class TestMemoryIdInjection(unittest.TestCase):
     """Fix 4: memory_id is extracted from fetch_history outer item."""

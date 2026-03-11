@@ -119,7 +119,7 @@ class TestShowPriors(unittest.TestCase):
     @patch("runtime.bridge.core._load_agent_rates")
     def test_renders_priors_table(self, mock_load_rates, mock_detect):
         """show_priors computes blended weights and displays table."""
-        def _load_rates(client, space):
+        def _load_rates(client, space, category=None):
             if "agents" in space:
                 return {"claude": 0.8, "codex": 0.6}
             if "stacks" in space:

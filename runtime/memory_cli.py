@@ -76,9 +76,10 @@ def show_priors(client: Any, repo_root: str, space_slug: str, category: str) -> 
     stack_space = "coding:stacks--{stack}".format(stack=stack)
     global_space = "coding:global--agents"
 
-    repo_scores = _load_agent_rates(client, agents_space)
-    stack_scores = _load_agent_rates(client, stack_space)
-    global_scores = _load_agent_rates(client, global_space)
+    cat = category if category else None
+    repo_scores = _load_agent_rates(client, agents_space, category=cat)
+    stack_scores = _load_agent_rates(client, stack_space, category=cat)
+    global_scores = _load_agent_rates(client, global_space, category=cat)
 
     # Count actual runs from context-space run markers (not entry count)
     run_count = 0
