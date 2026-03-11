@@ -305,5 +305,75 @@ class TestRealBridgePath(unittest.TestCase):
             self.assertEqual(persisted["first_seen"], "2026-03-01T00:00:00Z")  # preserved
 
 
+class TestPassiveConfirmTriggeredInPostRun(unittest.TestCase):
+    """Post-run triggers passive confirmation for missing open findings."""
+
+    def test_passive_confirm_triggered_in_post_run(self):
+        """Post-run with no findings but file change triggers passive fix candidate."""
+        from runtime.bridge.evermemos_client import EverMemosClient
+        from runtime.bridge.finding_hash import compute_finding_hash
+
+        real_hash = compute_finding_hash(
+            repo="myrepo", file_path="main.py", category="bug", title="null deref",
+        )
+
+        # Simulate an existing open finding in history
+        existing = EverMemosClient.serialize_finding({
+            "finding_hash": real_hash, "title": "null deref",
+            "category": "bug", "file": "main.py",
+            "status": "open", "occurrence_count": 1,
+            "first_seen": "2026-03-01T00:00:00Z",
+            "last_seen": "2026-03-01T00:00:00Z",
+            "last_seen_commit": "old_commit",
+            "detected_by": ["claude"],
+            "passive_fix_candidate": False,
+        })
+
+        remembered_contents = []
+
+        def fake_call_tool_sync(name, arguments):
+            if name == "list_spaces":
+                return ["coding:myrepo--findings"]
+            if name == "fetch_history":
+                return [{"content": existing}]
+            if name == "remember":
+                remembered_contents.append(arguments.get("content", ""))
+                return {"request_id": "req-1"}
+            return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import os
+            with patch.object(EverMemosClient, "_call_tool_sync", side_effect=fake_call_tool_sync), \
+                 patch.object(EverMemosClient, "_ensure_mcp_sdk"), \
+                 patch("runtime.bridge.core._current_commit", return_value="new_commit"), \
+                 patch("runtime.bridge.core._changed_files_since", return_value={"main.py"}), \
+                 patch.dict(os.environ, {"EVERMEMOS_API_KEY": "test-key"}):
+
+                from runtime.bridge import register_hooks
+                from runtime.hooks import RunHooks
+
+                hooks = RunHooks()
+                req = ReviewRequest(
+                    repo_root=tmpdir, prompt="test", providers=["claude"],
+                    artifact_base=tmpdir, policy=ReviewPolicy(),
+                    memory_enabled=True, memory_space="myrepo",
+                )
+                register_hooks(hooks, req)
+
+                # Run post_run with NO findings but with a file change
+                hooks.invoke_post_run(
+                    findings=[],
+                    provider_results={"claude": {"success": True}},
+                    repo_root=tmpdir, prompt="test", providers=["claude"],
+                )
+
+            # Verify remember was called with the passive_fix_candidate update
+            self.assertEqual(len(remembered_contents), 1)
+            persisted = EverMemosClient.deserialize_finding(remembered_contents[0])
+            self.assertTrue(persisted["passive_fix_candidate"])
+            self.assertEqual(persisted["status"], "open")
+            self.assertEqual(persisted["finding_hash"], real_hash)
+
+
 if __name__ == "__main__":
     unittest.main()

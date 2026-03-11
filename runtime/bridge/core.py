@@ -56,6 +56,20 @@ def _current_commit(repo_root: str) -> str:
         return "unknown"
 
 
+def _changed_files_since(repo_root: str, since_commit: str) -> set:
+    """Get files changed between since_commit and HEAD."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", since_commit, "HEAD"],
+            capture_output=True, text=True, check=False, cwd=repo_root,
+        )
+        if result.returncode == 0:
+            return set(result.stdout.strip().splitlines())
+    except OSError:
+        pass
+    return set()
+
+
 def _merge_finding_with_existing(
     existing: Dict[str, Any],
     new_raw: Dict[str, Any],
@@ -164,8 +178,6 @@ def make_post_run(ctx: BridgeContext) -> Callable[..., None]:
         prompt: str,
         providers: List[str],
     ) -> None:
-        if not findings:
-            return
         try:
             _post_run_impl(ctx, findings, provider_results, repo_root, prompt, providers)
         except Exception as exc:
@@ -210,6 +222,7 @@ def _post_run_impl(
         pass  # cold start or connection issue — proceed with empty history
 
     written = 0
+    current_hashes: set = set()
     for raw_finding in findings:
         title = str(raw_finding.get("title", ""))
         category = str(raw_finding.get("category", ""))
@@ -227,6 +240,7 @@ def _post_run_impl(
             category=category,
             title=title,
         )
+        current_hashes.add(fhash)
 
         existing = existing_by_hash.get(fhash)
         if existing:
@@ -260,3 +274,35 @@ def _post_run_impl(
 
     if written:
         print(f"[mco-bridge] Wrote {written} findings to {findings_space}", file=sys.stderr)
+
+    # --- Passive confirmation ---
+    # Get files changed since the earliest last_seen_commit in existing findings
+    commits_in_history = {
+        f.get("last_seen_commit", "")
+        for f in existing_by_hash.values()
+        if f.get("last_seen_commit")
+    }
+    all_changed_files: set = set()
+    for c in commits_in_history:
+        if c and c != "unknown":
+            all_changed_files.update(_changed_files_since(repo_root, c))
+
+    from .passive_confirm import check_passive_fixes
+    passive_updates = check_passive_fixes(
+        existing_findings=list(existing_by_hash.values()),
+        current_hashes=current_hashes,
+        current_commit=commit,
+        changed_files=all_changed_files,
+    )
+    for updated in passive_updates:
+        content = EverMemosClient.serialize_finding(updated)
+        client.remember(space=findings_space, content=content)
+
+    if passive_updates:
+        fixed_count = sum(1 for u in passive_updates if u.get("status") == "fixed")
+        candidate_count = len(passive_updates) - fixed_count
+        print(f"[mco-bridge] Passive confirmation: {fixed_count} fixed, {candidate_count} candidates", file=sys.stderr)
+
+    # --- Forget rejected findings ---
+    from .forget_cleaner import clean_rejected_findings
+    clean_rejected_findings(client, list(existing_by_hash.values()), space=findings_space)
