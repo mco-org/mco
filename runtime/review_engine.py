@@ -43,6 +43,8 @@ class ReviewRequest:
     include_token_usage: bool = False
     synthesize: bool = False
     synthesis_provider: Optional[ProviderId] = None
+    memory_enabled: bool = False
+    memory_space: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,22 @@ def _build_run_prompt(user_prompt: str, target_paths: List[str], allow_paths: Li
 
 def _adapter_registry() -> Mapping[str, ProviderAdapter]:
     return adapter_registry()
+
+
+def _load_memory_hooks(request: "ReviewRequest") -> "RunHooks":
+    """Lazy-load Bridge and fill hook slots. Returns a RunHooks instance."""
+    from .hooks import RunHooks
+    hooks = RunHooks()
+    try:
+        from .bridge import register_hooks
+        register_hooks(hooks, request)
+    except ImportError as exc:
+        print(
+            f"[mco] --memory requires the bridge module. Install with: pip install mco[memory]\n"
+            f"       Import error: {exc}",
+            file=sys.stderr,
+        )
+    return hooks
 
 
 def _read_text(path: Path) -> str:
@@ -780,6 +798,23 @@ def run_review(
             if review_mode
             else _build_run_prompt(request.prompt, normalized_targets, normalized_allow_paths)
         )
+
+        # ── Memory hook: pre_run ──
+        _run_hooks = None
+        if request.memory_enabled:
+            _run_hooks = _load_memory_hooks(request)
+            injected = _run_hooks.invoke_pre_run(
+                prompt=request.prompt,
+                repo_root=request.repo_root,
+                providers=list(request.providers),
+            )
+            if injected is not None:
+                full_prompt = (
+                    _build_prompt(injected, normalized_targets)
+                    if review_mode
+                    else _build_run_prompt(injected, normalized_targets, normalized_allow_paths)
+                )
+
         provider_order: List[str] = []
         provider_seen = set()
         for provider in request.providers:
@@ -914,6 +949,17 @@ def run_review(
             decision = "PASS"
 
         findings_json = merged_findings
+
+        # ── Memory hook: post_run ──
+        if _run_hooks is not None:
+            _run_hooks.invoke_post_run(
+                findings=findings_json,
+                provider_results=provider_results,
+                repo_root=request.repo_root,
+                prompt=request.prompt,
+                providers=list(request.providers),
+            )
+
         synthesis: Optional[Dict[str, object]] = None
         if request.synthesize:
             selected_synthesis_provider = _resolve_synthesis_provider(provider_order, request.synthesis_provider)
