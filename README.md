@@ -11,6 +11,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/Providers-5%20built--in-7c3aed?style=flat-square" alt="5 built-in providers" />
+  <a href="https://pypi.org/project/evermemos-mcp/"><img src="https://img.shields.io/badge/evermemos--mcp-memory%20powered-6366f1?style=flat-square" alt="evermemos-mcp" /></a>
 </p>
 
 <p align="center"><strong>MCO — Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.</strong></p>
@@ -62,6 +63,8 @@ OpenClaw reads `mco -h`, learns the CLI, and orchestrates the entire workflow au
 
 This works the same way from **Claude Code, Cursor, Trae, Copilot, Windsurf**, or any agent that can run shell commands.
 
+**Demo video (Bilibili):** [给 OpenClaw 装上兵权：组建你自己的 AI 军团](https://www.bilibili.com/video/BV1NRASz6EAH)
+
 ## What is MCO
 
 MCO (Multi-CLI Orchestrator) is a neutral orchestration layer for AI coding agents. It dispatches prompts to multiple agent CLIs in parallel, aggregates results, and returns structured output — JSON, SARIF, or PR-ready Markdown. No vendor lock-in. No workflow rewrite.
@@ -104,6 +107,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Agent-to-agent orchestration** — agents can dispatch tasks to other agents through MCO
 - **Dual mode** — `mco review` for structured code review findings, `mco run` for general task execution
 - **Cross-agent deduplication** — identical findings from multiple agents are merged automatically with `detected_by` provenance
+- **Cross-session memory** — `--memory` flag persists findings and agent scores via [evermemos-mcp](https://pypi.org/project/evermemos-mcp/), building institutional knowledge across runs
 - **LLM synthesis** — `--synthesize` runs an extra pass to produce consensus/divergence summary across all agents
 - **CI/CD integration** — `--format sarif` for GitHub Code Scanning, `--format markdown-pr` for PR comments
 - **Environment health check** — `mco doctor` probes binary presence, version, and auth status for all providers
@@ -133,6 +137,7 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Architecture analysis | `mco run --providers claude,gemini,qwen` | Multi-perspective architecture assessment |
 | Pre-deploy health check | `mco doctor --json` | Verify all agents are installed and authenticated |
 | Consensus decision | `mco review --synthesize` | Summarize what agents agree on and where they diverge |
+| Persistent code review | `mco review --memory` | Findings accumulate across runs; agents learn what's already been flagged |
 
 ## Quick Start
 
@@ -260,6 +265,8 @@ MCO is zero-config by default. You can run it directly with built-in defaults an
 | `--save-artifacts` | off | Write artifacts while keeping stdout result delivery |
 | `--task-id` | auto-generated | Stable task identifier for artifact paths |
 | `--artifact-base` | `reports/review` | Base directory for artifact output |
+| `--memory` | off | Enable cross-session memory via evermemos-mcp |
+| `--space` | auto | Space slug for memory storage (default: inferred from git remote) |
 
 Default provider permissions:
 
@@ -310,6 +317,13 @@ You (Tech Lead)
                     ▼         ▼         ▼
                   JSON    SARIF    Markdown-PR
                (stdout)  (CI/CD)  (PR comment)
+
+     ↕  (with --memory)
+  evermemos-mcp
+  ┌─────────────────────────┐
+  │ findings  · agent scores│
+  │ run history · priors    │
+  └─────────────────────────┘
 ```
 
 The calling agent (or user) invokes `mco` with a prompt and a list of providers. MCO fans out to all selected agents in parallel and waits for all to finish.
@@ -348,9 +362,11 @@ reports/review/<task_id>/
   raw/                # Raw stdout/stderr logs
 ```
 
-## Cross-Session Memory (Optional)
+## Cross-Session Memory (Powered by evermemos-mcp)
 
-MCO can persist findings and agent reliability scores across runs via [evermemos-mcp](https://pypi.org/project/evermemos-mcp/). This is fully opt-in — without `--memory`, MCO behaves exactly as before.
+MCO integrates with [evermemos-mcp](https://pypi.org/project/evermemos-mcp/) to give your agent team persistent memory across sessions. Add `--memory` once and MCO starts accumulating institutional knowledge: which findings were real, which agents are reliable for which task types, and what has already been fixed.
+
+Fully opt-in — without `--memory`, MCO behaves exactly as before.
 
 ```bash
 # Install the optional dependency
@@ -364,30 +380,48 @@ mco review \
   --memory
 ```
 
-When `--memory` is enabled, MCO will:
+**What memory adds:**
 
-- **Pre-run**: Load prior findings and agent reliability scores, inject confidence-graded context into the prompt
-- **Post-run**: Persist new findings, update agent scores, and auto-confirm passively fixed issues
+| Phase | What happens |
+|-------|-------------|
+| Pre-run | Prior findings injected into prompt with confidence grades `[HIGH]`/`[MEDIUM]`/`[LOW]` |
+| Pre-run | Agent weights loaded — more reliable agents get more weight in consensus |
+| Post-run | New findings persisted with finding hash for cross-run deduplication |
+| Post-run | Agent scores updated (cross-validation: agents that agree get higher reliability) |
+| Post-run | Passively fixed findings auto-confirmed (disappeared + file changed = fixed) |
+
+**Finding lifecycle:**
+
+```
+open → passive_fix_candidate → fixed
+            ↓
+         (rejected / wontfix / accepted)
+```
+
+A finding that disappears when its file was changed is marked `passive_fix_candidate`. If it stays absent a second consecutive run, it's auto-confirmed as `fixed` — no manual intervention needed.
+
+**Agent reliability:**
+
+MCO tracks each agent's cross-validation rate per task category (security, performance, logic, architecture, style). Agents that consistently agree with others on real findings build up higher reliability scores. Cold-start blends repo-specific, tech-stack, and global baseline scores until enough runs accumulate.
 
 ### Memory Subcommands
 
 ```bash
-mco memory status                  # Show memory spaces and stats
-mco memory agent-stats             # View per-agent reliability scores
-mco memory priors --category security  # Show blended agent weight priors
+mco memory status                      # Memory spaces and finding/score counts
+mco memory agent-stats                 # Per-agent reliability scores
+mco memory priors --category security  # Blended agent weight priors for a task type
 
-mco findings list                  # List all persisted findings
-mco findings list --status open    # Filter by status
-mco findings confirm <hash>        # Manually confirm a finding as fixed
+mco findings list                      # All persisted findings
+mco findings list --status open        # Filter by status
+mco findings confirm <hash>            # Manually mark a finding as fixed
 ```
 
-### How It Works
+### Storage Design
 
-- Findings are hashed (`sha256(repo + file + category + title)`) for cross-run stability
-- Agent reliability is tracked per task category (security, performance, logic, etc.)
-- Cold-start weight mixing blends repo-specific, tech-stack, and global baseline scores
-- Passive fix detection: if a finding disappears and its file was changed, it's auto-confirmed after two consecutive absences
-- Storage backend: [evermemos-mcp](https://pypi.org/project/evermemos-mcp/) via `uvx evermemos-mcp@latest`
+- **Backend**: [evermemos-mcp](https://pypi.org/project/evermemos-mcp/) via `uvx evermemos-mcp@latest` (append-only, MCP stdio protocol)
+- **Finding hash**: `sha256(repo + file_path + category + normalize(title))` — stable across runs, independent of line numbers or severity changes
+- **Spaces**: `coding:<slug>--findings`, `coding:<slug>--agents`, `coding:<slug>--context`, `coding:stacks--<tech>`, `coding:global--agents`
+- **Deduplication**: client-side latest-wins on read; all writes are appends
 
 Requires `EVERMEMOS_TOKEN` environment variable. See `mco review --help` for `--space` and other memory flags.
 
