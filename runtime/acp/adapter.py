@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -82,6 +83,7 @@ class AcpAdapter:
             tested_os=["macos", "linux"],
         )
         self._runs: Dict[str, _AcpRunHandle] = {}
+        self._prompt_thread: Optional[threading.Thread] = None
 
     def detect(self) -> ProviderPresence:
         """Check if the agent binary exists and supports ACP."""
@@ -152,15 +154,11 @@ class AcpAdapter:
         )
         self._runs[run_id] = handle
 
-        # Send prompt asynchronously — the prompt() call blocks until the
-        # agent responds, so we run it in a thread.
-        import threading
-
+        # Send prompt asynchronously — prompt() blocks until the RPC response
+        # returns AND notifications are drained to idle state.
         def _run_prompt() -> None:
             try:
                 client.prompt(session_id, input_task.prompt, timeout=input_task.timeout_seconds)
-                # Drain any remaining updates after prompt returns
-                client.drain_updates()
                 handle.response_text = client.collect_text()
                 handle.success = True
             except (JsonRpcError, TransportClosed, TimeoutError) as exc:
@@ -169,8 +167,8 @@ class AcpAdapter:
             finally:
                 handle.completed = True
 
-        t = threading.Thread(target=_run_prompt, daemon=True)
-        t.start()
+        self._prompt_thread = threading.Thread(target=_run_prompt, daemon=True)
+        self._prompt_thread.start()
 
         return TaskRunRef(
             task_id=input_task.task_id,
@@ -264,7 +262,14 @@ class AcpAdapter:
         except (JsonRpcError, TransportClosed, TimeoutError):
             pass
 
+        # Close transport — this unblocks the prompt thread via TransportClosed
         handle.client.close()
+
+        # Wait for prompt thread to finish before modifying handle state
+        if hasattr(self, "_prompt_thread") and self._prompt_thread is not None:
+            self._prompt_thread.join(timeout=5)
+            self._prompt_thread = None
+
         handle.completed = True
         handle.success = False
         handle.error_message = "Cancelled"

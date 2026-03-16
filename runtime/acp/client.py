@@ -13,8 +13,16 @@ from .transport import JsonRpcTransport, JsonRpcError, TransportClosed
 
 
 _CLIENT_NAME = "mco"
-_CLIENT_VERSION = "0.5.0"
 _PROTOCOL_VERSION = "0.1"
+
+
+def _client_version() -> str:
+    """Read version from package metadata, fall back to unknown."""
+    try:
+        from importlib.metadata import version
+        return version("mco")
+    except Exception:
+        return "unknown"
 
 
 @dataclass
@@ -97,7 +105,7 @@ class AcpClient:
                 "protocolVersion": _PROTOCOL_VERSION,
                 "clientInfo": {
                     "name": _CLIENT_NAME,
-                    "version": _CLIENT_VERSION,
+                    "version": _client_version(),
                 },
                 "capabilities": {},
             },
@@ -134,11 +142,11 @@ class AcpClient:
         text: str,
         timeout: float = 600.0,
     ) -> None:
-        """Send a prompt to a session.
+        """Send a prompt to a session and collect all response text.
 
-        This sends the session/prompt request. The agent will respond with
-        session/update notifications (consumed via next_update()) and eventually
-        return the RPC response when the prompt is fully processed.
+        Blocks until both (a) the RPC response returns AND (b) session state
+        reaches "idle" (or drain window expires). This handles the case where
+        the RPC response arrives before the final session/update notification.
         """
         self._accumulated_text.clear()
         self._session_state = "working"
@@ -151,6 +159,14 @@ class AcpClient:
             },
             timeout=timeout,
         )
+
+        # RPC response returned, but notifications may still be in flight.
+        # Drain until we see idle state or hit a reasonable window.
+        deadline = time.monotonic() + 5.0
+        while self._session_state != "idle" and time.monotonic() < deadline:
+            update = self.next_update(timeout=0.5)
+            if update is None:
+                break
 
     def cancel(self, session_id: str, timeout: float = 10.0) -> None:
         """Cancel the current prompt in a session."""

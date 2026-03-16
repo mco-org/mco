@@ -88,6 +88,10 @@ class JsonRpcTransport:
             if stderr_file:
                 stderr_file.close()
             raise
+        finally:
+            # Close parent's copy — child inherits its own fd
+            if stderr_file:
+                stderr_file.close()
 
         self._running = True
         self._reader_thread = threading.Thread(

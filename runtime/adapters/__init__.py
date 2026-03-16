@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Dict, Mapping
 
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
@@ -18,7 +18,7 @@ def adapter_registry(
     """
     if transport == "acp":
         from ..acp.adapter import AcpAdapter, _ACP_COMMANDS
-        registry: dict[str, Any] = {}
+        registry: Dict[str, Any] = {}
         # Providers with known ACP commands get ACP adapters
         for provider_id, acp_cmd in _ACP_COMMANDS.items():
             registry[provider_id] = AcpAdapter(

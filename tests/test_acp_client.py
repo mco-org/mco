@@ -112,6 +112,72 @@ class TestAcpClient(unittest.TestCase):
         self.assertFalse(self.client.alive)
 
 
+class TestAcpClientNotificationOrder(unittest.TestCase):
+    """Test that prompt() collects text even when RPC response arrives before notifications."""
+
+    # Agent that sends RPC response BEFORE the session/update notification
+    _REVERSE_ORDER_AGENT = '''
+import json
+import sys
+import time
+
+for line in sys.stdin:
+    msg = json.loads(line.strip())
+    if "id" not in msg:
+        continue
+    method = msg.get("method", "")
+    params = msg.get("params", {})
+
+    if method == "initialize":
+        resp = {"jsonrpc": "2.0", "id": msg["id"], "result": {
+            "protocolVersion": "0.1",
+            "agentInfo": {"name": "reverse-agent", "version": "0.1.0"},
+            "capabilities": {}
+        }}
+    elif method == "session/new":
+        resp = {"jsonrpc": "2.0", "id": msg["id"], "result": {"sessionId": "sess-rev"}}
+    elif method == "session/prompt":
+        prompt_text = params.get("content", [{}])[0].get("text", "")
+        # Send RPC response FIRST
+        resp = {"jsonrpc": "2.0", "id": msg["id"], "result": {}}
+        sys.stdout.write(json.dumps(resp) + "\\n")
+        sys.stdout.flush()
+        # THEN send notification after a small delay
+        time.sleep(0.1)
+        update = {"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": "sess-rev", "state": "idle",
+            "content": [{"type": "text", "text": "Late result for: " + prompt_text}]
+        }}
+        sys.stdout.write(json.dumps(update) + "\\n")
+        sys.stdout.flush()
+        continue  # Already sent response above
+    else:
+        resp = {"jsonrpc": "2.0", "id": msg["id"], "result": {}}
+
+    sys.stdout.write(json.dumps(resp) + "\\n")
+    sys.stdout.flush()
+'''
+
+    def test_prompt_collects_late_notifications(self) -> None:
+        """Text should be collected even when notifications arrive after RPC response."""
+        tmp = tempfile.mkdtemp()
+        client = AcpClient(
+            command=[sys.executable, "-c", self._REVERSE_ORDER_AGENT],
+            cwd=tmp,
+        )
+        try:
+            client.start()
+            client.initialize(timeout=5.0)
+            session_id = client.new_session(timeout=5.0)
+            client.prompt(session_id, "test reverse order", timeout=10.0)
+            text = client.collect_text()
+            self.assertIn("Late result for: test reverse order", text)
+        finally:
+            client.close()
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class TestAcpClientLifecycle(unittest.TestCase):
     def test_close_is_idempotent(self) -> None:
         tmp = tempfile.mkdtemp()
