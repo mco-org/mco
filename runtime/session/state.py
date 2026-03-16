@@ -1,7 +1,6 @@
 """Session state persistence — state.json and history.jsonl."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass, field
