@@ -322,3 +322,49 @@ class TestDaemonQueue(unittest.TestCase):
 
         _send_request(sock_path, {"action": "shutdown"})
         t.join(timeout=5)
+
+
+class TestLineReader(unittest.TestCase):
+    """Test _LineReader handles single-recv multi-line buffers correctly."""
+
+    def _make_fake_socket(self, chunks: list) -> socket.socket:
+        """Create a mock socket that yields predefined byte chunks."""
+        from unittest.mock import MagicMock
+        sock = MagicMock(spec=socket.socket)
+        it = iter(chunks)
+        sock.recv = lambda _: next(it, b"")
+        return sock
+
+    def test_two_responses_in_single_recv(self) -> None:
+        """Both queued ack and result arrive in one recv() call."""
+        from runtime.session.client import _LineReader
+        combined = b'{"status":"queued","request_id":1}\n{"status":"ok","response":"done"}\n'
+        reader = _LineReader(self._make_fake_socket([combined]))
+
+        first = reader.read_one()
+        self.assertEqual(first["status"], "queued")
+        self.assertEqual(first["request_id"], 1)
+
+        second = reader.read_one()
+        self.assertEqual(second["status"], "ok")
+        self.assertEqual(second["response"], "done")
+
+    def test_split_across_two_recvs(self) -> None:
+        """Response split across recv boundaries."""
+        from runtime.session.client import _LineReader
+        reader = _LineReader(self._make_fake_socket([
+            b'{"status":"que',
+            b'ued"}\n{"status":"ok"}\n',
+        ]))
+
+        first = reader.read_one()
+        self.assertEqual(first["status"], "queued")
+
+        second = reader.read_one()
+        self.assertEqual(second["status"], "ok")
+
+    def test_eof_returns_none(self) -> None:
+        """EOF (empty recv) returns None."""
+        from runtime.session.client import _LineReader
+        reader = _LineReader(self._make_fake_socket([b""]))
+        self.assertIsNone(reader.read_one())
