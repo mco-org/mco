@@ -47,13 +47,16 @@ def _dispatch_prompt(
         return {"success": False, "response": "", "error": "Provider not available: {}".format(provider)}
 
     import tempfile
+    import uuid
     with tempfile.TemporaryDirectory(prefix="mco-session-") as artifact_dir:
+        unique_id = "session-{}-{}".format(int(time.time()), uuid.uuid4().hex[:8])
         task_input = TaskInput(
-            task_id="session-{}".format(int(time.time())),
+            task_id=unique_id,
             prompt=prompt,
             repo_root=repo_root,
             target_paths=["."],
             timeout_seconds=900,
+            metadata={"artifact_root": artifact_dir},
         )
         run_ref = adapter.run(task_input)
         started = time.time()

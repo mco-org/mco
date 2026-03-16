@@ -6,7 +6,7 @@ import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
-from .state import SessionState, list_sessions, session_dir
+from .state import SessionState, session_dir
 
 
 def _socket_path(repo_root: str, name: str) -> str:
@@ -75,21 +75,23 @@ def broadcast_prompt(
 ) -> List[Dict[str, Any]]:
     """Send a prompt to ALL active sessions in parallel.
 
+    Uses manager.list_sessions for PID liveness check (not raw state files).
     Returns a list of {session_name, provider, status, response, wall_clock_seconds}.
     """
-    sessions = list_sessions(repo_root)
-    active = [s for s in sessions if s.status == "active"]
+    from .manager import list_sessions as list_sessions_live
+    live_sessions = list_sessions_live(repo_root)
+    active = [s for s in live_sessions if s["status"] == "active"]
 
     if not active:
         return []
 
     results: List[Dict[str, Any]] = []
 
-    def _send_one(session: SessionState) -> Dict[str, Any]:
-        resp = send_prompt(repo_root, session.name, prompt)
+    def _send_one(session_info: Dict[str, Any]) -> Dict[str, Any]:
+        resp = send_prompt(repo_root, session_info["name"], prompt)
         return {
-            "session_name": session.name,
-            "provider": session.provider,
+            "session_name": session_info["name"],
+            "provider": session_info["provider"],
             "status": resp.get("status", "error"),
             "response": resp.get("response", ""),
             "wall_clock_seconds": resp.get("wall_clock_seconds", 0),
@@ -102,10 +104,10 @@ def broadcast_prompt(
             try:
                 results.append(future.result())
             except Exception as exc:
-                session = futures[future]
+                session_info = futures[future]
                 results.append({
-                    "session_name": session.name,
-                    "provider": session.provider,
+                    "session_name": session_info["name"],
+                    "provider": session_info["provider"],
                     "status": "error",
                     "response": "",
                     "wall_clock_seconds": 0,

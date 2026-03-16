@@ -862,6 +862,9 @@ def _handle_session(args: argparse.Namespace) -> int:
                 else:
                     print("Error: {}".format(r.get("message", "")))
                 print()
+        # Exit 2 if ALL results failed
+        if all(r.get("status") != "ok" for r in results):
+            return 2
         return 0
 
     if args.session_action == "list":
