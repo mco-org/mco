@@ -770,9 +770,25 @@ def _handle_memory(args: argparse.Namespace) -> int:
 
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
-    # If --stream jsonl is in argv, capture argparse errors as JSONL events
+    # If --stream jsonl is in argv, suppress argparse stderr and emit JSONL error
     _raw_argv = argv if argv is not None else sys.argv[1:]
     _wants_stream = "--stream" in _raw_argv and "jsonl" in _raw_argv
+    _parse_error_msg = ""
+    if _wants_stream:
+        # Override parser.error to capture the message without writing to stderr
+        _original_error = parser.error
+
+        def _silent_error(message: str) -> None:
+            nonlocal _parse_error_msg
+            _parse_error_msg = message
+            raise SystemExit(2)
+
+        parser.error = _silent_error  # type: ignore[assignment]
+        # Also suppress subparser errors
+        for action in parser._subparsers._actions:
+            if hasattr(action, "_parser_class"):
+                for sub in getattr(action, "choices", {}).values():
+                    sub.error = _silent_error  # type: ignore[assignment]
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -780,7 +796,7 @@ def main(argv: List[str] | None = None) -> int:
             from datetime import datetime, timezone
             err_event = json.dumps({
                 "type": "error", "code": "parse_error",
-                "message": "Invalid arguments. Run 'mco review --help' for usage.",
+                "message": _parse_error_msg or "Invalid arguments. Run 'mco review --help' for usage.",
                 "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             }, ensure_ascii=True)
             print(err_event, flush=True)

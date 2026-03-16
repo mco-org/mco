@@ -194,19 +194,24 @@ class TestProviderEarlyExitEvents(unittest.TestCase):
 class TestArgparseErrorsEmitEvents(unittest.TestCase):
     """Fix 1: argparse errors with --stream should emit JSONL error, not just stderr."""
 
-    def test_missing_prompt_emits_jsonl_error(self) -> None:
+    def test_missing_prompt_emits_jsonl_error_no_stderr(self) -> None:
         from runtime.cli import main
         import io
         import contextlib
         stdout_buf = io.StringIO()
-        with contextlib.redirect_stdout(stdout_buf):
+        stderr_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
             exit_code = main(["review", "--repo", ".", "--stream", "jsonl"])
         output = stdout_buf.getvalue().strip()
-        # Should have at least one JSONL error event
-        if output:
-            event = json.loads(output.splitlines()[-1])
-            self.assertEqual(event["type"], "error")
-            self.assertEqual(event["code"], "parse_error")
+        stderr_output = stderr_buf.getvalue().strip()
+        # Must have JSONL error event on stdout
+        self.assertTrue(output, "Expected JSONL error event on stdout")
+        event = json.loads(output.splitlines()[-1])
+        self.assertEqual(event["type"], "error")
+        self.assertEqual(event["code"], "parse_error")
+        self.assertIn("required", event["message"].lower())
+        # stderr must be empty — pure JSONL protocol
+        self.assertEqual(stderr_output, "", "stderr must be empty in stream mode, got: " + stderr_output)
         self.assertEqual(exit_code, 2)
 
     def test_bad_stream_value_emits_jsonl_error(self) -> None:
