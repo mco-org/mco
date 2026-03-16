@@ -91,11 +91,25 @@ Implementation: after computing diff files, if user also passed `--target-paths`
 
 ## Empty Diff Behavior
 
-If diff computation returns zero changed files:
+If diff computation returns zero changed files, `run_review()` returns a no-op `ReviewResult` immediately — no providers are invoked.
 
-- Print to stderr: `"No changes detected for the specified diff mode. Nothing to review."`
-- Exit with code 0 (success, not error).
-- Do NOT invoke any providers.
+```python
+ReviewResult(
+    task_id=task_id,
+    artifact_root=None,
+    decision="PASS",
+    terminal_state="completed",
+    provider_results={},
+    findings_count=0,
+    parse_success_count=0,
+    parse_failure_count=0,
+    schema_valid_count=0,
+    dropped_findings_count=0,
+    findings=[],
+)
+```
+
+The CLI layer (`main()`) receives this like any other result. It prints a message to stderr (`"No changes detected for the specified diff mode. Nothing to review."`) and exits 0 via the normal `terminal_state → exit code` path. No special early-exit logic in `main()`.
 
 ## Prompt Augmentation
 
@@ -130,10 +144,10 @@ The original prompt and scope annotation remain intact below the diff section.
 After provider results are collected and findings are parsed:
 
 1. Build `diff_file_set: Set[str]` from the diff files list.
-2. For each finding with `evidence.file_path`:
-   - If `file_path` is in `diff_file_set` → tag `"diff_scope": "in_diff"`
+2. For each finding, extract file via `evidence.file` (the field name used throughout the codebase — see `review_engine.py:373`, `formatters.py:26`, `adapters/parsing.py:376`):
+   - If `evidence.file` is in `diff_file_set` → tag `"diff_scope": "in_diff"`
    - Otherwise → tag `"diff_scope": "related"`
-3. Findings without `file_path` in evidence → tag `"diff_scope": "unknown"`
+3. Findings without `evidence.file` or without evidence → tag `"diff_scope": "unknown"`
 
 This tag is added to the finding dict at the top level, NOT inside the title or description. It does not affect deduplication or memory hashing.
 
@@ -178,34 +192,36 @@ existing: memory post_run hook
 
 ## Output Changes
 
-### JSON output
+### Where `diff_scope` appears
 
-Findings gain a new optional field:
+The `diff_scope` tag is added to each finding dict after provider results are merged. It flows into:
 
-```json
-{
-  "title": "SQL injection in query builder",
-  "severity": "high",
-  "diff_scope": "in_diff",
+1. **`findings.json` artifact** (when `--save-artifacts` or `--result-mode artifact/both`) — each finding object gains `"diff_scope": "in_diff" | "related" | "unknown"`.
+2. **`ReviewResult.findings`** list — available to formatters and any downstream consumer.
+3. **`--json` top-level payload** — no change to the existing payload schema. The payload contains `findings_count` but not individual findings. `diff_scope` is NOT injected into the top-level JSON.
+
+### Report format (`--format report`)
+
+When diff mode is active and the human-readable report formatter is used, findings are grouped by diff scope:
+
+```
+### In Diff (3 findings)
+  HIGH  security  SQL injection in auth.py  auth.py:42
   ...
-}
+
+### Related (1 finding)
+  MEDIUM  performance  N+1 query in related model  models.py:88
 ```
 
-### Report format
+When diff mode is NOT active, report format is unchanged.
 
-When `--format report` (default), findings are grouped:
+### markdown-pr format
 
-```
-## In Diff (3 findings)
-...
+No structural change in v1. The existing table format is preserved as-is. `diff_scope` is available in the finding dict but the PR formatter does not render it. Adding a "Scope" column is deferred to v2 if there's demand.
 
-## Related (1 finding)
-...
-```
+### SARIF format
 
-### SARIF / markdown-pr
-
-`diff_scope` is included as a property but does not change the output structure.
+`diff_scope` is included as a `property` on each `result` object in the SARIF `runs[].results[]` array. This is the standard SARIF extension mechanism and does not break the schema.
 
 ## What Is NOT in Scope (v1)
 
