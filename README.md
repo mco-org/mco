@@ -140,6 +140,8 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Persistent code review | `mco review --memory` | Findings accumulate across runs; agents learn what's already been flagged |
 | Diff-only review | `mco review --diff` | Review only changed files vs main branch |
 | Staged changes review | `mco review --staged` | Review only git staged changes |
+| Multi-turn session | `mco session start --provider claude` | Persistent session with conversation history |
+| Multi-session broadcast | `mco session broadcast "prompt"` | Fan out to all active sessions, aggregate results |
 
 ## Quick Start
 
