@@ -450,6 +450,12 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Force artifact writes when result-mode is stdout",
     )
     output.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    output.add_argument(
+        "--stream",
+        choices=["jsonl"],
+        default=None,
+        help="Output JSONL event stream to stdout (mutually exclusive with --json and --format)",
+    )
 
     access = parser.add_argument_group("Access and Contracts")
     access.add_argument("--allow-paths", default=".", help="Comma-separated allowed paths under repo root")
@@ -845,6 +851,28 @@ def main(argv: List[str] | None = None) -> int:
     elif args.unstaged:
         diff_mode = "unstaged"
 
+    # Validate --stream mutual exclusion
+    stream_mode = getattr(args, "stream", None)
+    if stream_mode and args.json:
+        print("--stream and --json are mutually exclusive", file=sys.stderr)
+        return 2
+    if stream_mode and args.format not in ("report",):
+        print("--stream and --format are mutually exclusive", file=sys.stderr)
+        return 2
+
+    # Build thread-safe stream emitter
+    stream_callback = None
+    if stream_mode == "jsonl":
+        import threading as _threading
+        _stream_lock = _threading.Lock()
+
+        def _stream_emit(event: dict) -> None:
+            line = json.dumps(event, ensure_ascii=True)
+            with _stream_lock:
+                print(line, flush=True)
+
+        stream_callback = _stream_emit
+
     req = ReviewRequest(
         repo_root=repo_root,
         prompt=args.prompt,
@@ -860,6 +888,7 @@ def main(argv: List[str] | None = None) -> int:
         memory_space=memory_space or None,
         diff_mode=diff_mode,
         diff_base=diff_base_arg or None,
+        stream_callback=stream_callback,
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
@@ -872,8 +901,21 @@ def main(argv: List[str] | None = None) -> int:
     try:
         result = run_review(req, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
-        print(f"Input error: {exc}", file=sys.stderr)
+        if stream_callback:
+            stream_callback({"type": "error", "code": "input_error", "message": str(exc),
+                             "timestamp": __import__("datetime").datetime.now(
+                                 __import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")})
+        else:
+            print(f"Input error: {exc}", file=sys.stderr)
         return 2
+
+    # In stream mode, events were already emitted — just return exit code
+    if stream_mode:
+        if result.decision == "FAIL":
+            return 2
+        if review_mode and result.decision == "INCONCLUSIVE":
+            return 3
+        return 0
 
     payload = {
         "command": args.command,

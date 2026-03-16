@@ -47,6 +47,7 @@ class ReviewRequest:
     memory_space: Optional[str] = None
     diff_mode: Optional[str] = None    # "branch" | "staged" | "unstaged" | None
     diff_base: Optional[str] = None    # git ref, only for diff_mode="branch"
+    stream_callback: Optional[Any] = None  # Callable[[Dict[str, Any]], None] for JSONL streaming
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,21 @@ class ReviewResult:
     findings: List[Dict[str, object]] = field(default_factory=list)
     token_usage_summary: Optional[Dict[str, object]] = None
     synthesis: Optional[Dict[str, object]] = None
+
+
+def _now_iso() -> str:
+    """Return current UTC time in ISO 8601 format."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _emit_event(request: "ReviewRequest", event: Dict[str, object]) -> None:
+    """Emit a streaming event if stream_callback is set."""
+    cb = request.stream_callback
+    if cb is not None:
+        if "timestamp" not in event:
+            event["timestamp"] = _now_iso()
+        cb(event)
 
 
 def _sha(value: str) -> str:
@@ -577,6 +593,8 @@ def _run_provider(
             },
         )
 
+    _emit_event(request, {"type": "provider_started", "provider": provider})
+
     provider_stall_timeout = _provider_stall_timeout_seconds(request.policy, provider)
     poll_interval_seconds = _poll_interval_seconds(request.policy)
     review_hard_timeout_seconds = request.policy.review_hard_timeout_seconds if review_mode else 0
@@ -615,6 +633,11 @@ def _run_provider(
                 if current_snapshot != last_snapshot:
                     last_snapshot = current_snapshot
                     last_progress_at = now
+                    _emit_event(request, {
+                        "type": "provider_progress",
+                        "provider": provider,
+                        "total_output_bytes": sum(current_snapshot) if isinstance(current_snapshot, tuple) else 0,
+                    })
 
                 cancel_reason = ""
                 if review_hard_timeout_seconds > 0 and (now - started) > review_hard_timeout_seconds:
@@ -623,6 +646,12 @@ def _run_provider(
                     cancel_reason = "stall_timeout"
 
                 if cancel_reason:
+                    _emit_event(request, {
+                        "type": "provider_error",
+                        "provider": provider,
+                        "error_kind": cancel_reason,
+                        "message": "Provider cancelled: {}".format(cancel_reason),
+                    })
                     if run_ref is not None:
                         try:
                             adapter.cancel(run_ref)
@@ -781,6 +810,13 @@ def _run_provider(
         provider_result["token_usage"] = token_usage
         provider_result["token_usage_completeness"] = token_usage_completeness
     _ensure_if_persisting()
+    _emit_event(request, {
+        "type": "provider_finished",
+        "provider": provider,
+        "success": run_result.success,
+        "findings_count": len(findings),
+        "wall_clock_seconds": wall_clock_seconds,
+    })
     return _ProviderExecutionOutcome(
         provider=provider,
         success=run_result.success,
@@ -905,6 +941,13 @@ def run_review(
             provider_seen.add(provider)
             provider_order.append(provider)
         provider_order = sorted(provider_order)
+
+        _emit_event(request, {
+            "type": "run_started",
+            "task_id": task_id,
+            "providers": provider_order,
+            "review_mode": review_mode,
+        })
 
         if request.policy.max_provider_parallelism <= 0:
             max_workers = max(1, len(provider_order))
@@ -1058,6 +1101,10 @@ def run_review(
                     "text": "",
                 }
             else:
+                _emit_event(request, {
+                    "type": "synthesis_started",
+                    "provider": selected_synthesis_provider,
+                })
                 synthesis_prompt = _build_synthesis_prompt(
                     review_mode,
                     decision,
@@ -1104,6 +1151,10 @@ def run_review(
                 synthesis_reason = "ok" if synthesis_success else (
                     str(failure_reason) if failure_reason not in (None, "") else "synthesis_failed"
                 )
+                _emit_event(request, {
+                    "type": "synthesis_finished",
+                    "success": synthesis_success,
+                })
                 synthesis = {
                     "provider": selected_synthesis_provider,
                     "success": synthesis_success,
@@ -1215,6 +1266,26 @@ def run_review(
             run_payload["synthesis"] = synthesis
         if write_artifacts and root_path:
             _write_json(root_path / "run.json", run_payload)
+
+        # ── Stream: result event ──
+        _result_event: Dict[str, object] = {
+            "type": "result",
+            "task_id": resolved_task_id,
+            "decision": decision,
+            "terminal_state": terminal_state.value,
+            "findings_count": len(merged_findings),
+            "findings": findings_json,
+            "provider_results": {
+                p: {"success": pr.get("success"), "findings_count": pr.get("findings_count", 0),
+                     "wall_clock_seconds": pr.get("wall_clock_seconds", 0)}
+                for p, pr in provider_results.items()
+            },
+        }
+        if token_usage_summary is not None:
+            _result_event["token_usage_summary"] = token_usage_summary
+        if synthesis is not None:
+            _result_event["synthesis"] = synthesis
+        _emit_event(request, _result_event)
 
         return ReviewResult(
             task_id=resolved_task_id,
