@@ -43,15 +43,22 @@ def _send_request(
         client.close()
 
 
-def _read_one_response(client: socket.socket) -> Optional[Dict[str, Any]]:
-    """Read a single JSON-line response from the socket."""
-    data = b""
-    while b"\n" not in data:
-        chunk = client.recv(65536)
-        if not chunk:
-            return None
-        data += chunk
-    return json.loads(data.decode("utf-8").strip())
+class _LineReader:
+    """Buffered reader that splits on \\n, preserving leftover bytes between reads."""
+
+    def __init__(self, sock: socket.socket) -> None:
+        self._sock = sock
+        self._buf = b""
+
+    def read_one(self) -> Optional[Dict[str, Any]]:
+        """Read and parse one JSON line. Returns None on EOF."""
+        while b"\n" not in self._buf:
+            chunk = self._sock.recv(65536)
+            if not chunk:
+                return None
+            self._buf += chunk
+        line, self._buf = self._buf.split(b"\n", 1)
+        return json.loads(line.decode("utf-8"))
 
 
 def send_prompt(
@@ -70,9 +77,10 @@ def send_prompt(
     try:
         client.connect(sock_path)
         client.sendall(json.dumps({"action": "send", "prompt": prompt}).encode("utf-8") + b"\n")
+        reader = _LineReader(client)
 
         # First response: queued ack or immediate error
-        first = _read_one_response(client)
+        first = reader.read_one()
         if first is None:
             return {"status": "error", "message": "Empty response from daemon"}
         if first.get("status") != "queued":
@@ -80,7 +88,7 @@ def send_prompt(
             return first
 
         # Second response: actual result after worker processes
-        second = _read_one_response(client)
+        second = reader.read_one()
         if second is None:
             return {"status": "error", "message": "Connection lost while waiting for result"}
         return second

@@ -340,17 +340,17 @@ def _handle_connection(
         if action == "cancel":
             with ctx.lock:
                 current = ctx.current_request
-                if current is None:
-                    _send_response(conn, {
-                        "status": "ok",
-                        "message": "Nothing running",
-                        "cancelled": 0,
-                    })
-                    return True
+                if current is not None:
+                    ctx.cancel_event.set()
+                    running_id = current.request_id
 
-                # Cancel the running request
-                ctx.cancel_event.set()
-                running_id = current.request_id
+            if current is None:
+                _send_response(conn, {
+                    "status": "ok",
+                    "message": "Nothing running",
+                    "cancelled": 0,
+                })
+                return True
 
             # Also cancel all queued requests
             cancelled_count = 1  # The running one
@@ -505,6 +505,10 @@ def run_daemon(repo_root: str, name: str) -> None:
 
         # Cancel current request
         ctx.cancel_event.set()
+
+        # Wait for handler threads (they'll unblock once queued requests resolve)
+        for ht in handler_threads:
+            ht.join(timeout=3)
 
         worker.join(timeout=5)
         server.close()
