@@ -138,6 +138,8 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Pre-deploy health check | `mco doctor --json` | Verify all agents are installed and authenticated |
 | Consensus decision | `mco review --synthesize` | Summarize what agents agree on and where they diverge |
 | Persistent code review | `mco review --memory` | Findings accumulate across runs; agents learn what's already been flagged |
+| Diff-only review | `mco review --diff` | Review only changed files vs main branch |
+| Staged changes review | `mco review --staged` | Review only git staged changes |
 
 ## Quick Start
 
@@ -267,6 +269,10 @@ MCO is zero-config by default. You can run it directly with built-in defaults an
 | `--artifact-base` | `reports/review` | Base directory for artifact output |
 | `--memory` | off | Enable cross-session memory via evermemos-mcp |
 | `--space` | auto | Space slug for memory storage (default: inferred from git remote) |
+| `--diff` | off | Review only changes vs merge-base with main/master |
+| `--staged` | off | Review only staged changes |
+| `--unstaged` | off | Review only unstaged working tree changes |
+| `--diff-base` | auto | Git ref for branch diff (e.g. `origin/main`, `HEAD~3`). Implies `--diff` |
 
 Default provider permissions:
 

@@ -175,12 +175,24 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def _finding_location_from_dict(finding: Dict[str, object]) -> str:
+    evidence = finding.get("evidence")
+    if not isinstance(evidence, dict):
+        return ""
+    file_path = str(evidence.get("file", ""))
+    line = evidence.get("line")
+    if file_path and isinstance(line, int):
+        return f"{file_path}:{line}"
+    return file_path
+
+
 def _render_user_readable_report(
     command: str,
     result_mode: str,
     providers: List[str],
     payload: Dict[str, object],
     provider_results: Dict[str, Dict[str, object]],
+    findings: Optional[List[Dict[str, object]]] = None,
 ) -> str:
     lines: List[str] = []
     title = "Review" if command == "review" else "Run"
@@ -246,6 +258,33 @@ def _render_user_readable_report(
     else:
         lines.append("Artifacts")
         lines.append("- artifact files are skipped in stdout mode")
+
+    # Diff scope findings breakdown (only when findings have diff_scope tags)
+    if findings and any(f.get("diff_scope") for f in findings):
+        in_diff = [f for f in findings if f.get("diff_scope") == "in_diff"]
+        related = [f for f in findings if f.get("diff_scope") == "related"]
+
+        if in_diff:
+            lines.append("")
+            lines.append(f"In Diff ({len(in_diff)} findings)")
+            for f in in_diff:
+                lines.append(
+                    f"  {str(f.get('severity', '-')).upper():8s} "
+                    f"{str(f.get('category', '-')):15s} "
+                    f"{f.get('title', '-')}  "
+                    f"{_finding_location_from_dict(f)}"
+                )
+        if related:
+            lines.append("")
+            lines.append(f"Related ({len(related)} findings)")
+            for f in related:
+                lines.append(
+                    f"  {str(f.get('severity', '-')).upper():8s} "
+                    f"{str(f.get('category', '-')):15s} "
+                    f"{f.get('title', '-')}  "
+                    f"{_finding_location_from_dict(f)}"
+                )
+
     return "\n".join(lines)
 
 
@@ -442,6 +481,29 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         default="",
         help="Space slug, e.g. 'my-repo' (default: auto-inferred from git remote). "
              "Do NOT include 'coding:' prefix — it is added automatically. Requires --memory",
+    )
+
+    diff_group = parser.add_argument_group("Diff Mode")
+    diff_exclusive = diff_group.add_mutually_exclusive_group()
+    diff_exclusive.add_argument(
+        "--diff",
+        action="store_true",
+        help="Review only changes vs merge-base with main/master branch",
+    )
+    diff_exclusive.add_argument(
+        "--staged",
+        action="store_true",
+        help="Review only staged changes (git diff --cached)",
+    )
+    diff_exclusive.add_argument(
+        "--unstaged",
+        action="store_true",
+        help="Review only unstaged working tree changes (git diff)",
+    )
+    diff_group.add_argument(
+        "--diff-base",
+        default="",
+        help="Git ref for branch diff comparison (e.g. origin/main, HEAD~3). Implies --diff",
     )
 
 
@@ -745,6 +807,22 @@ def main(argv: List[str] | None = None) -> int:
         )
         return 2
 
+    # Normalize diff flags
+    diff_base_arg = args.diff_base.strip() if isinstance(args.diff_base, str) else ""
+    if diff_base_arg and args.staged:
+        print("--diff-base cannot be used with --staged", file=sys.stderr)
+        return 2
+    if diff_base_arg and args.unstaged:
+        print("--diff-base cannot be used with --unstaged", file=sys.stderr)
+        return 2
+    diff_mode = None
+    if args.diff or diff_base_arg:
+        diff_mode = "branch"
+    elif args.staged:
+        diff_mode = "staged"
+    elif args.unstaged:
+        diff_mode = "unstaged"
+
     req = ReviewRequest(
         repo_root=repo_root,
         prompt=args.prompt,
@@ -758,6 +836,8 @@ def main(argv: List[str] | None = None) -> int:
         synthesis_provider=synth_provider or None,
         memory_enabled=bool(args.memory),
         memory_space=memory_space or None,
+        diff_mode=diff_mode,
+        diff_base=diff_base_arg or None,
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
@@ -807,6 +887,7 @@ def main(argv: List[str] | None = None) -> int:
                         providers,
                         payload,
                         result.provider_results,
+                        result.findings,
                     )
                 )
     else:
@@ -828,6 +909,7 @@ def main(argv: List[str] | None = None) -> int:
                         providers,
                         payload,
                         result.provider_results,
+                        result.findings,
                     )
                 )
 
