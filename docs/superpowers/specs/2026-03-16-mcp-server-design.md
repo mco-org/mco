@@ -199,17 +199,37 @@ def get_findings_data(client, space, status_filter=None) -> List[Dict[str, Any]]
 
 Existing `show_status()` and `render_findings_table()` are refactored to call these data functions internally, preserving CLI behavior.
 
-## Error Handling
+## Response Envelope
 
-| Scenario | Behavior |
-|----------|----------|
-| `mcp` not installed | `mco serve` prints error, exits 2 |
-| Provider timeout during review | Returns partial result (same as CLI) |
-| `EVERMEMOS_API_KEY` missing | findings_list/memory_status return error text in response |
-| Invalid provider name | Returns error text listing valid providers |
-| Invalid repo path | Returns error text |
+All tool responses use a uniform envelope so MCP clients can reliably distinguish success from failure without type-sniffing.
 
-Errors are returned as tool response text, never as unhandled exceptions that crash the server.
+**Success:**
+```json
+{"ok": true, "data": { ... }}
+```
+
+**Failure:**
+```json
+{"ok": false, "error": {"code": "missing_api_key", "message": "EVERMEMOS_API_KEY environment variable is required"}}
+```
+
+`data` contains the tool-specific payload (object or array). `error.code` is a machine-readable slug; `error.message` is human-readable.
+
+### Error Codes
+
+| Code | When |
+|------|------|
+| `invalid_repo` | repo path does not exist or is not a git repo |
+| `invalid_providers` | no valid provider names in providers string |
+| `missing_api_key` | EVERMEMOS_API_KEY not set (findings/memory tools) |
+| `execution_error` | run_review() raised an unexpected exception |
+| `mcp_not_installed` | mcp package missing (only at `mco serve` startup, not tool-level) |
+
+### Startup vs Tool Errors
+
+- `mcp` not installed → `mco serve` prints to stderr and exits 2 (before server starts)
+- All other errors → returned as `{"ok": false, ...}` envelope inside the tool response
+- Provider timeout during review → `{"ok": true, ...}` with partial result (same as CLI behavior — partial is not an error)
 
 ## What Is NOT in Scope (v1)
 
