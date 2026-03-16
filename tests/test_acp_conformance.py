@@ -7,7 +7,6 @@ the ACP client against each scenario's assertions.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import tempfile
 import time
@@ -66,31 +65,52 @@ class _ScenarioRunner:
             self.session_id = self.client.new_session(timeout=5.0)
             return
 
+        if action == "prompt":
+            # High-level prompt — uses client.prompt() with full
+            # notification drain. This is the primary way to test prompt.
+            text = step.get("text", "")
+            try:
+                self.client.prompt(self.session_id, text, timeout=10.0)
+                self.last_result = {}
+            except JsonRpcError as exc:
+                self.last_result = exc
+            return
+
+        if action == "cancel":
+            # High-level cancel — uses client.cancel()
+            self.client.cancel(self.session_id, timeout=5.0)
+            return
+
         if action == "send":
+            # Mid-level send — goes through transport but auto-injects sessionId.
+            # Does NOT use client.prompt() so notification drain is not tested.
             method = step["method"]
             params = dict(step.get("params", {}))
-            # Inject sessionId for session-scoped methods
             if method.startswith("session/") and method != "session/new":
                 if "sessionId" not in params:
                     params["sessionId"] = self.session_id
+            try:
+                self.last_result = self.client._transport.send_request(
+                    method=method, params=params, timeout=10.0,
+                )
+            except JsonRpcError as exc:
+                self.last_result = exc
+            return
 
-            # Use high-level client.prompt() for session/prompt to get
-            # proper notification collection (including post-RPC drain).
-            if method == "session/prompt":
-                content = params.get("content", [])
-                text = content[0].get("text", "") if content else ""
-                try:
-                    self.client.prompt(self.session_id, text, timeout=10.0)
-                    self.last_result = {}
-                except JsonRpcError as exc:
-                    self.last_result = exc
-            else:
-                try:
-                    self.last_result = self.client._transport.send_request(
-                        method=method, params=params, timeout=10.0,
-                    )
-                except JsonRpcError as exc:
-                    self.last_result = exc
+        if action == "send_raw":
+            # Low-level send — sends params exactly as specified, no rewriting.
+            # Use for protocol-level edge cases (empty content, etc.)
+            method = step["method"]
+            params = dict(step.get("params", {}))
+            if method.startswith("session/") and method != "session/new":
+                if "sessionId" not in params:
+                    params["sessionId"] = self.session_id
+            try:
+                self.last_result = self.client._transport.send_request(
+                    method=method, params=params, timeout=10.0,
+                )
+            except JsonRpcError as exc:
+                self.last_result = exc
             return
 
         if action == "expect_result":
@@ -125,15 +145,23 @@ class _ScenarioRunner:
             return
 
         if action == "expect_text_collected":
-            # Drain any remaining notifications
             time.sleep(0.2)
             self.client.drain_updates()
             text = self.client.collect_text()
             if "contains" in step:
+                expected = step["contains"].lower()
                 self.tc.assertIn(
-                    step["contains"], text.lower(),
+                    expected, text.lower(),
                     "Collected text does not contain '{}'. Got: '{}'".format(
                         step["contains"], text[:200],
+                    ),
+                )
+            if "not_contains" in step:
+                excluded = step["not_contains"].lower()
+                self.tc.assertNotIn(
+                    excluded, text.lower(),
+                    "Collected text should NOT contain '{}'. Got: '{}'".format(
+                        step["not_contains"], text[:200],
                     ),
                 )
             return

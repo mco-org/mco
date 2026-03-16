@@ -42,14 +42,8 @@
       {"action": "initialize"},
       {"action": "new_session"},
       {
-        "action": "send",
-        "method": "session/prompt",
-        "params": {
-          "content": [{"type": "text", "text": "Say hello"}]
-        }
-      },
-      {
-        "action": "expect_result"
+        "action": "prompt",
+        "text": "Say hello"
       },
       {
         "action": "expect_text_collected",
@@ -65,14 +59,8 @@
       {"action": "initialize"},
       {"action": "new_session"},
       {
-        "action": "send",
-        "method": "session/prompt",
-        "params": {
-          "content": [{"type": "text", "text": "delayed update"}]
-        }
-      },
-      {
-        "action": "expect_result"
+        "action": "prompt",
+        "text": "delayed update"
       },
       {
         "action": "expect_text_collected",
@@ -82,18 +70,11 @@
   },
   {
     "id": "session_cancel",
-    "description": "Cancel a running prompt without error",
+    "description": "Cancel via high-level client.cancel() without error",
     "steps": [
       {"action": "initialize"},
       {"action": "new_session"},
-      {
-        "action": "send",
-        "method": "session/cancel",
-        "params": {}
-      },
-      {
-        "action": "expect_result"
-      }
+      {"action": "cancel"}
     ]
   },
   {
@@ -114,41 +95,41 @@
     ]
   },
   {
-    "id": "multiple_prompts_in_session",
-    "description": "Multiple prompts in the same session accumulate correctly",
+    "id": "multiple_prompts_clears_accumulator",
+    "description": "Each prompt() clears accumulated text from previous turn",
     "steps": [
       {"action": "initialize"},
       {"action": "new_session"},
       {
-        "action": "send",
-        "method": "session/prompt",
-        "params": {
-          "content": [{"type": "text", "text": "first prompt"}]
-        }
+        "action": "prompt",
+        "text": "first prompt"
       },
-      {"action": "expect_result"},
       {
-        "action": "send",
-        "method": "session/prompt",
-        "params": {
-          "content": [{"type": "text", "text": "second prompt"}]
-        }
+        "action": "expect_text_collected",
+        "contains": "first prompt"
       },
-      {"action": "expect_result"},
+      {
+        "action": "prompt",
+        "text": "second prompt"
+      },
       {
         "action": "expect_text_collected",
         "contains": "second prompt"
+      },
+      {
+        "action": "expect_text_collected",
+        "not_contains": "first prompt"
       }
     ]
   },
   {
-    "id": "empty_content_prompt",
-    "description": "Prompt with empty content array is accepted",
+    "id": "empty_content_raw",
+    "description": "Agent accepts prompt with empty content array at protocol level",
     "steps": [
       {"action": "initialize"},
       {"action": "new_session"},
       {
-        "action": "send",
+        "action": "send_raw",
         "method": "session/prompt",
         "params": {
           "content": []
