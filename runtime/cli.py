@@ -807,17 +807,9 @@ def main(argv: List[str] | None = None) -> int:
         parser.error("unsupported command")
         return 2
 
-    # Validate --stream mutual exclusion (must happen before other validation
-    # so we can build the stream emitter for error events)
+    # Build thread-safe stream emitter FIRST so even mutual-exclusion errors
+    # can be emitted as JSONL events
     stream_mode = getattr(args, "stream", None)
-    if stream_mode and args.json:
-        print("--stream and --json are mutually exclusive", file=sys.stderr)
-        return 2
-    if stream_mode and args.format not in ("report",):
-        print("--stream and --format are mutually exclusive", file=sys.stderr)
-        return 2
-
-    # Build thread-safe stream emitter early so all error paths can use it
     stream_callback = None
     if stream_mode == "jsonl":
         import threading as _threading
@@ -841,6 +833,12 @@ def main(argv: List[str] | None = None) -> int:
         else:
             print(message, file=sys.stderr)
         return 2
+
+    # Validate --stream mutual exclusion (now uses _stream_error_exit for JSONL errors)
+    if stream_mode and args.json:
+        return _stream_error_exit("invalid_config", "--stream and --json are mutually exclusive")
+    if stream_mode and args.format not in ("report",):
+        return _stream_error_exit("invalid_config", "--stream and --format are mutually exclusive")
 
     try:
         cfg = _resolve_config(args)

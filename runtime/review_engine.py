@@ -118,11 +118,18 @@ def _load_memory_hooks(request: "ReviewRequest") -> "RunHooks":
         from .bridge import register_hooks
         register_hooks(hooks, request)
     except ImportError as exc:
-        print(
-            f"[mco] --memory requires the bridge module. Install with: pip install mco[memory]\n"
-            f"       Import error: {exc}",
-            file=sys.stderr,
+        msg = (
+            "[mco] --memory requires the bridge module. Install with: pip install mco[memory]\n"
+            "       Import error: {}".format(exc)
         )
+        if request.stream_callback is not None:
+            _emit_event(request, {
+                "type": "error",
+                "code": "missing_dependency",
+                "message": msg,
+            })
+        else:
+            print(msg, file=sys.stderr)
     return hooks
 
 
@@ -538,6 +545,10 @@ def _run_provider(
             "error_kind": "adapter_not_implemented",
             "message": "No adapter for provider: {}".format(provider),
         })
+        _emit_event(request, {
+            "type": "provider_finished", "provider": provider,
+            "success": False, "findings_count": 0, "wall_clock_seconds": 0,
+        })
         _ensure_if_persisting()
         return _ProviderExecutionOutcome(
             provider=provider,
@@ -556,6 +567,10 @@ def _run_provider(
             "error_kind": "provider_unavailable",
             "message": "Provider unavailable: detected={}, auth_ok={}".format(
                 presence.detected, presence.auth_ok),
+        })
+        _emit_event(request, {
+            "type": "provider_finished", "provider": provider,
+            "success": False, "findings_count": 0, "wall_clock_seconds": 0,
         })
         _ensure_if_persisting()
         return _ProviderExecutionOutcome(
@@ -592,6 +607,10 @@ def _run_provider(
             "type": "provider_error", "provider": provider,
             "error_kind": "permission_enforcement_failed",
             "message": "Unknown permission keys: {}".format(unknown_permission_keys),
+        })
+        _emit_event(request, {
+            "type": "provider_finished", "provider": provider,
+            "success": False, "findings_count": 0, "wall_clock_seconds": 0,
         })
         _ensure_if_persisting()
         return _ProviderExecutionOutcome(
