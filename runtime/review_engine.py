@@ -45,6 +45,8 @@ class ReviewRequest:
     synthesis_provider: Optional[ProviderId] = None
     memory_enabled: bool = False
     memory_space: Optional[str] = None
+    diff_mode: Optional[str] = None    # "branch" | "staged" | "unstaged" | None
+    diff_base: Optional[str] = None    # git ref, only for diff_mode="branch"
 
 
 @dataclass(frozen=True)

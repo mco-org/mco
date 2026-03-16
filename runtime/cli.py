@@ -444,6 +444,29 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
              "Do NOT include 'coding:' prefix — it is added automatically. Requires --memory",
     )
 
+    diff_group = parser.add_argument_group("Diff Mode")
+    diff_exclusive = diff_group.add_mutually_exclusive_group()
+    diff_exclusive.add_argument(
+        "--diff",
+        action="store_true",
+        help="Review only changes vs merge-base with main/master branch",
+    )
+    diff_exclusive.add_argument(
+        "--staged",
+        action="store_true",
+        help="Review only staged changes (git diff --cached)",
+    )
+    diff_exclusive.add_argument(
+        "--unstaged",
+        action="store_true",
+        help="Review only unstaged working tree changes (git diff)",
+    )
+    diff_group.add_argument(
+        "--diff-base",
+        default="",
+        help="Git ref for branch diff comparison (e.g. origin/main, HEAD~3). Implies --diff",
+    )
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -745,6 +768,22 @@ def main(argv: List[str] | None = None) -> int:
         )
         return 2
 
+    # Normalize diff flags
+    diff_base_arg = args.diff_base.strip() if isinstance(args.diff_base, str) else ""
+    if diff_base_arg and args.staged:
+        print("--diff-base cannot be used with --staged", file=sys.stderr)
+        return 2
+    if diff_base_arg and args.unstaged:
+        print("--diff-base cannot be used with --unstaged", file=sys.stderr)
+        return 2
+    diff_mode = None
+    if args.diff or diff_base_arg:
+        diff_mode = "branch"
+    elif args.staged:
+        diff_mode = "staged"
+    elif args.unstaged:
+        diff_mode = "unstaged"
+
     req = ReviewRequest(
         repo_root=repo_root,
         prompt=args.prompt,
@@ -758,6 +797,8 @@ def main(argv: List[str] | None = None) -> int:
         synthesis_provider=synth_provider or None,
         memory_enabled=bool(args.memory),
         memory_space=memory_space or None,
+        diff_mode=diff_mode,
+        diff_base=diff_base_arg or None,
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
