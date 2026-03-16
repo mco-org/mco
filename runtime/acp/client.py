@@ -161,12 +161,13 @@ class AcpClient:
         )
 
         # RPC response returned, but notifications may still be in flight.
-        # Drain until we see idle state or hit a reasonable window.
+        # Keep polling until we see idle state or the deadline expires.
         deadline = time.monotonic() + 5.0
         while self._session_state != "idle" and time.monotonic() < deadline:
-            update = self.next_update(timeout=0.5)
-            if update is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 break
+            self.next_update(timeout=min(remaining, 0.5))
 
     def cancel(self, session_id: str, timeout: float = 10.0) -> None:
         """Cancel the current prompt in a session."""

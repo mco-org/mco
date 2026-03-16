@@ -142,8 +142,8 @@ for line in sys.stdin:
         resp = {"jsonrpc": "2.0", "id": msg["id"], "result": {}}
         sys.stdout.write(json.dumps(resp) + "\\n")
         sys.stdout.flush()
-        # THEN send notification after a small delay
-        time.sleep(0.1)
+        # THEN send notification after 1.2s — exceeds single poll window
+        time.sleep(1.2)
         update = {"jsonrpc": "2.0", "method": "session/update", "params": {
             "sessionId": "sess-rev", "state": "idle",
             "content": [{"type": "text", "text": "Late result for: " + prompt_text}]

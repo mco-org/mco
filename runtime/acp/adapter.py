@@ -54,6 +54,7 @@ class _AcpRunHandle:
     response_text: str = ""
     error_message: str = ""
     started_at: float = 0.0
+    prompt_thread: Optional[threading.Thread] = None
 
 
 class AcpAdapter:
@@ -83,7 +84,6 @@ class AcpAdapter:
             tested_os=["macos", "linux"],
         )
         self._runs: Dict[str, _AcpRunHandle] = {}
-        self._prompt_thread: Optional[threading.Thread] = None
 
     def detect(self) -> ProviderPresence:
         """Check if the agent binary exists and supports ACP."""
@@ -167,8 +167,8 @@ class AcpAdapter:
             finally:
                 handle.completed = True
 
-        self._prompt_thread = threading.Thread(target=_run_prompt, daemon=True)
-        self._prompt_thread.start()
+        handle.prompt_thread = threading.Thread(target=_run_prompt, daemon=True)
+        handle.prompt_thread.start()
 
         return TaskRunRef(
             task_id=input_task.task_id,
@@ -257,18 +257,14 @@ class AcpAdapter:
         if handle is None:
             return
 
-        try:
-            handle.client.cancel(handle.session_id, timeout=5.0)
-        except (JsonRpcError, TransportClosed, TimeoutError):
-            pass
-
-        # Close transport — this unblocks the prompt thread via TransportClosed
+        # Close transport first — this immediately unblocks the prompt thread
+        # (which is stuck in send_request → event.wait) via TransportClosed.
         handle.client.close()
 
         # Wait for prompt thread to finish before modifying handle state
-        if hasattr(self, "_prompt_thread") and self._prompt_thread is not None:
-            self._prompt_thread.join(timeout=5)
-            self._prompt_thread = None
+        pt = handle.prompt_thread
+        if pt is not None:
+            pt.join(timeout=5)
 
         handle.completed = True
         handle.success = False
