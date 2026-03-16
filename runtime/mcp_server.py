@@ -23,6 +23,28 @@ def _err(code: str, message: str) -> Dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message}}
 
 
+# ── Validation helpers ──
+
+def _is_git_repo(path: Path) -> bool:
+    """Check if path is inside a git repository."""
+    import subprocess
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        capture_output=True, check=False, cwd=str(path),
+    )
+    return result.returncode == 0
+
+
+def _validate_repo(repo: str, require_git: bool = False) -> Optional[Dict[str, Any]]:
+    """Validate repo path. Returns error envelope or None if valid."""
+    repo_path = Path(repo).resolve()
+    if not repo_path.is_dir():
+        return _err("invalid_repo", "Repository path does not exist: {}".format(repo))
+    if require_git and not _is_git_repo(repo_path):
+        return _err("invalid_repo", "Not a git repository: {}".format(repo))
+    return None
+
+
 # ── Sync helpers (called via asyncio.to_thread from async tool handlers) ──
 
 def _sync_doctor(providers_csv: Optional[str]) -> Dict[str, Any]:
@@ -31,7 +53,10 @@ def _sync_doctor(providers_csv: Optional[str]) -> Dict[str, Any]:
 
     if providers_csv:
         providers = [p.strip() for p in providers_csv.split(",") if p.strip()]
-        providers = [p for p in providers if p in SUPPORTED_PROVIDERS]
+        valid = [p for p in providers if p in SUPPORTED_PROVIDERS]
+        if not valid:
+            return _err("invalid_providers", "No valid providers in: {}".format(providers_csv))
+        providers = valid
     else:
         providers = list(SUPPORTED_PROVIDERS)
 
@@ -68,9 +93,11 @@ def _sync_review(
     from .config import ReviewPolicy
     from .cli import SUPPORTED_PROVIDERS
 
+    require_git = bool(diff_mode or diff_base)
+    err = _validate_repo(repo, require_git=require_git)
+    if err:
+        return err
     repo_path = Path(repo).resolve()
-    if not repo_path.is_dir():
-        return _err("invalid_repo", "Repository path does not exist: {}".format(repo))
 
     provider_list = [p.strip() for p in providers.split(",") if p.strip()]
     valid_providers = [p for p in provider_list if p in SUPPORTED_PROVIDERS]
@@ -118,9 +145,10 @@ def _sync_run(
     from .config import ReviewPolicy
     from .cli import SUPPORTED_PROVIDERS
 
+    err = _validate_repo(repo)
+    if err:
+        return err
     repo_path = Path(repo).resolve()
-    if not repo_path.is_dir():
-        return _err("invalid_repo", "Repository path does not exist: {}".format(repo))
 
     provider_list = [p.strip() for p in providers.split(",") if p.strip()]
     valid_providers = [p for p in provider_list if p in SUPPORTED_PROVIDERS]
@@ -211,9 +239,9 @@ def _sync_memory_status(
 # ── MCP Server ──
 
 def ensure_mcp_installed() -> None:
-    """Check that the mcp package is available. Raises ImportError if not."""
+    """Check that mcp.server.fastmcp is available. Raises ImportError if not."""
     import importlib
-    importlib.import_module("mcp")
+    importlib.import_module("mcp.server.fastmcp")
 
 
 async def run_server() -> None:

@@ -5,8 +5,11 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock
 
-from runtime.mcp_server import _ok, _err, _sync_doctor, _sync_review, _sync_run
-from runtime.mcp_server import _sync_findings_list, _sync_memory_status
+from runtime.mcp_server import (
+    _ok, _err, _is_git_repo, _validate_repo,
+    _sync_doctor, _sync_review, _sync_run,
+    _sync_findings_list, _sync_memory_status,
+)
 
 
 class TestEnvelope(unittest.TestCase):
@@ -27,6 +30,34 @@ class TestEnvelope(unittest.TestCase):
         self.assertEqual(result["error"]["message"], "Something went wrong")
 
 
+class TestValidation(unittest.TestCase):
+    def test_is_git_repo_on_real_repo(self) -> None:
+        # Current working directory is the mco repo
+        import os
+        self.assertTrue(_is_git_repo(os.getcwd()))
+
+    def test_is_git_repo_on_tmp(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(_is_git_repo(tmp))
+
+    def test_validate_repo_nonexistent(self) -> None:
+        result = _validate_repo("/nonexistent/xyz")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["error"]["code"], "invalid_repo")
+
+    def test_validate_repo_not_git(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _validate_repo(tmp, require_git=True)
+            self.assertIsNotNone(result)
+            self.assertIn("Not a git repository", result["error"]["message"])
+
+    def test_validate_repo_ok(self) -> None:
+        result = _validate_repo(".", require_git=False)
+        self.assertIsNone(result)
+
+
 class TestSyncDoctor(unittest.TestCase):
     @patch("runtime.cli._doctor_provider_presence")
     def test_returns_provider_status(self, mock_presence) -> None:
@@ -43,12 +74,10 @@ class TestSyncDoctor(unittest.TestCase):
         self.assertEqual(providers[0]["name"], "claude")
         self.assertTrue(providers[0]["detected"])
 
-    @patch("runtime.cli._doctor_provider_presence")
-    def test_invalid_provider_filtered(self, mock_presence) -> None:
-        mock_presence.return_value = {}
+    def test_invalid_provider_returns_error(self) -> None:
         result = _sync_doctor("nonexistent")
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["data"]["providers"], [])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "invalid_providers")
 
     @patch("runtime.cli._doctor_provider_presence")
     def test_empty_providers_checks_all(self, mock_presence) -> None:
@@ -97,6 +126,19 @@ class TestSyncReview(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "invalid_providers")
+
+    def test_diff_mode_on_non_git_dir(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _sync_review(
+                repo=tmp,
+                prompt="Review",
+                providers="claude",
+                diff_mode="staged",
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "invalid_repo")
+        self.assertIn("Not a git repository", result["error"]["message"])
 
 
 class TestSyncRun(unittest.TestCase):

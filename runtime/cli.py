@@ -787,14 +787,14 @@ def main(argv: List[str] | None = None) -> int:
         try:
             from .mcp_server import ensure_mcp_installed, run_server
             ensure_mcp_installed()
+            import asyncio as _asyncio
+            _asyncio.run(run_server())
         except ImportError:
             print(
                 "mco serve requires the mcp package. Install with: pip install mco[memory]",
                 file=sys.stderr,
             )
             return 2
-        import asyncio as _asyncio
-        _asyncio.run(run_server())
         return 0
 
     if args.command not in ("run", "review"):
