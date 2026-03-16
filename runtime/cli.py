@@ -636,7 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
     session_cmd = subparsers.add_parser(
         "session",
         help="Manage persistent multi-turn sessions with agents",
-        description="Start, send, broadcast, list, stop, resume, and view history of agent sessions.",
+        description="Start, send, broadcast, cancel, queue, list, stop, resume, and view history of agent sessions.",
         formatter_class=_HelpFormatter,
     )
     session_sub = session_cmd.add_subparsers(dest="session_action", required=True)
@@ -673,6 +673,16 @@ def build_parser() -> argparse.ArgumentParser:
     sess_resume = session_sub.add_parser("resume", help="Resume a stopped/crashed session", formatter_class=_HelpFormatter)
     sess_resume.add_argument("name", help="Session name")
     sess_resume.add_argument("--repo", default=".", help="Repository root path")
+
+    sess_cancel = session_sub.add_parser("cancel", help="Cancel running + queued prompts", formatter_class=_HelpFormatter)
+    sess_cancel.add_argument("name", help="Session name")
+    sess_cancel.add_argument("--repo", default=".", help="Repository root path")
+    sess_cancel.add_argument("--json", action="store_true", help="JSON output")
+
+    sess_queue = session_sub.add_parser("queue", help="Show queue status", formatter_class=_HelpFormatter)
+    sess_queue.add_argument("name", help="Session name")
+    sess_queue.add_argument("--repo", default=".", help="Repository root path")
+    sess_queue.add_argument("--json", action="store_true", help="JSON output")
 
     return parser
 
@@ -814,7 +824,7 @@ def _handle_session(args: argparse.Namespace) -> int:
     """Handle the session subcommand."""
     from pathlib import Path
     from .session.manager import start_session, stop_session, list_sessions, resume_session
-    from .session.client import send_prompt, broadcast_prompt
+    from .session.client import send_prompt, broadcast_prompt, cancel_session as client_cancel, queue_status
     from .session.state import load_history, load_state
 
     repo_root = str(Path(args.repo).resolve())
@@ -909,6 +919,40 @@ def _handle_session(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+        return 0
+
+    if args.session_action == "cancel":
+        result = client_cancel(repo_root, args.name)
+        if getattr(args, "json", False):
+            print(json.dumps(result, ensure_ascii=True))
+        else:
+            if result.get("status") == "ok":
+                cancelled = result.get("cancelled", 0)
+                if cancelled:
+                    print("Cancelled {} request(s) in session '{}'.".format(cancelled, args.name))
+                else:
+                    print("Nothing running in session '{}'.".format(args.name))
+            else:
+                print("Error: {}".format(result.get("message", "unknown error")), file=sys.stderr)
+                return 2
+        return 0
+
+    if args.session_action == "queue":
+        result = queue_status(repo_root, args.name)
+        if getattr(args, "json", False):
+            print(json.dumps(result, ensure_ascii=True))
+        else:
+            if result.get("status") == "ok":
+                running = result.get("running")
+                queued = result.get("queued", 0)
+                if running:
+                    print("Running: request #{}".format(running))
+                else:
+                    print("Running: idle")
+                print("Queued: {}".format(queued))
+            else:
+                print("Error: {}".format(result.get("message", "unknown error")), file=sys.stderr)
+                return 2
         return 0
 
     print("Unknown session action.", file=sys.stderr)

@@ -43,6 +43,17 @@ def _send_request(
         client.close()
 
 
+def _read_one_response(client: socket.socket) -> Optional[Dict[str, Any]]:
+    """Read a single JSON-line response from the socket."""
+    data = b""
+    while b"\n" not in data:
+        chunk = client.recv(65536)
+        if not chunk:
+            return None
+        data += chunk
+    return json.loads(data.decode("utf-8").strip())
+
+
 def send_prompt(
     repo_root: str,
     name: str,
@@ -50,10 +61,37 @@ def send_prompt(
 ) -> Dict[str, Any]:
     """Send a prompt to a named session daemon.
 
-    Returns {status, response, wall_clock_seconds} or {status, message} on error.
+    The daemon sends two responses: a queued ack then the final result.
+    Returns the final {status, response, wall_clock_seconds, request_id}.
     """
     sock_path = _socket_path(repo_root, name)
-    return _send_request(sock_path, {"action": "send", "prompt": prompt})
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(900.0)  # Long timeout for prompt execution
+    try:
+        client.connect(sock_path)
+        client.sendall(json.dumps({"action": "send", "prompt": prompt}).encode("utf-8") + b"\n")
+
+        # First response: queued ack or immediate error
+        first = _read_one_response(client)
+        if first is None:
+            return {"status": "error", "message": "Empty response from daemon"}
+        if first.get("status") != "queued":
+            # Immediate error (empty prompt, queue full, etc.)
+            return first
+
+        # Second response: actual result after worker processes
+        second = _read_one_response(client)
+        if second is None:
+            return {"status": "error", "message": "Connection lost while waiting for result"}
+        return second
+    except socket.timeout:
+        return {"status": "error", "message": "Timeout waiting for daemon response"}
+    except ConnectionRefusedError:
+        return {"status": "error", "message": "Cannot connect to session daemon (socket refused)"}
+    except FileNotFoundError:
+        return {"status": "error", "message": "Session socket not found — session may not be running"}
+    finally:
+        client.close()
 
 
 def ping_session(repo_root: str, name: str) -> bool:
@@ -67,6 +105,18 @@ def stop_session(repo_root: str, name: str) -> Dict[str, Any]:
     """Send shutdown to a session daemon."""
     sock_path = _socket_path(repo_root, name)
     return _send_request(sock_path, {"action": "shutdown"}, timeout=10.0)
+
+
+def cancel_session(repo_root: str, name: str) -> Dict[str, Any]:
+    """Send cancel to a session daemon. Cancels running + queued requests."""
+    sock_path = _socket_path(repo_root, name)
+    return _send_request(sock_path, {"action": "cancel"}, timeout=10.0)
+
+
+def queue_status(repo_root: str, name: str) -> Dict[str, Any]:
+    """Query queue status of a session daemon."""
+    sock_path = _socket_path(repo_root, name)
+    return _send_request(sock_path, {"action": "queue"}, timeout=5.0)
 
 
 def broadcast_prompt(
