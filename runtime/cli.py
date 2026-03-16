@@ -96,8 +96,8 @@ MEMORY_EPILOG = (
 )
 
 
-def _doctor_adapter_registry() -> Mapping[str, object]:
-    return adapter_registry()
+def _doctor_adapter_registry(transport: str = "shim") -> Mapping[str, object]:
+    return adapter_registry(transport=transport)
 
 
 def _doctor_provider_presence(providers: List[str]) -> Dict[str, ProviderPresence]:
@@ -379,6 +379,12 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     scope.add_argument("--target-paths", default=".", help="Comma-separated task scope paths")
     scope.add_argument("--task-id", default="", help="Optional stable task id")
+    scope.add_argument(
+        "--transport",
+        choices=("shim", "acp"),
+        default="shim",
+        help="Agent communication transport. shim: stdout parsing (default), acp: Agent Client Protocol (JSON-RPC)",
+    )
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
     timeouts.add_argument(
@@ -1126,8 +1132,10 @@ def main(argv: List[str] | None = None) -> int:
     if args.save_artifacts and effective_result_mode == "stdout":
         effective_result_mode = "both"
     write_artifacts = effective_result_mode in ("artifact", "both")
+    transport = getattr(args, "transport", "shim")
+    adapters = _doctor_adapter_registry(transport=transport) if transport != "shim" else None
     try:
-        result = run_review(req, review_mode=review_mode, write_artifacts=write_artifacts)
+        result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
         return _stream_error_exit("input_error", "Input error: {}".format(exc))
 
