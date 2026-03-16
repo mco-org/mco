@@ -141,6 +141,8 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Diff-only review | `mco review --diff` | Review only changed files vs main branch |
 | Staged changes review | `mco review --staged` | Review only git staged changes |
 | Real-time event stream | `mco review --stream jsonl` | JSONL events to stdout as providers execute |
+| Multi-turn session | `mco session start --provider claude` | Persistent session with conversation history |
+| Multi-session broadcast | `mco session broadcast "prompt"` | Fan out to all active sessions, aggregate results |
 
 ## Quick Start
 

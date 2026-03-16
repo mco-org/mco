@@ -632,6 +632,48 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=_HelpFormatter,
     )
 
+    # ── session subcommand ────────────────────────────────────
+    session_cmd = subparsers.add_parser(
+        "session",
+        help="Manage persistent multi-turn sessions with agents",
+        description="Start, send, broadcast, list, stop, resume, and view history of agent sessions.",
+        formatter_class=_HelpFormatter,
+    )
+    session_sub = session_cmd.add_subparsers(dest="session_action", required=True)
+
+    sess_start = session_sub.add_parser("start", help="Start a new session", formatter_class=_HelpFormatter)
+    sess_start.add_argument("--provider", required=True, help="Agent provider (e.g. claude, codex, gemini)")
+    sess_start.add_argument("--name", default="", help="Session name (auto-generated if omitted)")
+    sess_start.add_argument("--repo", default=".", help="Repository root path")
+
+    sess_send = session_sub.add_parser("send", help="Send a prompt to a session", formatter_class=_HelpFormatter)
+    sess_send.add_argument("name", help="Session name")
+    sess_send.add_argument("prompt", help="Prompt text")
+    sess_send.add_argument("--repo", default=".", help="Repository root path")
+    sess_send.add_argument("--json", action="store_true", help="JSON output")
+
+    sess_broadcast = session_sub.add_parser("broadcast", help="Send prompt to all active sessions", formatter_class=_HelpFormatter)
+    sess_broadcast.add_argument("prompt", help="Prompt text")
+    sess_broadcast.add_argument("--repo", default=".", help="Repository root path")
+    sess_broadcast.add_argument("--json", action="store_true", help="JSON output")
+
+    sess_list = session_sub.add_parser("list", help="List all sessions", formatter_class=_HelpFormatter)
+    sess_list.add_argument("--repo", default=".", help="Repository root path")
+    sess_list.add_argument("--json", action="store_true", help="JSON output")
+
+    sess_stop = session_sub.add_parser("stop", help="Stop a session", formatter_class=_HelpFormatter)
+    sess_stop.add_argument("name", help="Session name")
+    sess_stop.add_argument("--repo", default=".", help="Repository root path")
+
+    sess_history = session_sub.add_parser("history", help="View session conversation history", formatter_class=_HelpFormatter)
+    sess_history.add_argument("name", help="Session name")
+    sess_history.add_argument("--repo", default=".", help="Repository root path")
+    sess_history.add_argument("--json", action="store_true", help="JSON output")
+
+    sess_resume = session_sub.add_parser("resume", help="Resume a stopped/crashed session", formatter_class=_HelpFormatter)
+    sess_resume.add_argument("name", help="Session name")
+    sess_resume.add_argument("--repo", default=".", help="Repository root path")
+
     return parser
 
 
@@ -768,6 +810,111 @@ def _handle_memory(args: argparse.Namespace) -> int:
     return 2
 
 
+def _handle_session(args: argparse.Namespace) -> int:
+    """Handle the session subcommand."""
+    from pathlib import Path
+    from .session.manager import start_session, stop_session, list_sessions, resume_session
+    from .session.client import send_prompt, broadcast_prompt
+    from .session.state import load_history, load_state
+
+    repo_root = str(Path(args.repo).resolve())
+
+    if args.session_action == "start":
+        provider = args.provider.strip()
+        if provider not in SUPPORTED_PROVIDERS:
+            print("Unsupported provider: {}. Supported: {}".format(
+                provider, ", ".join(SUPPORTED_PROVIDERS)), file=sys.stderr)
+            return 2
+        name = args.name.strip() if args.name else None
+        try:
+            state = start_session(provider, repo_root=repo_root, name=name)
+            print("Session '{}' started (provider={}, pid={})".format(
+                state.name, state.provider, state.pid))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        return 0
+
+    if args.session_action == "send":
+        result = send_prompt(repo_root, args.name, args.prompt)
+        if getattr(args, "json", False):
+            print(json.dumps(result, ensure_ascii=True))
+        else:
+            if result.get("status") == "ok":
+                print(result.get("response", ""))
+            else:
+                print("Error: {}".format(result.get("message", "unknown error")), file=sys.stderr)
+                return 2
+        return 0
+
+    if args.session_action == "broadcast":
+        results = broadcast_prompt(repo_root, args.prompt)
+        if not results:
+            print("No active sessions.", file=sys.stderr)
+            return 2
+        if getattr(args, "json", False):
+            print(json.dumps(results, ensure_ascii=True))
+        else:
+            for r in results:
+                print("── {} ({}) ──".format(r["session_name"], r["provider"]))
+                if r["status"] == "ok":
+                    print(r.get("response", ""))
+                else:
+                    print("Error: {}".format(r.get("message", "")))
+                print()
+        # Exit 2 if ALL results failed
+        if all(r.get("status") != "ok" for r in results):
+            return 2
+        return 0
+
+    if args.session_action == "list":
+        sessions = list_sessions(repo_root)
+        if getattr(args, "json", False):
+            print(json.dumps(sessions, ensure_ascii=True))
+        else:
+            if not sessions:
+                print("No sessions found.")
+            else:
+                for s in sessions:
+                    print("{name:20s} {provider:10s} {status:10s} turns={turn_count} pid={pid}".format(**s))
+        return 0
+
+    if args.session_action == "stop":
+        ok = stop_session(repo_root, args.name)
+        if ok:
+            print("Session '{}' stopped.".format(args.name))
+        else:
+            print("Failed to stop session '{}'.".format(args.name), file=sys.stderr)
+            return 2
+        return 0
+
+    if args.session_action == "history":
+        entries = load_history(repo_root, args.name)
+        if getattr(args, "json", False):
+            from dataclasses import asdict
+            print(json.dumps([asdict(e) for e in entries], ensure_ascii=True))
+        else:
+            if not entries:
+                print("No history for session '{}'.".format(args.name))
+            else:
+                for e in entries:
+                    label = "User" if e.role == "user" else "Assistant"
+                    print("[{}] {}: {}".format(e.timestamp[:19], label, e.content[:200]))
+        return 0
+
+    if args.session_action == "resume":
+        try:
+            state = resume_session(repo_root, args.name)
+            print("Session '{}' resumed (pid={})".format(state.name, state.pid))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        return 0
+
+    print("Unknown session action.", file=sys.stderr)
+    return 2
+
+
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
     # If --stream jsonl is in argv, suppress argparse stderr and emit JSONL error
@@ -818,6 +965,9 @@ def main(argv: List[str] | None = None) -> int:
 
     if args.command == "memory":
         return _handle_memory(args)
+
+    if args.command == "session":
+        return _handle_session(args)
 
     if args.command == "serve":
         try:
