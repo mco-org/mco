@@ -1,8 +1,9 @@
 """Session lifecycle manager — start, stop, list, resume sessions."""
 from __future__ import annotations
 
-import multiprocessing
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,6 +18,38 @@ from .state import (
     save_state,
     session_dir,
 )
+
+
+def _launch_daemon(repo_root: str, name: str) -> None:
+    """Launch daemon as a detached subprocess that survives parent exit.
+
+    Uses subprocess.Popen with start_new_session=True so the daemon
+    gets its own process group and isn't killed when the parent exits.
+    """
+    daemon_code = (
+        "import sys; sys.path.insert(0, {path!r}); "
+        "from runtime.session.daemon import run_daemon; "
+        "run_daemon({repo_root!r}, {name!r})"
+    ).format(
+        path=str(Path(__file__).resolve().parent.parent.parent),
+        repo_root=repo_root,
+        name=name,
+    )
+
+    # Redirect stdout/stderr to session log files
+    sdir = session_dir(repo_root, name)
+    sdir.mkdir(parents=True, exist_ok=True)
+    stdout_log = open(sdir / "agent.stdout.log", "a")
+    stderr_log = open(sdir / "agent.stderr.log", "a")
+
+    subprocess.Popen(
+        [sys.executable, "-c", daemon_code],
+        stdout=stdout_log,
+        stderr=stderr_log,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,  # Detach from parent process group
+        close_fds=True,
+    )
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -57,28 +90,30 @@ def start_session(
     )
     save_state(repo_root, state)
 
-    # Fork daemon
-    from .daemon import run_daemon
-    proc = multiprocessing.Process(
-        target=run_daemon,
-        args=(repo_root, name),
-        daemon=True,
-    )
-    proc.start()
+    # Launch daemon as a detached subprocess that outlives the parent.
+    # Uses `python -c` to import and run the daemon function.
+    _launch_daemon(repo_root, name)
 
-    # Wait for socket to appear
+    # Wait for socket to appear (daemon writes it on successful bind)
     sock_path = session_dir(repo_root, name) / "sock"
     for _ in range(100):  # 5 seconds
         if sock_path.exists():
             break
         time.sleep(0.05)
 
-    # Update PID (daemon writes its own, but we also track the process object PID)
+    # Verify daemon actually started
     state = load_state(repo_root, name)
-    if state is not None:
-        return state
+    if state is None or not state.pid or not _is_pid_alive(state.pid):
+        # Daemon failed to start
+        if state:
+            state.status = "crashed"
+            state.pid = None
+            save_state(repo_root, state)
+        raise ValueError(
+            "Session '{}' daemon failed to start. Check .mco/sessions/{}/agent.stderr.log".format(name, name)
+        )
 
-    return SessionState(name=name, provider=provider, status="active", repo_root=repo_root)
+    return state
 
 
 def stop_session(repo_root: str, name: str) -> bool:
@@ -153,13 +188,7 @@ def resume_session(repo_root: str, name: str) -> SessionState:
     state.status = "active"
     save_state(repo_root, state)
 
-    from .daemon import run_daemon
-    proc = multiprocessing.Process(
-        target=run_daemon,
-        args=(repo_root, name),
-        daemon=True,
-    )
-    proc.start()
+    _launch_daemon(repo_root, name)
 
     # Wait for socket
     sock_path = session_dir(repo_root, name) / "sock"
@@ -168,4 +197,12 @@ def resume_session(repo_root: str, name: str) -> SessionState:
             break
         time.sleep(0.05)
 
-    return load_state(repo_root, name) or state
+    state = load_state(repo_root, name)
+    if state is None or not state.pid or not _is_pid_alive(state.pid):
+        if state:
+            state.status = "crashed"
+            state.pid = None
+            save_state(repo_root, state)
+        raise ValueError("Session '{}' daemon failed to resume".format(name))
+
+    return state

@@ -80,12 +80,23 @@ def _dispatch_prompt(
 
         wall_clock = round(time.time() - started, 2)
 
-        # Read output
+        # Read output and extract human-readable text
         raw_dir = Path(run_ref.artifact_path) / "raw"
         stdout_path = raw_dir / "{}.stdout.log".format(provider)
-        response = ""
+        stderr_path = raw_dir / "{}.stderr.log".format(provider)
+        raw_stdout = ""
+        raw_stderr = ""
         if stdout_path.exists():
-            response = stdout_path.read_text(encoding="utf-8", errors="replace")
+            raw_stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
+        if stderr_path.exists():
+            raw_stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+
+        # Use extract_final_text to strip protocol noise (JSON wrappers, event streams)
+        from ..adapters.parsing import extract_final_text_from_output
+        combined = raw_stdout
+        if raw_stderr:
+            combined = combined + "\n" + raw_stderr if combined else raw_stderr
+        response = extract_final_text_from_output(combined) or raw_stdout
 
         success = status.attempt_state == "SUCCEEDED"
         return {
@@ -138,17 +149,18 @@ def _handle_connection(
             # Dispatch to agent
             result = _dispatch_prompt(state.provider, repo_root, full_prompt)
 
-            # Record history
-            append_history(repo_root, state.name, HistoryEntry(role="user", content=prompt))
-            if result.get("response"):
+            # Only record history on successful dispatch
+            if result.get("success") and result.get("response"):
+                append_history(repo_root, state.name, HistoryEntry(role="user", content=prompt))
                 append_history(repo_root, state.name, HistoryEntry(
                     role="assistant",
                     content=result["response"],
                     wall_clock_seconds=result.get("wall_clock_seconds", 0),
                 ))
 
-            # Update state
-            state.turn_count += 1
+            # Update state only on success
+            if result.get("success"):
+                state.turn_count += 1
             state.last_active = __import__("runtime.session.state", fromlist=["_now_iso"])._now_iso()
             save_state(repo_root, state)
 
@@ -189,11 +201,20 @@ def run_daemon(repo_root: str, name: str) -> None:
         os.unlink(sock_path)
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(sock_path)
+    try:
+        server.bind(sock_path)
+    except OSError as exc:
+        # Socket path too long or permission denied — mark crashed
+        state.status = "crashed"
+        state.pid = None
+        save_state(repo_root, state)
+        import sys
+        print("Daemon bind failed: {}".format(exc), file=sys.stderr)
+        return
     server.listen(1)
     server.settimeout(1.0)  # Allow periodic shutdown checks
 
-    # Update state with PID
+    # Update state with PID — only after successful bind
     state.pid = os.getpid()
     state.status = "active"
     save_state(repo_root, state)
