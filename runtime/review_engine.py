@@ -471,6 +471,31 @@ def _merge_findings_across_providers(findings: List[NormalizedFinding]) -> List[
     return merged_findings
 
 
+def _tag_diff_scope(
+    findings: List[Dict[str, object]],
+    diff_file_set: Optional[set],
+) -> List[Dict[str, object]]:
+    """Tag each finding with diff_scope based on whether its file is in the diff.
+
+    If diff_file_set is None (non-diff mode), returns findings unchanged.
+    """
+    if diff_file_set is None:
+        return findings
+    for finding in findings:
+        evidence = finding.get("evidence")
+        if not isinstance(evidence, dict):
+            finding["diff_scope"] = "unknown"
+            continue
+        file_path = str(evidence.get("file", "")).strip()
+        if not file_path:
+            finding["diff_scope"] = "unknown"
+        elif file_path in diff_file_set:
+            finding["diff_scope"] = "in_diff"
+        else:
+            finding["diff_scope"] = "related"
+    return findings
+
+
 def _run_provider(
     request: ReviewRequest,
     runtime: OrchestratorRuntime,
@@ -795,10 +820,65 @@ def run_review(
             request.target_paths or ["."],
             request.policy.allow_paths or ["."],
         )
+
+        # ── Diff mode: compute scope and augment prompt ──
+        _diff_file_set: Optional[set] = None
+        _diff_prompt_prefix = ""
+        if request.diff_mode:
+            from .diff_utils import detect_main_branch, diff_files, diff_content
+
+            _diff_base = request.diff_base
+            if request.diff_mode == "branch" and not _diff_base:
+                _diff_base = detect_main_branch(request.repo_root)
+            changed = diff_files(request.repo_root, request.diff_mode, _diff_base)
+
+            # Intersect with user-provided target_paths if set
+            user_target = request.target_paths or ["."]
+            if user_target != ["."]:
+                user_dirs = set(user_target)
+                changed = [
+                    f for f in changed
+                    if any(f == d or f.startswith(d.rstrip("/") + "/") for d in user_dirs)
+                ]
+
+            if not changed:
+                import sys as _sys
+                print(
+                    "No changes detected for the specified diff mode. Nothing to review.",
+                    file=_sys.stderr,
+                )
+                return ReviewResult(
+                    task_id=task_id,
+                    artifact_root=None,
+                    decision="PASS",
+                    terminal_state="completed",
+                    provider_results={},
+                    findings_count=0,
+                    parse_success_count=0,
+                    parse_failure_count=0,
+                    schema_valid_count=0,
+                    dropped_findings_count=0,
+                    findings=[],
+                )
+
+            _diff_file_set = set(changed)
+            normalized_targets = changed
+
+            _diff_text = diff_content(request.repo_root, request.diff_mode, _diff_base)
+            if _diff_text:
+                _diff_prompt_prefix = (
+                    f"{_diff_text}\n\n"
+                    "Review the changes above and any code directly affected by them.\n"
+                    "Do not report issues in unchanged code unless they are directly "
+                    "caused or exposed by the changes.\n\n"
+                    "---\n"
+                )
+
+        _effective_prompt = _diff_prompt_prefix + request.prompt if _diff_prompt_prefix else request.prompt
         full_prompt = (
-            _build_prompt(request.prompt, normalized_targets)
+            _build_prompt(_effective_prompt, normalized_targets)
             if review_mode
-            else _build_run_prompt(request.prompt, normalized_targets, normalized_allow_paths)
+            else _build_run_prompt(_effective_prompt, normalized_targets, normalized_allow_paths)
         )
 
         # ── Memory hook: pre_run ──
@@ -806,7 +886,7 @@ def run_review(
         if request.memory_enabled:
             _run_hooks = _load_memory_hooks(request)
             injected = _run_hooks.invoke_pre_run(
-                prompt=request.prompt,
+                prompt=_effective_prompt,
                 repo_root=request.repo_root,
                 providers=list(request.providers),
             )
@@ -926,6 +1006,7 @@ def run_review(
         terminal_state = runtime.evaluate_terminal_state(required_provider_success)
         aggregated_findings.sort(key=lambda item: (item.provider, item.finding_id, item.fingerprint))
         merged_findings = _merge_findings_across_providers(aggregated_findings)
+        merged_findings = _tag_diff_scope(merged_findings, _diff_file_set)
 
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for finding in merged_findings:
