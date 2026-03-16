@@ -42,14 +42,19 @@ def _launch_daemon(repo_root: str, name: str) -> None:
     stdout_log = open(sdir / "agent.stdout.log", "a")
     stderr_log = open(sdir / "agent.stderr.log", "a")
 
-    subprocess.Popen(
-        [sys.executable, "-c", daemon_code],
-        stdout=stdout_log,
-        stderr=stderr_log,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,  # Detach from parent process group
-        close_fds=True,
-    )
+    try:
+        subprocess.Popen(
+            [sys.executable, "-c", daemon_code],
+            stdout=stdout_log,
+            stderr=stderr_log,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,  # Detach from parent process group
+            close_fds=True,
+        )
+    finally:
+        # Close file handles in parent process — child inherits its own copies
+        stdout_log.close()
+        stderr_log.close()
 
 
 def _is_pid_alive(pid: int) -> bool:

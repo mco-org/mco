@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 from .state import (
     SessionState,
     HistoryEntry,
+    _now_iso,
     append_history,
     build_history_prompt,
     load_history,
@@ -19,6 +20,9 @@ from .state import (
     save_state,
     session_dir,
 )
+
+
+_STALL_TIMEOUT_SECONDS = 900  # Match default provider stall timeout
 
 
 def _socket_path(repo_root: str, name: str) -> str:
@@ -55,7 +59,7 @@ def _dispatch_prompt(
             prompt=prompt,
             repo_root=repo_root,
             target_paths=["."],
-            timeout_seconds=900,
+            timeout_seconds=_STALL_TIMEOUT_SECONDS,
             metadata={"artifact_root": artifact_dir},
         )
         run_ref = adapter.run(task_input)
@@ -68,8 +72,8 @@ def _dispatch_prompt(
                 break
             time.sleep(1.0)
 
-            # Stall timeout (5 minutes)
-            if time.time() - started > 300:
+            # Stall timeout
+            if time.time() - started > _STALL_TIMEOUT_SECONDS:
                 try:
                     adapter.cancel(run_ref)
                 except (OSError, ProcessLookupError):
@@ -77,7 +81,7 @@ def _dispatch_prompt(
                 return {
                     "success": False,
                     "response": "",
-                    "error": "Provider timed out after 300s",
+                    "error": "Provider timed out after {}s".format(_STALL_TIMEOUT_SECONDS),
                     "wall_clock_seconds": round(time.time() - started, 2),
                 }
 
@@ -164,7 +168,7 @@ def _handle_connection(
             # Update state only on success
             if result.get("success"):
                 state.turn_count += 1
-            state.last_active = __import__("runtime.session.state", fromlist=["_now_iso"])._now_iso()
+            state.last_active = _now_iso()
             save_state(repo_root, state)
 
             response = {
@@ -214,7 +218,7 @@ def run_daemon(repo_root: str, name: str) -> None:
         import sys
         print("Daemon bind failed: {}".format(exc), file=sys.stderr)
         return
-    server.listen(1)
+    server.listen(5)  # Allow queued connections during broadcast
     server.settimeout(1.0)  # Allow periodic shutdown checks
 
     # Update state with PID — only after successful bind

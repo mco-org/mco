@@ -18,10 +18,8 @@ def _now_iso() -> str:
 
 
 def _auto_name(provider: str) -> str:
-    short = hashlib.sha256(
-        "{}:{}".format(provider, _now_iso()).encode()
-    ).hexdigest()[:4]
-    return "{}-{}".format(provider, short)
+    import uuid
+    return "{}-{}".format(provider, uuid.uuid4().hex[:4])
 
 
 @dataclass
@@ -125,20 +123,49 @@ def list_sessions(repo_root: str) -> List[SessionState]:
     return sessions
 
 
+_MAX_HISTORY_TURNS = 20  # Keep last N user+assistant pairs
+_MAX_HISTORY_CHARS = 50_000  # Truncate if total history exceeds this
+
+
 def build_history_prompt(history: List[HistoryEntry], new_prompt: str) -> str:
     """Build a prompt that includes conversation history context.
 
     Prepends the conversation history to the new prompt so the agent
     has full context even though each turn is a fresh subprocess.
+
+    Truncation: keeps the last _MAX_HISTORY_TURNS entries and caps total
+    character count at _MAX_HISTORY_CHARS. Earlier entries are summarized
+    as "(N earlier turns omitted)".
     """
     if not history:
         return new_prompt
 
+    # Truncate to last N entries
+    if len(history) > _MAX_HISTORY_TURNS:
+        omitted = len(history) - _MAX_HISTORY_TURNS
+        history = history[-_MAX_HISTORY_TURNS:]
+        prefix_note = "({} earlier turns omitted)\n\n".format(omitted)
+    else:
+        prefix_note = ""
+
     lines = ["## Conversation History", ""]
+    if prefix_note:
+        lines.append(prefix_note)
+
+    total_chars = 0
     for entry in history:
         role_label = "User" if entry.role == "user" else "Assistant"
-        lines.append("{}: {}".format(role_label, entry.content))
+        text = entry.content
+        # Per-entry truncation if total exceeds budget
+        remaining = _MAX_HISTORY_CHARS - total_chars
+        if remaining <= 0:
+            lines.append("({} more turns truncated)".format(len(history) - history.index(entry)))
+            break
+        if len(text) > remaining:
+            text = text[:remaining] + "... (truncated)"
+        lines.append("{}: {}".format(role_label, text))
         lines.append("")
+        total_chars += len(text)
 
     lines.append("## Current Request")
     lines.append(new_prompt)
