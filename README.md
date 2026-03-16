@@ -140,6 +140,7 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Persistent code review | `mco review --memory` | Findings accumulate across runs; agents learn what's already been flagged |
 | Diff-only review | `mco review --diff` | Review only changed files vs main branch |
 | Staged changes review | `mco review --staged` | Review only git staged changes |
+| Real-time event stream | `mco review --stream jsonl` | JSONL events to stdout as providers execute |
 | Multi-turn session | `mco session start --provider claude` | Persistent session with conversation history |
 | Multi-session broadcast | `mco session broadcast "prompt"` | Fan out to all active sessions, aggregate results |
 
@@ -275,6 +276,7 @@ MCO is zero-config by default. You can run it directly with built-in defaults an
 | `--staged` | off | Review only staged changes |
 | `--unstaged` | off | Review only unstaged working tree changes |
 | `--diff-base` | auto | Git ref for branch diff (e.g. `origin/main`, `HEAD~3`). Implies `--diff` |
+| `--stream` | off | `jsonl` — output real-time JSONL event stream to stdout |
 
 Default provider permissions:
 
