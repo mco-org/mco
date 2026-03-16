@@ -618,6 +618,14 @@ def build_parser() -> argparse.ArgumentParser:
     mem_status.add_argument("--repo", default=".", help="Repository root path")
     mem_status.add_argument("--space", default="", help="Space slug override")
 
+    # ── serve subcommand ──────────────────────────────────────
+    subparsers.add_parser(
+        "serve",
+        help="Start MCP server (stdio protocol)",
+        description="Start a stdio MCP server exposing MCO tools for AI agents and MCP clients.",
+        formatter_class=_HelpFormatter,
+    )
+
     return parser
 
 
@@ -774,6 +782,20 @@ def main(argv: List[str] | None = None) -> int:
 
     if args.command == "memory":
         return _handle_memory(args)
+
+    if args.command == "serve":
+        try:
+            from .mcp_server import ensure_mcp_installed, run_server
+            ensure_mcp_installed()
+            import asyncio as _asyncio
+            _asyncio.run(run_server())
+        except ImportError:
+            print(
+                "mco serve requires the mcp package. Install with: pip install mco[memory]",
+                file=sys.stderr,
+            )
+            return 2
+        return 0
 
     if args.command not in ("run", "review"):
         parser.error("unsupported command")

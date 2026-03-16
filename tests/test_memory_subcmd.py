@@ -104,6 +104,7 @@ class TestShowStatus(unittest.TestCase):
         """show_status handles missing spaces gracefully."""
         client = MagicMock()
         client.list_spaces.return_value = []
+        client.briefing.return_value = None
 
         result = show_status(client, "empty-repo")
 
