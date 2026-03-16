@@ -429,7 +429,32 @@ mco findings confirm <hash>            # Manually mark a finding as fixed
 - **Spaces**: `coding:<slug>--findings`, `coding:<slug>--agents`, `coding:<slug>--context`, `coding:stacks--<tech>`, `coding:global--agents`
 - **Deduplication**: client-side latest-wins on read; all writes are appends
 
-Requires `EVERMEMOS_TOKEN` environment variable. See `mco review --help` for `--space` and other memory flags.
+Requires `EVERMEMOS_API_KEY` environment variable. See `mco review --help` for `--space` and other memory flags.
+
+## MCP Server Mode
+
+MCO can run as an MCP server, allowing AI agents and MCP-compatible clients to call MCO tools programmatically over stdio.
+
+```bash
+pip install mco[memory]  # includes mcp dependency
+```
+
+Configure in your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "mco": {
+      "command": "mco",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+**Available tools:** `mco_review`, `mco_run`, `mco_doctor`, `mco_findings_list`, `mco_memory_status`
+
+All tools return a uniform envelope: `{"ok": true, "data": ...}` on success, `{"ok": false, "error": {"code": "...", "message": "..."}}` on failure.
 
 ## License
 

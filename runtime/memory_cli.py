@@ -122,15 +122,10 @@ def show_priors(client: Any, repo_root: str, space_slug: str, category: str) -> 
     return "\n".join(lines)
 
 
-def show_status(client: Any, space_slug: str) -> str:
-    """Show status overview of memory spaces for a repo.
+def get_status_data(client: Any, space_slug: str) -> Dict[str, Any]:
+    """Return structured status data for a repo's memory spaces.
 
-    Args:
-        client: An ``EverMemosClient`` instance.
-        space_slug: The inferred space slug (no ``coding:`` prefix).
-
-    Returns:
-        Formatted status string.
+    Returns dict with: space_slug, findings_count, agent_scores_count, briefing_preview.
     """
     from .bridge.evermemos_client import EverMemosClient
 
@@ -140,27 +135,7 @@ def show_status(client: Any, space_slug: str) -> str:
 
     available = client.list_spaces()
 
-    lines: List[str] = [
-        "Memory Status for: {slug}".format(slug=space_slug),
-        "",
-    ]
-
-    # Space existence
-    for name, space_id in [
-        ("Findings", findings_space),
-        ("Agents", agents_space),
-        ("Context", context_space),
-    ]:
-        exists = space_id in available
-        lines.append("  {name}: {status} ({space_id})".format(
-            name=name,
-            status="exists" if exists else "not found",
-            space_id=space_id,
-        ))
-
-    lines.append("")
-
-    # Findings count (deduplicated — unique finding_hashes, not raw entries)
+    # Findings count (deduplicated by finding_hash)
     findings_count = 0
     if findings_space in available:
         try:
@@ -180,7 +155,6 @@ def show_status(client: Any, space_slug: str) -> str:
             findings_count = len(seen_hashes)
         except Exception:
             pass
-    lines.append("Findings: {count}".format(count=findings_count))
 
     # Agent scores count (deduplicated by agent+category)
     scores_count = 0
@@ -204,27 +178,71 @@ def show_status(client: Any, space_slug: str) -> str:
             scores_count = len(seen_keys)
         except Exception:
             pass
-    lines.append("Agent Scores: {count}".format(count=scores_count))
 
-    # Context briefing preview
-    briefing_preview = None
-    if context_space in available:
-        try:
-            briefing = client.briefing(space=context_space)
-            if briefing:
-                # Truncate for preview
-                max_len = 200
-                if len(briefing) > max_len:
-                    briefing_preview = briefing[:max_len] + "..."
-                else:
-                    briefing_preview = briefing
-        except Exception:
-            pass
+    # Briefing preview
+    briefing_preview = ""
+    try:
+        briefing = client.briefing(space=context_space)
+        if briefing:
+            briefing_preview = briefing[:200]
+    except Exception:
+        pass
 
+    return {
+        "space_slug": space_slug,
+        "findings_count": findings_count,
+        "agent_scores_count": scores_count,
+        "briefing_preview": briefing_preview,
+    }
+
+
+def show_status(client: Any, space_slug: str) -> str:
+    """Show status overview of memory spaces for a repo.
+
+    Args:
+        client: An ``EverMemosClient`` instance.
+        space_slug: The inferred space slug (no ``coding:`` prefix).
+
+    Returns:
+        Formatted status string.
+    """
+    data = get_status_data(client, space_slug)
+
+    findings_space = "coding:{slug}--findings".format(slug=space_slug)
+    agents_space = "coding:{slug}--agents".format(slug=space_slug)
+    context_space = "coding:{slug}--context".format(slug=space_slug)
+
+    available = client.list_spaces()
+
+    lines: List[str] = [
+        "Memory Status for: {slug}".format(slug=space_slug),
+        "",
+    ]
+
+    for name, space_id in [
+        ("Findings", findings_space),
+        ("Agents", agents_space),
+        ("Context", context_space),
+    ]:
+        exists = space_id in available
+        lines.append("  {name}: {status} ({space_id})".format(
+            name=name,
+            status="exists" if exists else "not found",
+            space_id=space_id,
+        ))
+
+    lines.append("")
+    lines.append("Findings: {count}".format(count=data["findings_count"]))
+    lines.append("Agent Scores: {count}".format(count=data["agent_scores_count"]))
+
+    briefing_preview = data["briefing_preview"]
     if briefing_preview:
         lines.append("")
         lines.append("Context Briefing Preview:")
-        lines.append("  " + briefing_preview)
+        if len(briefing_preview) >= 200:
+            lines.append("  " + briefing_preview + "...")
+        else:
+            lines.append("  " + briefing_preview)
     else:
         lines.append("Context Briefing: none")
 
