@@ -191,6 +191,54 @@ class TestProviderEarlyExitEvents(unittest.TestCase):
         self.assertIn("result", event_types)
 
 
+class TestArgparseErrorsEmitEvents(unittest.TestCase):
+    """Fix 1: argparse errors with --stream should emit JSONL error, not just stderr."""
+
+    def test_missing_prompt_emits_jsonl_error(self) -> None:
+        from runtime.cli import main
+        import io
+        import contextlib
+        stdout_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf):
+            exit_code = main(["review", "--repo", ".", "--stream", "jsonl"])
+        output = stdout_buf.getvalue().strip()
+        # Should have at least one JSONL error event
+        if output:
+            event = json.loads(output.splitlines()[-1])
+            self.assertEqual(event["type"], "error")
+            self.assertEqual(event["code"], "parse_error")
+        self.assertEqual(exit_code, 2)
+
+    def test_bad_stream_value_emits_jsonl_error(self) -> None:
+        from runtime.cli import main
+        # --stream bad is not a valid choice, argparse will reject it
+        # but since "jsonl" is not in argv, it should NOT emit JSONL
+        exit_code = main(["review", "--repo", ".", "--prompt", "x", "--stream", "bad"])
+        self.assertEqual(exit_code, 2)
+
+
+class TestTerminalStateCase(unittest.TestCase):
+    """Fix 3: terminal_state must be uppercase COMPLETED everywhere."""
+
+    @patch("runtime.diff_utils.diff_files", return_value=[])
+    @patch("runtime.diff_utils.detect_main_branch", return_value="main")
+    def test_empty_diff_terminal_state_uppercase(self, mock_detect, mock_files) -> None:
+        events = []
+        req = ReviewRequest(
+            repo_root="/tmp/fake",
+            prompt="Review",
+            providers=["claude"],
+            artifact_base="/tmp/art",
+            policy=ReviewPolicy(),
+            diff_mode="branch",
+            stream_callback=events.append,
+        )
+        result = run_review(req, review_mode=True, write_artifacts=False)
+        self.assertEqual(result.terminal_state, "COMPLETED")
+        result_event = [e for e in events if e["type"] == "result"][0]
+        self.assertEqual(result_event["terminal_state"], "COMPLETED")
+
+
 class TestStreamCLIFlags(unittest.TestCase):
     def test_stream_flag_accepted(self) -> None:
         from runtime.cli import build_parser

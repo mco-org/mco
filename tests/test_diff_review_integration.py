@@ -26,7 +26,7 @@ class TestEmptyDiffReturnsNoOp(unittest.TestCase):
             result = run_review(req, review_mode=True, write_artifacts=False)
             mock_run.assert_not_called()
         self.assertEqual(result.decision, "PASS")
-        self.assertEqual(result.terminal_state, "completed")
+        self.assertEqual(result.terminal_state, "COMPLETED")
         self.assertEqual(result.findings_count, 0)
         self.assertEqual(result.provider_results, {})
 

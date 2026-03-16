@@ -124,8 +124,9 @@ def _load_memory_hooks(request: "ReviewRequest") -> "RunHooks":
         )
         if request.stream_callback is not None:
             _emit_event(request, {
-                "type": "error",
-                "code": "missing_dependency",
+                "type": "provider_error",
+                "provider": "memory",
+                "error_kind": "missing_dependency",
                 "message": msg,
             })
         else:
@@ -923,7 +924,7 @@ def run_review(
                     task_id=task_id,
                     artifact_root=None,
                     decision="PASS",
-                    terminal_state="completed",
+                    terminal_state="COMPLETED",
                     provider_results={},
                     findings_count=0,
                     parse_success_count=0,
@@ -943,7 +944,7 @@ def run_review(
                     "type": "result",
                     "task_id": task_id,
                     "decision": "PASS",
-                    "terminal_state": "completed",
+                    "terminal_state": "COMPLETED",
                     "findings_count": 0,
                     "findings": [],
                     "provider_results": {},

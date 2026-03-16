@@ -770,7 +770,21 @@ def _handle_memory(args: argparse.Namespace) -> int:
 
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    # If --stream jsonl is in argv, capture argparse errors as JSONL events
+    _raw_argv = argv if argv is not None else sys.argv[1:]
+    _wants_stream = "--stream" in _raw_argv and "jsonl" in _raw_argv
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        if _wants_stream and exc.code != 0:
+            from datetime import datetime, timezone
+            err_event = json.dumps({
+                "type": "error", "code": "parse_error",
+                "message": "Invalid arguments. Run 'mco review --help' for usage.",
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            }, ensure_ascii=True)
+            print(err_event, flush=True)
+        return int(exc.code) if isinstance(exc.code, int) else 2
     if args.command == "doctor":
         providers = [item for item in _parse_providers(args.providers) if item in SUPPORTED_PROVIDERS]
         if not providers:
