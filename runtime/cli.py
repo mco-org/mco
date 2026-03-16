@@ -450,6 +450,12 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Force artifact writes when result-mode is stdout",
     )
     output.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    output.add_argument(
+        "--stream",
+        choices=["jsonl"],
+        default=None,
+        help="Output JSONL event stream to stdout (mutually exclusive with --json and --format)",
+    )
 
     access = parser.add_argument_group("Access and Contracts")
     access.add_argument("--allow-paths", default=".", help="Comma-separated allowed paths under repo root")
@@ -764,7 +770,37 @@ def _handle_memory(args: argparse.Namespace) -> int:
 
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    # If --stream jsonl is in argv, suppress argparse stderr and emit JSONL error
+    _raw_argv = argv if argv is not None else sys.argv[1:]
+    _wants_stream = "--stream" in _raw_argv and "jsonl" in _raw_argv
+    _parse_error_msg = ""
+    if _wants_stream:
+        # Override parser.error to capture the message without writing to stderr
+        _original_error = parser.error
+
+        def _silent_error(message: str) -> None:
+            nonlocal _parse_error_msg
+            _parse_error_msg = message
+            raise SystemExit(2)
+
+        parser.error = _silent_error  # type: ignore[assignment]
+        # Also suppress subparser errors
+        for action in parser._subparsers._actions:
+            if hasattr(action, "_parser_class"):
+                for sub in getattr(action, "choices", {}).values():
+                    sub.error = _silent_error  # type: ignore[assignment]
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        if _wants_stream and exc.code != 0:
+            from datetime import datetime, timezone
+            err_event = json.dumps({
+                "type": "error", "code": "parse_error",
+                "message": _parse_error_msg or "Invalid arguments. Run 'mco review --help' for usage.",
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            }, ensure_ascii=True)
+            print(err_event, flush=True)
+        return int(exc.code) if isinstance(exc.code, int) else 2
     if args.command == "doctor":
         providers = [item for item in _parse_providers(args.providers) if item in SUPPORTED_PROVIDERS]
         if not providers:
@@ -801,42 +837,68 @@ def main(argv: List[str] | None = None) -> int:
         parser.error("unsupported command")
         return 2
 
+    # Build thread-safe stream emitter FIRST so even mutual-exclusion errors
+    # can be emitted as JSONL events
+    stream_mode = getattr(args, "stream", None)
+    stream_callback = None
+    if stream_mode == "jsonl":
+        import threading as _threading
+        _stream_lock = _threading.Lock()
+
+        def _stream_emit(event: dict) -> None:
+            line = json.dumps(event, ensure_ascii=True)
+            with _stream_lock:
+                print(line, flush=True)
+
+        stream_callback = _stream_emit
+
+    def _stream_error_exit(code: str, message: str) -> int:
+        """Emit error event (if streaming) or print to stderr, then return 2."""
+        if stream_callback:
+            from datetime import datetime, timezone
+            stream_callback({
+                "type": "error", "code": code, "message": message,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            })
+        else:
+            print(message, file=sys.stderr)
+        return 2
+
+    # Validate --stream mutual exclusion (now uses _stream_error_exit for JSONL errors)
+    if stream_mode and args.json:
+        return _stream_error_exit("invalid_config", "--stream and --json are mutually exclusive")
+    if stream_mode and args.format not in ("report",):
+        return _stream_error_exit("invalid_config", "--stream and --format are mutually exclusive")
+
     try:
         cfg = _resolve_config(args)
     except ValueError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
-        return 2
+        return _stream_error_exit("config_error", "Configuration error: {}".format(exc))
     repo_root = str(Path(args.repo).resolve())
     providers = [item for item in cfg.providers if item in SUPPORTED_PROVIDERS]
     if not providers:
-        print("No valid providers selected.", file=sys.stderr)
-        return 2
+        return _stream_error_exit("invalid_providers", "No valid providers selected.")
     synth_provider = args.synth_provider.strip() if isinstance(args.synth_provider, str) else ""
     synthesize = bool(args.synthesize or synth_provider)
     if synth_provider and synth_provider not in providers:
-        print("--synth-provider must be one of selected providers", file=sys.stderr)
-        return 2
+        return _stream_error_exit("invalid_config", "--synth-provider must be one of selected providers")
 
     memory_space = args.space.strip() if isinstance(args.space, str) else ""
     if memory_space and not args.memory:
-        print("--space requires --memory", file=sys.stderr)
-        return 2
+        return _stream_error_exit("invalid_config", "--space requires --memory")
     if memory_space and ":" in memory_space:
-        print(
+        return _stream_error_exit(
+            "invalid_config",
             "--space takes a slug (e.g. 'my-repo'), not a full space_id.\n"
             "The 'coding:' prefix and '--findings'/'--context' suffixes are added automatically.",
-            file=sys.stderr,
         )
-        return 2
 
     # Normalize diff flags
     diff_base_arg = args.diff_base.strip() if isinstance(args.diff_base, str) else ""
     if diff_base_arg and args.staged:
-        print("--diff-base cannot be used with --staged", file=sys.stderr)
-        return 2
+        return _stream_error_exit("invalid_config", "--diff-base cannot be used with --staged")
     if diff_base_arg and args.unstaged:
-        print("--diff-base cannot be used with --unstaged", file=sys.stderr)
-        return 2
+        return _stream_error_exit("invalid_config", "--diff-base cannot be used with --unstaged")
     diff_mode = None
     if args.diff or diff_base_arg:
         diff_mode = "branch"
@@ -860,6 +922,7 @@ def main(argv: List[str] | None = None) -> int:
         memory_space=memory_space or None,
         diff_mode=diff_mode,
         diff_base=diff_base_arg or None,
+        stream_callback=stream_callback,
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
@@ -872,8 +935,15 @@ def main(argv: List[str] | None = None) -> int:
     try:
         result = run_review(req, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
-        print(f"Input error: {exc}", file=sys.stderr)
-        return 2
+        return _stream_error_exit("input_error", "Input error: {}".format(exc))
+
+    # In stream mode, events were already emitted — just return exit code
+    if stream_mode:
+        if result.decision == "FAIL":
+            return 2
+        if review_mode and result.decision == "INCONCLUSIVE":
+            return 3
+        return 0
 
     payload = {
         "command": args.command,
