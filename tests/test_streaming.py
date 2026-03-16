@@ -135,6 +135,62 @@ class TestStreamingThreadSafety(unittest.TestCase):
             self.assertEqual(parsed["type"], "test")
 
 
+class TestEmptyDiffEmitsEvents(unittest.TestCase):
+    """Fix 1: empty diff must still emit run_started + result."""
+
+    @patch("runtime.diff_utils.diff_files", return_value=[])
+    @patch("runtime.diff_utils.detect_main_branch", return_value="main")
+    def test_empty_diff_emits_run_started_and_result(self, mock_detect, mock_files) -> None:
+        events = []
+        req = ReviewRequest(
+            repo_root="/tmp/fake",
+            prompt="Review",
+            providers=["claude"],
+            artifact_base="/tmp/art",
+            policy=ReviewPolicy(),
+            diff_mode="branch",
+            stream_callback=events.append,
+        )
+        result = run_review(req, review_mode=True, write_artifacts=False)
+        event_types = [e["type"] for e in events]
+        self.assertIn("run_started", event_types)
+        self.assertIn("result", event_types)
+        self.assertEqual(event_types[-1], "result")
+        result_event = [e for e in events if e["type"] == "result"][0]
+        self.assertEqual(result_event["findings_count"], 0)
+
+
+class TestProviderEarlyExitEvents(unittest.TestCase):
+    """Fix 3: early provider failures must emit provider_started + provider_error."""
+
+    @patch("runtime.review_engine._run_provider")
+    def test_provider_started_always_emitted(self, mock_run) -> None:
+        """Even when provider fails, provider_started should appear in events."""
+        mock_outcome = MagicMock()
+        mock_outcome.provider = "claude"
+        mock_outcome.success = False
+        mock_outcome.parse_ok = False
+        mock_outcome.schema_valid_count = 0
+        mock_outcome.dropped_count = 0
+        mock_outcome.findings = []
+        mock_outcome.provider_result = {"success": False, "reason": "provider_unavailable"}
+        mock_run.return_value = mock_outcome
+
+        events = []
+        req = ReviewRequest(
+            repo_root=".",
+            prompt="Review",
+            providers=["claude"],
+            artifact_base="/tmp/art",
+            policy=ReviewPolicy(),
+            stream_callback=events.append,
+        )
+        run_review(req, review_mode=True, write_artifacts=False)
+        event_types = [e["type"] for e in events]
+        self.assertIn("run_started", event_types)
+        self.assertIn("result", event_types)
+
+
 class TestStreamCLIFlags(unittest.TestCase):
     def test_stream_flag_accepted(self) -> None:
         from runtime.cli import build_parser

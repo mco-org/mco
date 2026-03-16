@@ -529,8 +529,15 @@ def _run_provider(
         if persist_artifacts:
             _ensure_provider_artifacts(runtime_artifact_base, resolved_task_id, provider)
 
+    _emit_event(request, {"type": "provider_started", "provider": provider})
+
     adapter = adapter_map.get(provider)
     if adapter is None:
+        _emit_event(request, {
+            "type": "provider_error", "provider": provider,
+            "error_kind": "adapter_not_implemented",
+            "message": "No adapter for provider: {}".format(provider),
+        })
         _ensure_if_persisting()
         return _ProviderExecutionOutcome(
             provider=provider,
@@ -544,6 +551,12 @@ def _run_provider(
 
     presence = adapter.detect()
     if not presence.detected or not presence.auth_ok:
+        _emit_event(request, {
+            "type": "provider_error", "provider": provider,
+            "error_kind": "provider_unavailable",
+            "message": "Provider unavailable: detected={}, auth_ok={}".format(
+                presence.detected, presence.auth_ok),
+        })
         _ensure_if_persisting()
         return _ProviderExecutionOutcome(
             provider=provider,
@@ -575,6 +588,11 @@ def _run_provider(
         if str(key).strip() in supported_keys
     }
     if unknown_permission_keys and request.policy.enforcement_mode == "strict":
+        _emit_event(request, {
+            "type": "provider_error", "provider": provider,
+            "error_kind": "permission_enforcement_failed",
+            "message": "Unknown permission keys: {}".format(unknown_permission_keys),
+        })
         _ensure_if_persisting()
         return _ProviderExecutionOutcome(
             provider=provider,
@@ -592,8 +610,6 @@ def _run_provider(
                 "unknown_permission_keys": unknown_permission_keys,
             },
         )
-
-    _emit_event(request, {"type": "provider_started", "provider": provider})
 
     provider_stall_timeout = _provider_stall_timeout_seconds(request.policy, provider)
     poll_interval_seconds = _poll_interval_seconds(request.policy)
@@ -636,7 +652,7 @@ def _run_provider(
                     _emit_event(request, {
                         "type": "provider_progress",
                         "provider": provider,
-                        "total_output_bytes": sum(current_snapshot) if isinstance(current_snapshot, tuple) else 0,
+                        "total_output_bytes": current_snapshot[0] if isinstance(current_snapshot, tuple) else 0,
                     })
 
                 cancel_reason = ""
@@ -878,12 +894,13 @@ def run_review(
                 ]
 
             if not changed:
-                import sys as _sys
-                print(
-                    "No changes detected for the specified diff mode. Nothing to review.",
-                    file=_sys.stderr,
-                )
-                return ReviewResult(
+                if request.stream_callback is None:
+                    import sys as _sys
+                    print(
+                        "No changes detected for the specified diff mode. Nothing to review.",
+                        file=_sys.stderr,
+                    )
+                _no_op_result = ReviewResult(
                     task_id=task_id,
                     artifact_root=None,
                     decision="PASS",
@@ -896,6 +913,23 @@ def run_review(
                     dropped_findings_count=0,
                     findings=[],
                 )
+                # Emit stream events even for empty diff
+                _emit_event(request, {
+                    "type": "run_started",
+                    "task_id": task_id,
+                    "providers": list(request.providers),
+                    "review_mode": review_mode,
+                })
+                _emit_event(request, {
+                    "type": "result",
+                    "task_id": task_id,
+                    "decision": "PASS",
+                    "terminal_state": "completed",
+                    "findings_count": 0,
+                    "findings": [],
+                    "provider_results": {},
+                })
+                return _no_op_result
 
             _diff_file_set = set(changed)
             normalized_targets = changed
