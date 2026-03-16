@@ -1,0 +1,143 @@
+[
+  {
+    "id": "initialize_basic",
+    "description": "Agent responds to initialize with agentInfo",
+    "steps": [
+      {
+        "action": "send",
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "0.1",
+          "clientInfo": {"name": "test", "version": "0.0.1"},
+          "capabilities": {}
+        }
+      },
+      {
+        "action": "expect_result",
+        "has_keys": ["agentInfo"],
+        "agentInfo_has": ["name"]
+      }
+    ]
+  },
+  {
+    "id": "session_new",
+    "description": "Create a session after initialize",
+    "steps": [
+      {"action": "initialize"},
+      {
+        "action": "send",
+        "method": "session/new",
+        "params": {}
+      },
+      {
+        "action": "expect_result",
+        "has_keys": ["sessionId"]
+      }
+    ]
+  },
+  {
+    "id": "prompt_with_text_response",
+    "description": "Send prompt and receive text content via session/update",
+    "steps": [
+      {"action": "initialize"},
+      {"action": "new_session"},
+      {
+        "action": "prompt",
+        "text": "Say hello"
+      },
+      {
+        "action": "expect_text_collected",
+        "contains": "hello"
+      }
+    ]
+  },
+  {
+    "id": "prompt_reverse_notification_order",
+    "description": "Text collected even when RPC response arrives before session/update",
+    "agent_behavior": "response_before_notification",
+    "steps": [
+      {"action": "initialize"},
+      {"action": "new_session"},
+      {
+        "action": "prompt",
+        "text": "delayed update"
+      },
+      {
+        "action": "expect_text_collected",
+        "contains": "delayed update"
+      }
+    ]
+  },
+  {
+    "id": "session_cancel",
+    "description": "Cancel via high-level client.cancel() without error",
+    "steps": [
+      {"action": "initialize"},
+      {"action": "new_session"},
+      {"action": "cancel"}
+    ]
+  },
+  {
+    "id": "error_unknown_method",
+    "description": "Agent returns JSON-RPC error for unknown method",
+    "agent_behavior": "error_on_unknown",
+    "steps": [
+      {"action": "initialize"},
+      {
+        "action": "send",
+        "method": "nonexistent/method",
+        "params": {}
+      },
+      {
+        "action": "expect_error",
+        "code": -32601
+      }
+    ]
+  },
+  {
+    "id": "multiple_prompts_clears_accumulator",
+    "description": "Each prompt() clears accumulated text from previous turn",
+    "steps": [
+      {"action": "initialize"},
+      {"action": "new_session"},
+      {
+        "action": "prompt",
+        "text": "first prompt"
+      },
+      {
+        "action": "expect_text_collected",
+        "contains": "first prompt"
+      },
+      {
+        "action": "prompt",
+        "text": "second prompt"
+      },
+      {
+        "action": "expect_text_collected",
+        "contains": "second prompt"
+      },
+      {
+        "action": "expect_text_collected",
+        "not_contains": "first prompt"
+      }
+    ]
+  },
+  {
+    "id": "empty_content_raw",
+    "description": "Agent accepts prompt with empty content array at protocol level",
+    "steps": [
+      {"action": "initialize"},
+      {"action": "new_session"},
+      {
+        "action": "send_raw",
+        "method": "session/prompt",
+        "params": {
+          "content": []
+        }
+      },
+      {
+        "action": "expect_result"
+      }
+    ]
+  }
+]
