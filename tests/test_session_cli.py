@@ -52,6 +52,28 @@ class TestSessionCLIParsing(unittest.TestCase):
         args = parser.parse_args(["session", "resume", "my-review"])
         self.assertEqual(args.session_action, "resume")
 
+    def test_session_cancel_accepted(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["session", "cancel", "my-review"])
+        self.assertEqual(args.session_action, "cancel")
+        self.assertEqual(args.name, "my-review")
+
+    def test_session_cancel_json(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["session", "cancel", "my-review", "--json"])
+        self.assertTrue(args.json)
+
+    def test_session_queue_accepted(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["session", "queue", "my-review"])
+        self.assertEqual(args.session_action, "queue")
+        self.assertEqual(args.name, "my-review")
+
+    def test_session_queue_json(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["session", "queue", "my-review", "--json"])
+        self.assertTrue(args.json)
+
     def test_session_requires_action(self) -> None:
         parser = build_parser()
         with self.assertRaises(SystemExit):
