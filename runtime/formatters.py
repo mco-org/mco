@@ -144,17 +144,22 @@ def format_sarif(payload: Dict[str, object], findings: List[Dict[str, object]]) 
                 rule_payload["help"] = {"text": recommendation}
             rules_by_id[rule_id] = rule_payload
 
+        properties: Dict[str, object] = {
+            "category": category,
+            "severity": severity,
+            "confidence": confidence_value,
+            "detected_by": detected_by_value,
+            "fingerprint": str(finding.get("fingerprint", "")),
+        }
+        diff_scope = finding.get("diff_scope")
+        if diff_scope:
+            properties["diff_scope"] = diff_scope
+
         result_payload: Dict[str, object] = {
             "ruleId": rule_id,
             "level": level,
             "message": {"text": title},
-            "properties": {
-                "category": category,
-                "severity": severity,
-                "confidence": confidence_value,
-                "detected_by": detected_by_value,
-                "fingerprint": str(finding.get("fingerprint", "")),
-            },
+            "properties": properties,
         }
 
         evidence = finding.get("evidence")

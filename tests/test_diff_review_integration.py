@@ -96,3 +96,86 @@ class TestDiffScopeTagging(unittest.TestCase):
         findings = [{"title": "Bug"}]
         result = _tag_diff_scope(findings, {"a.py"})
         self.assertEqual(result[0]["diff_scope"], "unknown")
+
+
+# ── SARIF diff_scope ──
+
+from runtime.formatters import format_sarif
+
+
+class TestSarifDiffScope(unittest.TestCase):
+    def test_diff_scope_in_sarif_properties(self) -> None:
+        payload = {"decision": "PASS", "terminal_state": "completed", "findings_count": 1}
+        findings = [{
+            "title": "Bug",
+            "severity": "high",
+            "category": "security",
+            "evidence": {"file": "a.py", "line": 1, "snippet": "x"},
+            "confidence": 0.8,
+            "recommendation": "fix it",
+            "diff_scope": "in_diff",
+        }]
+        sarif = format_sarif(payload, findings)
+        result_props = sarif["runs"][0]["results"][0]["properties"]
+        self.assertEqual(result_props["diff_scope"], "in_diff")
+
+    def test_no_diff_scope_omitted(self) -> None:
+        payload = {"decision": "PASS", "terminal_state": "completed", "findings_count": 1}
+        findings = [{
+            "title": "Bug",
+            "severity": "high",
+            "category": "security",
+            "evidence": {"file": "a.py", "line": 1, "snippet": "x"},
+            "confidence": 0.8,
+            "recommendation": "fix it",
+        }]
+        sarif = format_sarif(payload, findings)
+        result_props = sarif["runs"][0]["results"][0]["properties"]
+        self.assertNotIn("diff_scope", result_props)
+
+
+# ── Report diff_scope grouping ──
+
+from runtime.cli import _render_user_readable_report
+
+
+class TestReportDiffScope(unittest.TestCase):
+    def test_report_groups_by_diff_scope(self) -> None:
+        payload = {
+            "task_id": "test",
+            "decision": "PASS",
+            "terminal_state": "completed",
+            "provider_success_count": 1,
+            "provider_failure_count": 0,
+            "findings_count": 2,
+            "parse_success_count": 1,
+            "parse_failure_count": 0,
+            "schema_valid_count": 2,
+            "artifact_root": None,
+        }
+        findings = [
+            {"title": "In diff bug", "severity": "high", "diff_scope": "in_diff",
+             "category": "security", "evidence": {"file": "a.py", "line": 1}},
+            {"title": "Related issue", "severity": "medium", "diff_scope": "related",
+             "category": "performance", "evidence": {"file": "b.py", "line": 5}},
+        ]
+        report = _render_user_readable_report("review", "stdout", ["claude"], payload, {}, findings)
+        self.assertIn("In Diff", report)
+        self.assertIn("Related", report)
+        self.assertIn("In diff bug", report)
+
+    def test_report_no_diff_scope_skips_section(self) -> None:
+        payload = {
+            "task_id": "test",
+            "decision": "PASS",
+            "terminal_state": "completed",
+            "provider_success_count": 1,
+            "provider_failure_count": 0,
+            "findings_count": 0,
+            "parse_success_count": 1,
+            "parse_failure_count": 0,
+            "schema_valid_count": 0,
+            "artifact_root": None,
+        }
+        report = _render_user_readable_report("review", "stdout", ["claude"], payload, {}, [])
+        self.assertNotIn("In Diff", report)

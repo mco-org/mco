@@ -175,12 +175,24 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def _finding_location_from_dict(finding: Dict[str, object]) -> str:
+    evidence = finding.get("evidence")
+    if not isinstance(evidence, dict):
+        return ""
+    file_path = str(evidence.get("file", ""))
+    line = evidence.get("line")
+    if file_path and isinstance(line, int):
+        return f"{file_path}:{line}"
+    return file_path
+
+
 def _render_user_readable_report(
     command: str,
     result_mode: str,
     providers: List[str],
     payload: Dict[str, object],
     provider_results: Dict[str, Dict[str, object]],
+    findings: Optional[List[Dict[str, object]]] = None,
 ) -> str:
     lines: List[str] = []
     title = "Review" if command == "review" else "Run"
@@ -246,6 +258,33 @@ def _render_user_readable_report(
     else:
         lines.append("Artifacts")
         lines.append("- artifact files are skipped in stdout mode")
+
+    # Diff scope findings breakdown (only when findings have diff_scope tags)
+    if findings and any(f.get("diff_scope") for f in findings):
+        in_diff = [f for f in findings if f.get("diff_scope") == "in_diff"]
+        related = [f for f in findings if f.get("diff_scope") == "related"]
+
+        if in_diff:
+            lines.append("")
+            lines.append(f"In Diff ({len(in_diff)} findings)")
+            for f in in_diff:
+                lines.append(
+                    f"  {str(f.get('severity', '-')).upper():8s} "
+                    f"{str(f.get('category', '-')):15s} "
+                    f"{f.get('title', '-')}  "
+                    f"{_finding_location_from_dict(f)}"
+                )
+        if related:
+            lines.append("")
+            lines.append(f"Related ({len(related)} findings)")
+            for f in related:
+                lines.append(
+                    f"  {str(f.get('severity', '-')).upper():8s} "
+                    f"{str(f.get('category', '-')):15s} "
+                    f"{f.get('title', '-')}  "
+                    f"{_finding_location_from_dict(f)}"
+                )
+
     return "\n".join(lines)
 
 
@@ -848,6 +887,7 @@ def main(argv: List[str] | None = None) -> int:
                         providers,
                         payload,
                         result.provider_results,
+                        result.findings,
                     )
                 )
     else:
@@ -869,6 +909,7 @@ def main(argv: List[str] | None = None) -> int:
                         providers,
                         payload,
                         result.provider_results,
+                        result.findings,
                     )
                 )
 
