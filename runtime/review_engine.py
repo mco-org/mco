@@ -635,6 +635,12 @@ def _run_provider(
     poll_interval_seconds = _poll_interval_seconds(request.policy)
     review_hard_timeout_seconds = request.policy.review_hard_timeout_seconds if review_mode else 0
 
+    # Inject per-provider perspective if configured
+    provider_prompt = full_prompt
+    perspective = request.policy.perspectives.get(provider, "")
+    if perspective:
+        provider_prompt = "## Review Perspective\n{}\n\n{}".format(perspective, full_prompt)
+
     def runner(_attempt: int) -> AttemptResult:
         run_ref = None
         try:
@@ -648,7 +654,7 @@ def _run_provider(
                 metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
             input_task = TaskInput(
                 task_id=resolved_task_id,
-                prompt=full_prompt,
+                prompt=provider_prompt,
                 repo_root=request.repo_root,
                 target_paths=target_paths,
                 timeout_seconds=provider_stall_timeout,

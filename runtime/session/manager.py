@@ -209,15 +209,23 @@ def ensure_session(
     return start_session(provider, repo_root=repo_root, name=name)
 
 
-def resume_session(repo_root: str, name: str) -> SessionState:
+def resume_session(repo_root: str, name: str, provider: Optional[str] = None) -> SessionState:
     """Resume a stopped or crashed session.
 
     Restarts the daemon process. History is preserved on disk.
+    If provider is given, validates it matches the session's provider.
     """
     repo_root = str(Path(repo_root).resolve())
     state = load_state(repo_root, name)
     if state is None:
         raise ValueError("Session '{}' not found".format(name))
+
+    if provider is not None and state.provider != provider:
+        raise ValueError(
+            "Session '{}' has provider '{}', cannot resume with '{}' (provider mismatch)".format(
+                name, state.provider, provider,
+            )
+        )
 
     if state.status == "active" and state.pid and _is_pid_alive(state.pid):
         return state  # Already running

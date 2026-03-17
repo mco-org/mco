@@ -10,7 +10,7 @@ from typing import Dict, List, Mapping, Optional
 from .adapters import adapter_registry
 from .config import ReviewConfig, ReviewPolicy
 from .contracts import ProviderPresence
-from .formatters import format_markdown_pr, format_sarif
+from .formatters import format_markdown_pr, format_sarif, _consensus_badge
 from .review_engine import ReviewRequest, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "opencode", "qwen")
@@ -221,6 +221,12 @@ def _finding_location_from_dict(finding: Dict[str, object]) -> str:
     return file_path
 
 
+def _consensus_badge_text(detected_by: list, total_providers: int) -> str:
+    """Return a space-prefixed consensus badge or empty string."""
+    badge = _consensus_badge(detected_by, total_providers)
+    return "  " + badge if badge else ""
+
+
 def _render_user_readable_report(
     command: str,
     result_mode: str,
@@ -295,6 +301,7 @@ def _render_user_readable_report(
         lines.append("- artifact files are skipped in stdout mode")
 
     # Diff scope findings breakdown (only when findings have diff_scope tags)
+    total_provider_count = len(providers)
     if findings and any(f.get("diff_scope") for f in findings):
         in_diff = [f for f in findings if f.get("diff_scope") == "in_diff"]
         related = [f for f in findings if f.get("diff_scope") == "related"]
@@ -303,21 +310,25 @@ def _render_user_readable_report(
             lines.append("")
             lines.append(f"In Diff ({len(in_diff)} findings)")
             for f in in_diff:
+                badge = _consensus_badge_text(f.get("detected_by", []), total_provider_count)
                 lines.append(
                     f"  {str(f.get('severity', '-')).upper():8s} "
                     f"{str(f.get('category', '-')):15s} "
                     f"{f.get('title', '-')}  "
                     f"{_finding_location_from_dict(f)}"
+                    f"{badge}"
                 )
         if related:
             lines.append("")
             lines.append(f"Related ({len(related)} findings)")
             for f in related:
+                badge = _consensus_badge_text(f.get("detected_by", []), total_provider_count)
                 lines.append(
                     f"  {str(f.get('severity', '-')).upper():8s} "
                     f"{str(f.get('category', '-')):15s} "
                     f"{f.get('title', '-')}  "
                     f"{_finding_location_from_dict(f)}"
+                    f"{badge}"
                 )
 
     return "\n".join(lines)
@@ -522,6 +533,11 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--provider-permissions-json",
         default="",
         help="Provider permission mapping JSON, e.g. '{\"codex\":{\"sandbox\":\"workspace-write\"}}'",
+    )
+    access.add_argument(
+        "--perspectives-json",
+        default="",
+        help="Per-provider review perspective JSON, e.g. '{\"claude\":\"Focus on security issues\",\"codex\":\"Focus on performance\"}'",
     )
     access.add_argument(
         "--strict-contract",
@@ -800,6 +816,19 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         review_hard_timeout_seconds = fc_policy.get("review_hard_timeout_seconds", cfg.policy.review_hard_timeout_seconds)
     enforce_findings_contract = bool(args.strict_contract)
 
+    # Parse perspectives from CLI or config
+    perspectives: Dict[str, str] = {}
+    perspectives_json = getattr(args, "perspectives_json", "")
+    if perspectives_json:
+        try:
+            parsed = json.loads(perspectives_json)
+            if isinstance(parsed, dict):
+                perspectives = {str(k): str(v) for k, v in parsed.items()}
+        except json.JSONDecodeError:
+            pass
+    if not perspectives:
+        perspectives = fc_policy.get("perspectives", {})
+
     policy = ReviewPolicy(
         timeout_seconds=cfg.policy.timeout_seconds,
         stall_timeout_seconds=stall_timeout_seconds,
@@ -814,6 +843,7 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         allow_paths=allow_paths,
         provider_permissions=provider_permissions,
         enforcement_mode=enforcement_mode,
+        perspectives=perspectives,
     )
     return ReviewConfig(providers=providers, artifact_base=artifact_base, policy=policy)
 
@@ -1370,7 +1400,7 @@ def main(argv: List[str] | None = None) -> int:
             print(json.dumps(payload, ensure_ascii=True))
         else:
             if args.format == "markdown-pr":
-                print(format_markdown_pr(payload, result.findings))
+                print(format_markdown_pr(payload, result.findings, total_providers=len(providers)))
             elif args.format == "sarif":
                 print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
             else:
@@ -1392,7 +1422,7 @@ def main(argv: List[str] | None = None) -> int:
             print(json.dumps(detailed_payload, ensure_ascii=True))
         else:
             if args.format == "markdown-pr":
-                print(format_markdown_pr(payload, result.findings))
+                print(format_markdown_pr(payload, result.findings, total_providers=len(providers)))
             elif args.format == "sarif":
                 print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
             else:

@@ -14,6 +14,21 @@ _SARIF_LEVEL_BY_SEVERITY = {
 }
 
 
+def _consensus_badge(detected_by: list, total_providers: int) -> str:
+    """Return a human-readable consensus badge for a finding.
+
+    Based on how many providers independently detected the same issue.
+    """
+    n = len(detected_by) if isinstance(detected_by, list) else 0
+    if total_providers <= 1 or n <= 0:
+        return ""
+    if n >= total_providers and total_providers >= 2:
+        return "[{}/{} agree]".format(n, total_providers)
+    if n >= 2:
+        return "[{}/{} agree]".format(n, total_providers)
+    return "[1 agent only]"
+
+
 def _escape_markdown_cell(value: object) -> str:
     text = str(value)
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
@@ -32,7 +47,7 @@ def _finding_location(finding: Dict[str, object]) -> str:
     return file_path
 
 
-def format_markdown_pr(payload: Dict[str, object], findings: List[Dict[str, object]]) -> str:
+def format_markdown_pr(payload: Dict[str, object], findings: List[Dict[str, object]], total_providers: int = 0) -> str:
     counts = {level: 0 for level in _SEVERITY_ORDER}
     for finding in findings:
         severity = str(finding.get("severity", "")).lower()
@@ -62,12 +77,21 @@ def format_markdown_pr(payload: Dict[str, object], findings: List[Dict[str, obje
         lines.append("_No findings reported._")
         return "\n".join(lines)
 
-    lines.extend(
-        [
-            "| Severity | Category | Title | Location | Confidence | Recommendation |",
-            "|---|---|---|---|---:|---|",
-        ]
-    )
+    has_consensus = total_providers >= 2
+    if has_consensus:
+        lines.extend(
+            [
+                "| Severity | Category | Title | Location | Confidence | Consensus | Recommendation |",
+                "|---|---|---|---|---:|---|---|",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "| Severity | Category | Title | Location | Confidence | Recommendation |",
+                "|---|---|---|---|---:|---|",
+            ]
+        )
     ordered_findings = sorted(
         findings,
         key=lambda item: (
@@ -84,20 +108,19 @@ def format_markdown_pr(payload: Dict[str, object], findings: List[Dict[str, obje
             confidence_text = f"{float(confidence_value):.2f}"
         else:
             confidence_text = "-"
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    f"`{_escape_markdown_cell(str(finding.get('severity', '-')).lower())}`",
-                    _escape_markdown_cell(finding.get("category", "-")),
-                    _escape_markdown_cell(finding.get("title", "-")),
-                    f"`{_escape_markdown_cell(_finding_location(finding))}`",
-                    confidence_text,
-                    _escape_markdown_cell(finding.get("recommendation", "-")),
-                ]
-            )
-            + " |"
-        )
+        detected_by = finding.get("detected_by", [])
+        badge = _consensus_badge(detected_by, total_providers) if has_consensus else ""
+        cols = [
+            f"`{_escape_markdown_cell(str(finding.get('severity', '-')).lower())}`",
+            _escape_markdown_cell(finding.get("category", "-")),
+            _escape_markdown_cell(finding.get("title", "-")),
+            f"`{_escape_markdown_cell(_finding_location(finding))}`",
+            confidence_text,
+        ]
+        if has_consensus:
+            cols.append(badge)
+        cols.append(_escape_markdown_cell(finding.get("recommendation", "-")))
+        lines.append("| " + " | ".join(cols) + " |")
     return "\n".join(lines)
 
 

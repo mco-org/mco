@@ -43,6 +43,9 @@ class _QueuedRequest:
     cancelled: bool = False
 
 
+_MAX_COMPLETED_RESULTS = 50  # Keep last N completed results for nowait retrieval
+
+
 class _DaemonContext:
     """Shared mutable state for daemon threads."""
 
@@ -55,6 +58,8 @@ class _DaemonContext:
         self.cancel_event = threading.Event()
         self.next_id = 1
         self.running = True
+        # Store completed results for nowait retrieval
+        self.completed_results: Dict[int, Dict[str, Any]] = {}
 
 
 def _dispatch_prompt(
@@ -101,7 +106,7 @@ def _dispatch_prompt(
             if cancel_event and cancel_event.is_set():
                 try:
                     adapter.cancel(run_ref)
-                except (OSError, ProcessLookupError):
+                except Exception:
                     pass
                 return {
                     "success": False,
@@ -119,7 +124,7 @@ def _dispatch_prompt(
             if time.time() - started > _STALL_TIMEOUT_SECONDS:
                 try:
                     adapter.cancel(run_ref)
-                except (OSError, ProcessLookupError):
+                except Exception:
                     pass
                 return {
                     "success": False,
@@ -231,6 +236,11 @@ def _worker_loop(
 
         with ctx.lock:
             ctx.current_request = None
+            # Store for nowait retrieval — evict oldest if over limit
+            ctx.completed_results[req.request_id] = response
+            if len(ctx.completed_results) > _MAX_COMPLETED_RESULTS:
+                oldest = min(ctx.completed_results)
+                del ctx.completed_results[oldest]
 
 
 _MAX_REQUEST_SIZE = 1024 * 1024  # 1 MB
@@ -304,6 +314,8 @@ def _handle_connection(
                 _send_response(conn, {"status": "error", "message": "Empty prompt"})
                 return True
 
+            nowait = bool(request.get("nowait", False))
+
             # Create queued request
             with ctx.lock:
                 request_id = ctx.next_id
@@ -327,6 +339,11 @@ def _handle_connection(
                 "request_id": request_id,
                 "position": position,
             })
+
+            # For nowait requests, return immediately — worker will still
+            # process the request but result is retrieved via history/queue status.
+            if nowait:
+                return True
 
             # Block until worker processes this request
             req.done.wait()
@@ -392,6 +409,26 @@ def _handle_connection(
                 "running": running_id,
                 "queued": queue_size,
             })
+            return True
+
+        if action == "result":
+            req_id = request.get("request_id")
+            if req_id is None:
+                _send_response(conn, {"status": "error", "message": "Missing request_id"})
+                return True
+            with ctx.lock:
+                stored = ctx.completed_results.get(int(req_id))
+                # Check if it's the currently running request
+                is_running = (
+                    ctx.current_request is not None
+                    and ctx.current_request.request_id == int(req_id)
+                )
+            if stored is not None:
+                _send_response(conn, stored)
+            elif is_running:
+                _send_response(conn, {"status": "pending", "message": "Request still running"})
+            else:
+                _send_response(conn, {"status": "error", "message": "Request {} not found".format(req_id)})
             return True
 
         _send_response(conn, {"status": "error", "message": "Unknown action: {}".format(action)})
