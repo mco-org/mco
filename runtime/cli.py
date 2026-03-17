@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Mapping
+from typing import Dict, List, Mapping, Optional
 
 from .adapters import adapter_registry
 from .config import ReviewConfig, ReviewPolicy
@@ -110,16 +110,28 @@ def _resolve_prompt(args: argparse.Namespace) -> str:
 
     if file_path:
         if file_path == "-":
-            return sys.stdin.read()
+            text = sys.stdin.read().strip()
+            if not text:
+                print("Empty input from stdin.", file=sys.stderr)
+                raise SystemExit(2)
+            return text
         path = Path(file_path)
         if not path.exists():
             print("File not found: {}".format(file_path), file=sys.stderr)
             raise SystemExit(2)
-        return path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            print("Empty prompt file: {}".format(file_path), file=sys.stderr)
+            raise SystemExit(2)
+        return text
 
     # Check for piped stdin
     if not sys.stdin.isatty():
-        return sys.stdin.read()
+        text = sys.stdin.read().strip()
+        if not text:
+            print("Empty input from stdin.", file=sys.stderr)
+            raise SystemExit(2)
+        return text
 
     print("Either --prompt or --file is required.", file=sys.stderr)
     raise SystemExit(2)
@@ -738,25 +750,51 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
+def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None) -> ReviewConfig:
     cfg = ReviewConfig()
+    fc = file_config or {}
+    fc_policy = fc.get("policy", {}) if isinstance(fc.get("policy"), dict) else {}
+
     providers = _parse_providers(args.providers) if args.providers else list(cfg.providers)
-    artifact_base = args.artifact_base or cfg.artifact_base
+
+    # artifact_base: CLI > config file > hardcoded default
+    artifact_base = args.artifact_base if args.artifact_base != cfg.artifact_base else fc.get("artifact_base", cfg.artifact_base)
+
     provider_timeouts = dict(cfg.policy.provider_timeouts)
+    # Merge config file provider_timeouts first, then CLI overrides on top
+    if fc_policy.get("provider_timeouts"):
+        provider_timeouts.update(fc_policy["provider_timeouts"])
     provider_timeouts.update(_parse_provider_timeouts(args.provider_timeouts))
-    allow_paths = _parse_paths(args.allow_paths) if args.allow_paths else list(cfg.policy.allow_paths)
+
+    # allow_paths: CLI > config file > hardcoded default
+    if args.allow_paths and args.allow_paths != ".":
+        allow_paths = _parse_paths(args.allow_paths)
+    elif fc_policy.get("allow_paths"):
+        allow_paths = fc_policy["allow_paths"] if isinstance(fc_policy["allow_paths"], list) else [fc_policy["allow_paths"]]
+    else:
+        allow_paths = list(cfg.policy.allow_paths)
+
+    # provider_permissions: merge config file base, then CLI JSON on top
+    base_permissions = dict(cfg.policy.provider_permissions)
+    if fc_policy.get("provider_permissions") and isinstance(fc_policy["provider_permissions"], dict):
+        for k, v in fc_policy["provider_permissions"].items():
+            base_permissions[k] = dict(base_permissions.get(k, {}), **v) if isinstance(v, dict) else v
     provider_permissions = _merge_provider_permissions(
-        cfg.policy.provider_permissions,
+        base_permissions,
         _parse_provider_permissions_json(args.provider_permissions_json),
     )
+
     max_provider_parallelism = args.max_provider_parallelism
     if max_provider_parallelism < 0:
-        max_provider_parallelism = cfg.policy.max_provider_parallelism
-    enforcement_mode = args.enforcement_mode or cfg.policy.enforcement_mode
-    stall_timeout_seconds = args.stall_timeout if args.stall_timeout > 0 else cfg.policy.stall_timeout_seconds
-    poll_interval_seconds = args.poll_interval if args.poll_interval > 0 else cfg.policy.poll_interval_seconds
+        max_provider_parallelism = fc_policy.get("max_provider_parallelism", cfg.policy.max_provider_parallelism)
+
+    # enforcement_mode: CLI > config file > hardcoded default
+    enforcement_mode = args.enforcement_mode or fc_policy.get("enforcement_mode", cfg.policy.enforcement_mode)
+
+    stall_timeout_seconds = args.stall_timeout if args.stall_timeout > 0 else fc_policy.get("stall_timeout_seconds", cfg.policy.stall_timeout_seconds)
+    poll_interval_seconds = args.poll_interval if args.poll_interval > 0 else fc_policy.get("poll_interval_seconds", cfg.policy.poll_interval_seconds)
     review_hard_timeout_seconds = (
-        args.review_hard_timeout if args.review_hard_timeout >= 0 else cfg.policy.review_hard_timeout_seconds
+        args.review_hard_timeout if args.review_hard_timeout >= 0 else fc_policy.get("review_hard_timeout_seconds", cfg.policy.review_hard_timeout_seconds)
     )
     enforce_findings_contract = bool(args.strict_contract)
 
@@ -1201,7 +1239,7 @@ def main(argv: List[str] | None = None) -> int:
         extra_agents = {agent_name: shlex.split(agent_cmd)}
 
     try:
-        cfg = _resolve_config(args)
+        cfg = _resolve_config(args, file_config=file_config)
     except ValueError as exc:
         return _stream_error_exit("config_error", "Configuration error: {}".format(exc))
     repo_root = str(Path(args.repo).resolve())

@@ -129,8 +129,13 @@ class AcpAdapter:
             stderr_path=stderr_path,
         )
 
+        # Extract allow_paths and permissions from task metadata
+        allow_paths = input_task.metadata.get("allow_paths", [])
+        provider_perms = input_task.metadata.get("provider_permissions", {})
+        enable_terminal = provider_perms.get("terminal", "") != ""
+
         try:
-            client.start()
+            client.start(allow_paths=allow_paths, enable_terminal=enable_terminal)
             agent_info = client.initialize(timeout=30.0)
             session_id = client.new_session(
                 working_directory=input_task.repo_root,

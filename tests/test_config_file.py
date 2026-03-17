@@ -47,6 +47,28 @@ class TestLoadConfigFiles(unittest.TestCase):
             self.assertEqual(result["providers"], ["claude", "codex"])
             self.assertFalse(result["quiet"])  # global value preserved when not overridden
 
+    def test_policy_deep_merged(self) -> None:
+        """Project policy should merge into global policy, not replace it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            global_dir = os.path.join(tmp, "global", ".mco")
+            os.makedirs(global_dir)
+            with open(os.path.join(global_dir, "config.json"), "w") as f:
+                json.dump({"policy": {"stall_timeout_seconds": 600, "enforcement_mode": "best_effort"}}, f)
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                json.dump({"policy": {"stall_timeout_seconds": 300}}, f)
+            result = load_config_files(tmp, global_config_dir=global_dir)
+            # Project overrides stall_timeout
+            self.assertEqual(result["policy"]["stall_timeout_seconds"], 300)
+            # Global enforcement_mode preserved (not clobbered)
+            self.assertEqual(result["policy"]["enforcement_mode"], "best_effort")
+
+    def test_artifact_base_from_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                json.dump({"artifact_base": "reports/global"}, f)
+            result = load_config_files(tmp)
+            self.assertEqual(result["artifact_base"], "reports/global")
+
     def test_invalid_json_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, ".mcorc.json"), "w") as f:

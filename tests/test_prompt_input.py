@@ -52,6 +52,37 @@ class TestResolvePrompt(unittest.TestCase):
             parser.parse_args(["run", "--prompt", "x", "--file", "y", "--providers", "claude"])
 
 
+    def test_empty_stdin_rejected(self) -> None:
+        import io
+        from unittest.mock import patch, MagicMock
+        parser = build_parser()
+        args = parser.parse_args(["run", "--file", "-", "--providers", "claude"])
+        with patch("sys.stdin", io.StringIO("")):
+            with self.assertRaises(SystemExit):
+                _resolve_prompt(args)
+
+    def test_empty_file_rejected(self) -> None:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("")
+            f.flush()
+            parser = build_parser()
+            args = parser.parse_args(["run", "--file", f.name, "--providers", "claude"])
+            with self.assertRaises(SystemExit):
+                _resolve_prompt(args)
+            os.unlink(f.name)
+
+    def test_piped_empty_stdin_rejected(self) -> None:
+        import io
+        from unittest.mock import patch
+        parser = build_parser()
+        args = parser.parse_args(["run", "--providers", "claude"])
+        mock_stdin = io.StringIO("")
+        mock_stdin.isatty = lambda: False  # type: ignore
+        with patch("sys.stdin", mock_stdin):
+            with self.assertRaises(SystemExit):
+                _resolve_prompt(args)
+
+
 class TestSessionSendFile(unittest.TestCase):
     def test_session_send_with_file(self) -> None:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:

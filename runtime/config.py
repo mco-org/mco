@@ -36,13 +36,25 @@ class ReviewConfig:
 _DEFAULT_GLOBAL_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".mco")
 
 
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep merge override into base. Nested dicts are merged, not replaced."""
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def load_config_files(
     repo_root: str,
     global_config_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Load and merge config from global (~/.mco/config.json) and project (.mcorc.json).
 
-    Merge order: global < project. Returns empty dict if no config files found.
+    Merge order: global < project. Nested dicts (e.g. policy) are deep-merged.
+    Returns empty dict if no config files found.
     """
     global_dir = global_config_dir or _DEFAULT_GLOBAL_CONFIG_DIR
     merged: Dict[str, Any] = {}
@@ -54,7 +66,7 @@ def load_config_files(
             with open(global_path, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                merged.update(data)
+                merged = _deep_merge(merged, data)
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -65,7 +77,7 @@ def load_config_files(
             with open(project_path, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                merged.update(data)
+                merged = _deep_merge(merged, data)
         except (json.JSONDecodeError, OSError):
             pass
 

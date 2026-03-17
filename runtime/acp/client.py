@@ -132,47 +132,62 @@ class AcpClient:
     def agent_info(self) -> Optional[AgentInfo]:
         return self._agent_info
 
-    def start(self, allow_paths: Optional[List[str]] = None) -> None:
-        """Spawn the agent subprocess and register fs/terminal handlers."""
+    def start(
+        self,
+        allow_paths: Optional[List[str]] = None,
+        enable_terminal: bool = False,
+    ) -> None:
+        """Spawn the agent subprocess and register fs/terminal handlers.
+
+        allow_paths: Directories the agent may read/write (relative to cwd).
+            Must be explicitly provided; falls back to NO paths (empty list)
+            if omitted, which blocks all fs operations.
+        enable_terminal: If True, register terminal/* handlers. Defaults to
+            False — callers must opt in (e.g. via provider_permissions).
+        """
         self._transport.start(
             command=self._command,
             cwd=self._cwd,
             env=self._env,
             stderr_path=self._stderr_path,
         )
-        # Register ACP request handlers for bidirectional communication
+        # Register ACP fs handlers — gated by allow_paths
         from .handlers import handle_fs_read, handle_fs_write, TerminalManager
-        paths = allow_paths or ["."]
+        paths = allow_paths if allow_paths is not None else []
         cwd = self._cwd
-        self._terminal_manager = TerminalManager(cwd)
-        self._transport.register_handler(
-            "fs/read_text_file",
-            lambda params: handle_fs_read(params, cwd, paths),
-        )
-        self._transport.register_handler(
-            "fs/write_text_file",
-            lambda params: handle_fs_write(params, cwd, paths),
-        )
-        self._transport.register_handler(
-            "terminal/create",
-            lambda params: {"terminalId": self._terminal_manager.create(params.get("command", ""))},
-        )
-        self._transport.register_handler(
-            "terminal/output",
-            lambda params: {"output": self._terminal_manager.output(params.get("terminalId", ""))},
-        )
-        self._transport.register_handler(
-            "terminal/wait_for_exit",
-            lambda params: {"exitCode": self._terminal_manager.wait_for_exit(params.get("terminalId", ""))},
-        )
-        self._transport.register_handler(
-            "terminal/kill",
-            lambda params: (self._terminal_manager.kill(params.get("terminalId", "")), {})[1],
-        )
-        self._transport.register_handler(
-            "terminal/release",
-            lambda params: (self._terminal_manager.release(params.get("terminalId", "")), {})[1],
-        )
+        if paths:
+            self._transport.register_handler(
+                "fs/read_text_file",
+                lambda params: handle_fs_read(params, cwd, paths),
+            )
+            self._transport.register_handler(
+                "fs/write_text_file",
+                lambda params: handle_fs_write(params, cwd, paths),
+            )
+
+        # Terminal handlers — disabled by default, require explicit opt-in
+        if enable_terminal:
+            self._terminal_manager = TerminalManager(cwd)
+            self._transport.register_handler(
+                "terminal/create",
+                lambda params: {"terminalId": self._terminal_manager.create(params.get("command", ""))},
+            )
+            self._transport.register_handler(
+                "terminal/output",
+                lambda params: {"output": self._terminal_manager.output(params.get("terminalId", ""))},
+            )
+            self._transport.register_handler(
+                "terminal/wait_for_exit",
+                lambda params: {"exitCode": self._terminal_manager.wait_for_exit(params.get("terminalId", ""))},
+            )
+            self._transport.register_handler(
+                "terminal/kill",
+                lambda params: (self._terminal_manager.kill(params.get("terminalId", "")), {})[1],
+            )
+            self._transport.register_handler(
+                "terminal/release",
+                lambda params: (self._terminal_manager.release(params.get("terminalId", "")), {})[1],
+            )
 
     def initialize(self, timeout: float = 30.0) -> AgentInfo:
         """Send ACP initialize handshake.

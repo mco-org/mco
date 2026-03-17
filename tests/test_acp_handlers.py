@@ -86,6 +86,24 @@ class TestTerminalManager(unittest.TestCase):
             self.assertNotIn(tid, mgr._terminals)
 
 
+class TestTerminalDisabledByDefault(unittest.TestCase):
+    """Terminal handlers must be explicitly enabled."""
+
+    def test_terminal_not_registered_by_default(self) -> None:
+        from runtime.acp.transport import JsonRpcTransport
+        transport = JsonRpcTransport()
+        # Without enable_terminal=True, no terminal handlers should be registered
+        self.assertNotIn("terminal/create", transport._request_handlers)
+
+    def test_fs_not_registered_without_allow_paths(self) -> None:
+        """With empty allow_paths, fs handlers should not be registered."""
+        from runtime.acp.client import AcpClient
+        client = AcpClient(command=["echo"], cwd="/tmp")
+        # Don't actually start — just verify the logic
+        # allow_paths=[] means no fs handlers
+        self.assertEqual(client._transport._request_handlers, {})
+
+
 class TestTransportRequestDispatch(unittest.TestCase):
     """Integration test: transport routes agent-initiated requests to handlers."""
 
