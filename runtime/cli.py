@@ -693,6 +693,7 @@ def build_parser() -> argparse.ArgumentParser:
     sess_send.add_argument("prompt", nargs="?", default="", help="Prompt text")
     sess_send.add_argument("--file", default="", help="Read prompt from file, or '-' for stdin")
     sess_send.add_argument("--repo", default=".", help="Repository root path")
+    sess_send.add_argument("--no-wait", action="store_true", help="Return after queuing, don't wait for result")
     sess_send.add_argument("--json", action="store_true", help="JSON output")
 
     sess_broadcast = session_sub.add_parser("broadcast", help="Send prompt to all active sessions", formatter_class=_HelpFormatter)
@@ -716,6 +717,11 @@ def build_parser() -> argparse.ArgumentParser:
     sess_resume = session_sub.add_parser("resume", help="Resume a stopped/crashed session", formatter_class=_HelpFormatter)
     sess_resume.add_argument("name", help="Session name")
     sess_resume.add_argument("--repo", default=".", help="Repository root path")
+
+    sess_ensure = session_sub.add_parser("ensure", help="Create or return existing session", formatter_class=_HelpFormatter)
+    sess_ensure.add_argument("--provider", required=True, help="Agent provider")
+    sess_ensure.add_argument("--name", required=True, help="Session name")
+    sess_ensure.add_argument("--repo", default=".", help="Repository root path")
 
     sess_cancel = session_sub.add_parser("cancel", help="Cancel running + queued prompts", formatter_class=_HelpFormatter)
     sess_cancel.add_argument("name", help="Session name")
@@ -866,8 +872,8 @@ def _handle_memory(args: argparse.Namespace) -> int:
 def _handle_session(args: argparse.Namespace) -> int:
     """Handle the session subcommand."""
     from pathlib import Path
-    from .session.manager import start_session, stop_session, list_sessions, resume_session
-    from .session.client import send_prompt, broadcast_prompt, cancel_session as client_cancel, queue_status
+    from .session.manager import start_session, stop_session, list_sessions, resume_session, ensure_session
+    from .session.client import send_prompt, send_prompt_nowait, broadcast_prompt, cancel_session as client_cancel, queue_status
     from .session.state import load_history, load_state
 
     repo_root = str(Path(args.repo).resolve())
@@ -905,7 +911,24 @@ def _handle_session(args: argparse.Namespace) -> int:
         if not prompt:
             print("Prompt is required (positional, --file, or piped stdin).", file=sys.stderr)
             return 2
-        result = send_prompt(repo_root, args.name, prompt)
+        if getattr(args, "no_wait", False):
+            result = send_prompt_nowait(repo_root, args.name, prompt)
+            if getattr(args, "json", False):
+                print(json.dumps(result, ensure_ascii=True))
+            else:
+                if result.get("status") == "queued":
+                    print("Queued as request #{} (position {})".format(
+                        result.get("request_id", "?"), result.get("position", "?")))
+                else:
+                    print("Error: {}".format(result.get("message", "unknown")), file=sys.stderr)
+                    return 2
+            return 0
+        try:
+            result = send_prompt(repo_root, args.name, prompt)
+        except KeyboardInterrupt:
+            print("\nCancelling...", file=sys.stderr)
+            client_cancel(repo_root, args.name)
+            return 130
         if getattr(args, "json", False):
             print(json.dumps(result, ensure_ascii=True))
         else:
@@ -1012,6 +1035,16 @@ def _handle_session(args: argparse.Namespace) -> int:
             else:
                 print("Error: {}".format(result.get("message", "unknown error")), file=sys.stderr)
                 return 2
+        return 0
+
+    if args.session_action == "ensure":
+        try:
+            state = ensure_session(args.provider, repo_root=repo_root, name=args.name)
+            print("Session '{}' ready (provider={}, pid={})".format(
+                state.name, state.provider, state.pid))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         return 0
 
     print("Unknown session action.", file=sys.stderr)

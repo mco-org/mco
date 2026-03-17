@@ -176,6 +176,39 @@ def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
     return result
 
 
+def ensure_session(
+    provider: str,
+    repo_root: str = ".",
+    name: Optional[str] = None,
+) -> SessionState:
+    """Idempotent session create-or-return.
+
+    If a session with the given name exists and is active with matching provider,
+    return it. If stopped/crashed, resume it. If not found, create it.
+    """
+    if name is None:
+        name = _auto_name(provider)
+
+    repo_root = str(Path(repo_root).resolve())
+    existing = load_state(repo_root, name)
+
+    if existing is not None:
+        if existing.status == "active" and existing.pid and _is_pid_alive(existing.pid):
+            if existing.provider != provider:
+                raise ValueError(
+                    "Session '{}' exists with provider '{}', cannot ensure with '{}' (provider mismatch)".format(
+                        name, existing.provider, provider,
+                    )
+                )
+            return existing
+        # Stopped or crashed — resume
+        if existing.provider == provider:
+            return resume_session(repo_root, name)
+
+    # Not found — create
+    return start_session(provider, repo_root=repo_root, name=name)
+
+
 def resume_session(repo_root: str, name: str) -> SessionState:
     """Resume a stopped or crashed session.
 
