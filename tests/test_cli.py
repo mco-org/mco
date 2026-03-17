@@ -105,6 +105,8 @@ class CliTests(unittest.TestCase):
                 "review",
                 "--prompt",
                 "x",
+                "--providers", "claude",
+                "--stall-timeout", "900",
                 "--max-provider-parallelism",
                 "0",
             ]
@@ -151,7 +153,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("--synth-provider", help_text)
         self.assertIn("Exit codes:", help_text)
         self.assertIn("INCONCLUSIVE", help_text)
-        self.assertIn("(default: 900)", help_text)
+        # Config-overridable flags use argparse.SUPPRESS, so default isn't shown
+        self.assertIn("--stall-timeout", help_text)
 
 
 if __name__ == "__main__":

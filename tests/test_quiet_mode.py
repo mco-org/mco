@@ -13,10 +13,11 @@ class TestQuietFlag(unittest.TestCase):
         args = parser.parse_args(["run", "--prompt", "test", "--providers", "claude", "--quiet"])
         self.assertTrue(args.quiet)
 
-    def test_quiet_default_false(self) -> None:
+    def test_quiet_default_suppressed(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["run", "--prompt", "test", "--providers", "claude"])
-        self.assertFalse(args.quiet)
+        # With argparse.SUPPRESS, quiet attr is absent when not passed
+        self.assertFalse(getattr(args, "quiet", False))
 
     def test_quiet_and_json_mutual_exclusion(self) -> None:
         parser = build_parser()

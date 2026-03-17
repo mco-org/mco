@@ -11,7 +11,8 @@ class TestTransportFlag(unittest.TestCase):
     def test_run_default_transport_is_shim(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["run", "--prompt", "test", "--providers", "claude"])
-        self.assertEqual(args.transport, "shim")
+        # With argparse.SUPPRESS, transport is absent when not passed
+        self.assertEqual(getattr(args, "transport", "shim"), "shim")
 
     def test_run_transport_acp(self) -> None:
         parser = build_parser()

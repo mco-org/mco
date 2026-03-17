@@ -401,15 +401,15 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     prompt_group.add_argument("--file", default="", help="Read prompt from file path, or '-' for stdin")
     scope.add_argument(
         "--providers",
-        default=",".join(DEFAULT_CONFIG.providers),
-        help="Comma-separated providers. Supported: claude,codex,gemini,opencode,qwen",
+        default=argparse.SUPPRESS,
+        help="Comma-separated providers (default from config or: claude,codex,gemini,opencode,qwen)",
     )
     scope.add_argument("--target-paths", default=".", help="Comma-separated task scope paths")
     scope.add_argument("--task-id", default="", help="Optional stable task id")
     scope.add_argument(
         "--transport",
         choices=("shim", "acp"),
-        default="shim",
+        default=argparse.SUPPRESS,
         help="Agent communication transport. shim: stdout parsing (default), acp: Agent Client Protocol (JSON-RPC)",
     )
     scope.add_argument(
@@ -424,7 +424,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     timeouts.add_argument(
         "--max-provider-parallelism",
         type=int,
-        default=DEFAULT_POLICY.max_provider_parallelism,
+        default=argparse.SUPPRESS,
         help="Provider fan-out concurrency. 0 means full parallelism",
     )
     timeouts.add_argument(
@@ -435,7 +435,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     timeouts.add_argument(
         "--stall-timeout",
         type=int,
-        default=DEFAULT_POLICY.stall_timeout_seconds,
+        default=argparse.SUPPRESS,
         help="Cancel a provider when output progress is idle for N seconds",
     )
     timeouts.add_argument(
@@ -491,7 +491,8 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     output_excl = output.add_mutually_exclusive_group()
     output_excl.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
-    output_excl.add_argument("--quiet", action="store_true", help="Output only final text, no headers or formatting")
+    output_excl.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS,
+        help="Output only final text, no headers or formatting")
     output_excl.add_argument(
         "--stream",
         choices=["jsonl"],
@@ -522,6 +523,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     memory.add_argument(
         "--memory",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Enable memory layer (requires evermemos-mcp). Injects history context and writes back findings",
     )
     memory.add_argument(
@@ -1085,7 +1087,8 @@ def main(argv: List[str] | None = None) -> int:
             print(err_event, flush=True)
         return int(exc.code) if isinstance(exc.code, int) else 2
     if args.command == "doctor":
-        providers = [item for item in _parse_providers(args.providers) if item in SUPPORTED_PROVIDERS]
+        providers_str = getattr(args, "providers", ",".join(DEFAULT_CONFIG.providers))
+        providers = [item for item in _parse_providers(providers_str) if item in SUPPORTED_PROVIDERS]
         if not providers:
             print("No valid providers selected.", file=sys.stderr)
             return 2
@@ -1122,6 +1125,41 @@ def main(argv: List[str] | None = None) -> int:
     if args.command not in ("run", "review"):
         parser.error("unsupported command")
         return 2
+
+    # Load config files and apply as defaults for args the user didn't set
+    from .config import load_config_files
+    repo_root_for_config = str(Path(getattr(args, "repo", ".")).resolve())
+    file_config = load_config_files(repo_root_for_config)
+
+    policy_cfg = file_config.get("policy", {}) if isinstance(file_config.get("policy"), dict) else {}
+
+    # Group 1: top-level flags
+    _TOP_LEVEL_DEFAULTS = {
+        "providers": ",".join(DEFAULT_CONFIG.providers),
+        "transport": "shim",
+        "quiet": False,
+        "memory": False,
+    }
+    for attr, hardcoded_default in _TOP_LEVEL_DEFAULTS.items():
+        if not hasattr(args, attr):
+            if attr == "providers" and "providers" in file_config:
+                setattr(args, attr, ",".join(file_config["providers"]))
+            elif attr in file_config:
+                setattr(args, attr, file_config[attr])
+            else:
+                setattr(args, attr, hardcoded_default)
+
+    # Group 2: policy flags (config key names differ from args attr names)
+    _POLICY_DEFAULTS = {
+        "stall_timeout": ("stall_timeout_seconds", DEFAULT_POLICY.stall_timeout_seconds),
+        "max_provider_parallelism": ("max_provider_parallelism", DEFAULT_POLICY.max_provider_parallelism),
+    }
+    for attr, (config_key, hardcoded_default) in _POLICY_DEFAULTS.items():
+        if not hasattr(args, attr):
+            if config_key in policy_cfg:
+                setattr(args, attr, policy_cfg[config_key])
+            else:
+                setattr(args, attr, hardcoded_default)
 
     # Build thread-safe stream emitter FIRST so even mutual-exclusion errors
     # can be emitted as JSONL events
