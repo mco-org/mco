@@ -96,8 +96,33 @@ MEMORY_EPILOG = (
 )
 
 
-def _doctor_adapter_registry(transport: str = "shim") -> Mapping[str, object]:
-    return adapter_registry(transport=transport)
+def _doctor_adapter_registry(transport: str = "shim", extra_agents=None) -> Mapping[str, object]:
+    return adapter_registry(transport=transport, extra_agents=extra_agents)
+
+
+def _resolve_prompt(args: argparse.Namespace) -> str:
+    """Resolve prompt from --prompt, --file, or piped stdin."""
+    prompt = getattr(args, "prompt", "") or ""
+    file_path = getattr(args, "file", "") or ""
+
+    if prompt:
+        return prompt
+
+    if file_path:
+        if file_path == "-":
+            return sys.stdin.read()
+        path = Path(file_path)
+        if not path.exists():
+            print("File not found: {}".format(file_path), file=sys.stderr)
+            raise SystemExit(2)
+        return path.read_text(encoding="utf-8")
+
+    # Check for piped stdin
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+
+    print("Either --prompt or --file is required.", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def _doctor_provider_presence(providers: List[str]) -> Dict[str, ProviderPresence]:
@@ -371,7 +396,9 @@ def _merge_provider_permissions(
 def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     scope = parser.add_argument_group("Execution Scope")
     scope.add_argument("--repo", default=".", help="Repository root path")
-    scope.add_argument("--prompt", required=True, help="Task prompt")
+    prompt_group = scope.add_mutually_exclusive_group()
+    prompt_group.add_argument("--prompt", default="", help="Task prompt (inline)")
+    prompt_group.add_argument("--file", default="", help="Read prompt from file path, or '-' for stdin")
     scope.add_argument(
         "--providers",
         default=",".join(DEFAULT_CONFIG.providers),
@@ -384,6 +411,13 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         choices=("shim", "acp"),
         default="shim",
         help="Agent communication transport. shim: stdout parsing (default), acp: Agent Client Protocol (JSON-RPC)",
+    )
+    scope.add_argument(
+        "--agent",
+        nargs=2,
+        metavar=("NAME", "COMMAND"),
+        default=None,
+        help='Custom ACP agent: --agent mybot "mybot --acp". Requires --transport acp',
     )
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
@@ -455,12 +489,14 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Force artifact writes when result-mode is stdout",
     )
-    output.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
-    output.add_argument(
+    output_excl = output.add_mutually_exclusive_group()
+    output_excl.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    output_excl.add_argument("--quiet", action="store_true", help="Output only final text, no headers or formatting")
+    output_excl.add_argument(
         "--stream",
         choices=["jsonl"],
         default=None,
-        help="Output JSONL event stream to stdout (mutually exclusive with --json and --format)",
+        help="Output JSONL event stream to stdout",
     )
 
     access = parser.add_argument_group("Access and Contracts")
@@ -654,7 +690,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sess_send = session_sub.add_parser("send", help="Send a prompt to a session", formatter_class=_HelpFormatter)
     sess_send.add_argument("name", help="Session name")
-    sess_send.add_argument("prompt", help="Prompt text")
+    sess_send.add_argument("prompt", nargs="?", default="", help="Prompt text")
+    sess_send.add_argument("--file", default="", help="Read prompt from file, or '-' for stdin")
     sess_send.add_argument("--repo", default=".", help="Repository root path")
     sess_send.add_argument("--json", action="store_true", help="JSON output")
 
@@ -852,7 +889,23 @@ def _handle_session(args: argparse.Namespace) -> int:
         return 0
 
     if args.session_action == "send":
-        result = send_prompt(repo_root, args.name, args.prompt)
+        prompt = args.prompt or ""
+        file_path = getattr(args, "file", "") or ""
+        if file_path:
+            if file_path == "-":
+                prompt = sys.stdin.read()
+            else:
+                p = Path(file_path)
+                if not p.exists():
+                    print("File not found: {}".format(file_path), file=sys.stderr)
+                    return 2
+                prompt = p.read_text(encoding="utf-8")
+        if not prompt and not sys.stdin.isatty():
+            prompt = sys.stdin.read()
+        if not prompt:
+            print("Prompt is required (positional, --file, or piped stdin).", file=sys.stderr)
+            return 2
+        result = send_prompt(repo_root, args.name, prompt)
         if getattr(args, "json", False):
             print(json.dumps(result, ensure_ascii=True))
         else:
@@ -1064,18 +1117,36 @@ def main(argv: List[str] | None = None) -> int:
             print(message, file=sys.stderr)
         return 2
 
-    # Validate --stream mutual exclusion (now uses _stream_error_exit for JSONL errors)
-    if stream_mode and args.json:
-        return _stream_error_exit("invalid_config", "--stream and --json are mutually exclusive")
+    # Validate --stream / --format mutual exclusion (--stream vs --json is handled by argparse)
     if stream_mode and args.format not in ("report",):
         return _stream_error_exit("invalid_config", "--stream and --format are mutually exclusive")
+
+    # Build extra_agents from --agent flag
+    agent_flag = getattr(args, "agent", None)
+    extra_agents = None
+    if agent_flag:
+        agent_name, agent_cmd = agent_flag
+        import shlex
+        extra_agents = {agent_name: shlex.split(agent_cmd)}
 
     try:
         cfg = _resolve_config(args)
     except ValueError as exc:
         return _stream_error_exit("config_error", "Configuration error: {}".format(exc))
     repo_root = str(Path(args.repo).resolve())
-    providers = [item for item in cfg.providers if item in SUPPORTED_PROVIDERS]
+
+    # Valid providers = built-in providers + custom agent names
+    valid_providers = set(SUPPORTED_PROVIDERS)
+    if extra_agents:
+        valid_providers |= set(extra_agents.keys())
+
+    providers = [item for item in cfg.providers if item in valid_providers]
+    # Auto-add custom agent to providers if not already listed
+    if extra_agents:
+        for name in extra_agents:
+            if name not in providers:
+                providers.append(name)
+
     if not providers:
         return _stream_error_exit("invalid_providers", "No valid providers selected.")
     synth_provider = args.synth_provider.strip() if isinstance(args.synth_provider, str) else ""
@@ -1107,9 +1178,10 @@ def main(argv: List[str] | None = None) -> int:
     elif args.unstaged:
         diff_mode = "unstaged"
 
+    prompt = _resolve_prompt(args)
     req = ReviewRequest(
         repo_root=repo_root,
-        prompt=args.prompt,
+        prompt=prompt,
         providers=providers,  # type: ignore[arg-type]
         artifact_base=str(Path(cfg.artifact_base).resolve()),
         policy=cfg.policy,
@@ -1133,7 +1205,7 @@ def main(argv: List[str] | None = None) -> int:
         effective_result_mode = "both"
     write_artifacts = effective_result_mode in ("artifact", "both")
     transport = getattr(args, "transport", "shim")
-    adapters = _doctor_adapter_registry(transport=transport) if transport != "shim" else None
+    adapters = _doctor_adapter_registry(transport=transport, extra_agents=extra_agents) if (transport != "shim" or extra_agents) else None
     try:
         result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
@@ -1141,6 +1213,17 @@ def main(argv: List[str] | None = None) -> int:
 
     # In stream mode, events were already emitted — just return exit code
     if stream_mode:
+        if result.decision == "FAIL":
+            return 2
+        if review_mode and result.decision == "INCONCLUSIVE":
+            return 3
+        return 0
+
+    if getattr(args, "quiet", False):
+        for prov_id, prov_data in result.provider_results.items():
+            text = prov_data.get("final_text", "") or prov_data.get("output_text", "")
+            if text:
+                print(text)
         if result.decision == "FAIL":
             return 2
         if review_mode and result.decision == "INCONCLUSIVE":

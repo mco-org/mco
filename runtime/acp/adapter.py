@@ -66,7 +66,7 @@ class AcpAdapter:
 
     def __init__(
         self,
-        provider_id: ProviderId,
+        provider_id: str,
         binary_name: str,
         acp_command: Optional[List[str]] = None,
         capability_set: Optional[CapabilitySet] = None,
