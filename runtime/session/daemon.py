@@ -62,19 +62,117 @@ class _DaemonContext:
         self.completed_results: Dict[int, Dict[str, Any]] = {}
 
 
+def _read_output(artifact_path: str, provider: str) -> tuple:
+    """Read stdout/stderr from provider artifact logs. Returns (raw_stdout, raw_stderr)."""
+    raw_dir = Path(artifact_path) / "raw"
+    stdout_path = raw_dir / "{}.stdout.log".format(provider)
+    stderr_path = raw_dir / "{}.stderr.log".format(provider)
+    raw_stdout = ""
+    raw_stderr = ""
+    if stdout_path.exists():
+        raw_stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
+    if stderr_path.exists():
+        raw_stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+    return raw_stdout, raw_stderr
+
+
+def _extract_response(raw_stdout: str, raw_stderr: str) -> str:
+    """Extract human-readable text from raw provider output."""
+    from ..adapters.parsing import extract_final_text_from_output
+    combined = raw_stdout
+    if raw_stderr:
+        combined = combined + "\n" + raw_stderr if combined else raw_stderr
+    return (extract_final_text_from_output(combined) or raw_stdout).strip()
+
+
+def _run_single_attempt(
+    adapter: object,
+    task_input: object,
+    provider: str,
+    cancel_event: Optional[threading.Event],
+) -> Dict[str, Any]:
+    """Run one attempt of a prompt dispatch. Returns attempt result dict."""
+    run_ref = adapter.run(task_input)  # type: ignore[union-attr]
+    started = time.time()
+
+    while True:
+        if cancel_event and cancel_event.is_set():
+            try:
+                adapter.cancel(run_ref)  # type: ignore[union-attr]
+            except Exception:
+                pass
+            raw_stdout, raw_stderr = _read_output(run_ref.artifact_path, provider)
+            return {
+                "success": False,
+                "response": _extract_response(raw_stdout, raw_stderr),
+                "error": "Cancelled",
+                "error_kind": "cancelled",
+                "wall_clock_seconds": round(time.time() - started, 2),
+            }
+
+        status = adapter.poll(run_ref)  # type: ignore[union-attr]
+        if status.completed:
+            break
+        time.sleep(1.0)
+
+        if time.time() - started > _STALL_TIMEOUT_SECONDS:
+            try:
+                adapter.cancel(run_ref)  # type: ignore[union-attr]
+            except Exception:
+                pass
+            # Preserve partial output on timeout
+            raw_stdout, raw_stderr = _read_output(run_ref.artifact_path, provider)
+            return {
+                "success": False,
+                "response": _extract_response(raw_stdout, raw_stderr),
+                "error": "Provider timed out after {}s".format(_STALL_TIMEOUT_SECONDS),
+                "error_kind": "retryable_timeout",
+                "wall_clock_seconds": round(time.time() - started, 2),
+            }
+
+    wall_clock = round(time.time() - started, 2)
+    raw_stdout, raw_stderr = _read_output(run_ref.artifact_path, provider)
+    response = _extract_response(raw_stdout, raw_stderr)
+
+    success = status.attempt_state == "SUCCEEDED"
+    if not success:
+        # Classify the error for retry decisions
+        from ..errors import classify_error
+        exit_code = getattr(status, "exit_code", 1)
+        error_kind = classify_error(exit_code if isinstance(exit_code, int) else 1, raw_stderr)
+        return {
+            "success": False,
+            "response": response,
+            "error": status.message if hasattr(status, "message") else "Provider failed",
+            "error_kind": error_kind.value,
+            "wall_clock_seconds": wall_clock,
+        }
+
+    return {
+        "success": True,
+        "response": response,
+        "wall_clock_seconds": wall_clock,
+    }
+
+
+# Retryable error kinds (matches orchestrator.RETRYABLE_ERRORS values)
+_RETRYABLE_ERROR_KINDS = {"retryable_timeout", "retryable_rate_limit", "retryable_transient_network"}
+
+
 def _dispatch_prompt(
     provider: str,
     repo_root: str,
     prompt: str,
     cancel_event: Optional[threading.Event] = None,
 ) -> Dict[str, Any]:
-    """Run a single prompt through the provider adapter and return the result.
+    """Run a single prompt through the provider adapter with retry support.
 
-    Returns {success, response, wall_clock_seconds}.
-    If cancel_event is set during execution, cancels the provider and returns early.
+    Returns {success, response, wall_clock_seconds, [error], [error_kind], [attempts]}.
+    Uses error classification for retry decisions and exponential backoff.
     """
     from ..cli import SUPPORTED_PROVIDERS, _doctor_adapter_registry
     from ..contracts import TaskInput
+    from ..retry import RetryPolicy
 
     adapters = _doctor_adapter_registry()
     adapter = adapters.get(provider)
@@ -85,80 +183,58 @@ def _dispatch_prompt(
     if not presence.detected or not presence.auth_ok:
         return {"success": False, "response": "", "error": "Provider not available: {}".format(provider)}
 
+    retry_policy = RetryPolicy()
+    total_started = time.time()
+    last_result: Optional[Dict[str, Any]] = None
+
     import tempfile
     import uuid
-    with tempfile.TemporaryDirectory(prefix="mco-session-") as artifact_dir:
-        unique_id = "session-{}-{}".format(int(time.time()), uuid.uuid4().hex[:8])
-        task_input = TaskInput(
-            task_id=unique_id,
-            prompt=prompt,
-            repo_root=repo_root,
-            target_paths=["."],
-            timeout_seconds=_STALL_TIMEOUT_SECONDS,
-            metadata={"artifact_root": artifact_dir},
-        )
-        run_ref = adapter.run(task_input)
-        started = time.time()
 
-        # Poll until completion or cancellation
-        while True:
-            # Check for cancellation
-            if cancel_event and cancel_event.is_set():
-                try:
-                    adapter.cancel(run_ref)
-                except Exception:
-                    pass
-                return {
-                    "success": False,
-                    "response": "",
-                    "error": "Cancelled",
-                    "wall_clock_seconds": round(time.time() - started, 2),
-                }
+    for attempt in range(1, retry_policy.max_retries + 2):  # 1 initial + max_retries
+        # Check cancellation before each attempt
+        if cancel_event and cancel_event.is_set():
+            return {
+                "success": False,
+                "response": (last_result or {}).get("response", ""),
+                "error": "Cancelled",
+                "wall_clock_seconds": round(time.time() - total_started, 2),
+                "attempts": attempt - 1,
+            }
 
-            status = adapter.poll(run_ref)
-            if status.completed:
-                break
-            time.sleep(1.0)
+        with tempfile.TemporaryDirectory(prefix="mco-session-") as artifact_dir:
+            unique_id = "session-{}-{}".format(int(time.time()), uuid.uuid4().hex[:8])
+            task_input = TaskInput(
+                task_id=unique_id,
+                prompt=prompt,
+                repo_root=repo_root,
+                target_paths=["."],
+                timeout_seconds=_STALL_TIMEOUT_SECONDS,
+                metadata={"artifact_root": artifact_dir},
+            )
 
-            # Stall timeout
-            if time.time() - started > _STALL_TIMEOUT_SECONDS:
-                try:
-                    adapter.cancel(run_ref)
-                except Exception:
-                    pass
-                return {
-                    "success": False,
-                    "response": "",
-                    "error": "Provider timed out after {}s".format(_STALL_TIMEOUT_SECONDS),
-                    "wall_clock_seconds": round(time.time() - started, 2),
-                }
+            result = _run_single_attempt(adapter, task_input, provider, cancel_event)
+            result["attempts"] = attempt
+            last_result = result
 
-        wall_clock = round(time.time() - started, 2)
+            if result["success"]:
+                return result
 
-        # Read output and extract human-readable text
-        raw_dir = Path(run_ref.artifact_path) / "raw"
-        stdout_path = raw_dir / "{}.stdout.log".format(provider)
-        stderr_path = raw_dir / "{}.stderr.log".format(provider)
-        raw_stdout = ""
-        raw_stderr = ""
-        if stdout_path.exists():
-            raw_stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
-        if stderr_path.exists():
-            raw_stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+            # Check if error is retryable
+            error_kind = result.get("error_kind", "")
+            if error_kind not in _RETRYABLE_ERROR_KINDS or attempt > retry_policy.max_retries:
+                return result
 
-        # Use extract_final_text to strip protocol noise (JSON wrappers, event streams)
-        from ..adapters.parsing import extract_final_text_from_output
-        combined = raw_stdout
-        if raw_stderr:
-            combined = combined + "\n" + raw_stderr if combined else raw_stderr
-        response = extract_final_text_from_output(combined) or raw_stdout
+            # Backoff before retry
+            delay = retry_policy.compute_delay(attempt)
+            # Sleep in small increments to check cancellation
+            deadline = time.time() + delay
+            while time.time() < deadline:
+                if cancel_event and cancel_event.is_set():
+                    result["error"] = "Cancelled during retry backoff"
+                    return result
+                time.sleep(min(0.5, deadline - time.time()))
 
-        success = status.attempt_state == "SUCCEEDED"
-        return {
-            "success": success,
-            "response": response.strip(),
-            "wall_clock_seconds": wall_clock,
-        }
+    return last_result or {"success": False, "response": "", "error": "All retries exhausted"}
 
 
 def _worker_loop(
