@@ -20,6 +20,14 @@ def adapter_registry(
     """
     if transport == "acp":
         from ..acp.adapter import AcpAdapter, _ACP_COMMANDS
+
+        # Permission keys each provider's shim adapter declares.
+        # ACP adapters inherit these so strict enforcement stays consistent.
+        _SHIM_PERMISSION_KEYS: Dict[str, List[str]] = {
+            "claude": ClaudeAdapter().supported_permission_keys(),
+            "codex": CodexAdapter().supported_permission_keys(),
+        }
+
         registry: Dict[str, Any] = {}
         # Built-in ACP providers
         for provider_id, acp_cmd in _ACP_COMMANDS.items():
@@ -27,8 +35,9 @@ def adapter_registry(
                 provider_id=provider_id,
                 binary_name=acp_cmd[0],
                 acp_command=acp_cmd,
+                permission_keys=_SHIM_PERMISSION_KEYS.get(provider_id, []),
             )
-        # Custom agents
+        # Custom agents — no inherited keys, only ACP-specific (terminal)
         if extra_agents:
             for name, cmd in extra_agents.items():
                 registry[name] = AcpAdapter(

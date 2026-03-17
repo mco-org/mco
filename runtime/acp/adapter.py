@@ -71,6 +71,7 @@ class AcpAdapter:
         binary_name: str,
         acp_command: Optional[List[str]] = None,
         capability_set: Optional[CapabilitySet] = None,
+        permission_keys: Optional[List[str]] = None,
     ) -> None:
         self.id = provider_id
         self._binary_name = binary_name
@@ -84,6 +85,9 @@ class AcpAdapter:
             min_supported_version="0.1",
             tested_os=["macos", "linux"],
         )
+        # "terminal" is always available as an ACP-specific key;
+        # other keys are inherited from the underlying provider.
+        self._permission_keys = list(permission_keys or []) + ["terminal"]
         self._runs: Dict[str, _AcpRunHandle] = {}
 
     def detect(self) -> ProviderPresence:
@@ -114,7 +118,7 @@ class AcpAdapter:
         return self._capability_set
 
     def supported_permission_keys(self) -> List[str]:
-        return ["permission_mode", "terminal"]
+        return list(self._permission_keys)
 
     def run(self, input_task: TaskInput) -> TaskRunRef:
         """Start an ACP session and send the prompt."""
