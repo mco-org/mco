@@ -21,21 +21,30 @@ def adapter_registry(
     if transport == "acp":
         from ..acp.adapter import AcpAdapter, _ACP_COMMANDS
 
-        # Permission keys each provider's shim adapter declares.
-        # ACP adapters inherit these so strict enforcement stays consistent.
-        _SHIM_PERMISSION_KEYS: Dict[str, List[str]] = {
-            "claude": ClaudeAdapter().supported_permission_keys(),
-            "codex": CodexAdapter().supported_permission_keys(),
+        # Permission keys + CLI flags each provider's shim adapter supports.
+        # ACP adapters inherit these so strict enforcement stays consistent,
+        # and the flags are actually passed to the agent binary at launch.
+        _PROVIDER_PERMISSIONS: Dict[str, Dict[str, Any]] = {
+            "claude": {
+                "keys": ClaudeAdapter().supported_permission_keys(),
+                "flags": {"permission_mode": "--permission-mode"},
+            },
+            "codex": {
+                "keys": CodexAdapter().supported_permission_keys(),
+                "flags": {"sandbox": "--sandbox"},
+            },
         }
 
         registry: Dict[str, Any] = {}
         # Built-in ACP providers
         for provider_id, acp_cmd in _ACP_COMMANDS.items():
+            perm_info = _PROVIDER_PERMISSIONS.get(provider_id, {})
             registry[provider_id] = AcpAdapter(
                 provider_id=provider_id,
                 binary_name=acp_cmd[0],
                 acp_command=acp_cmd,
-                permission_keys=_SHIM_PERMISSION_KEYS.get(provider_id, []),
+                permission_keys=perm_info.get("keys", []),
+                permission_flags=perm_info.get("flags", {}),
             )
         # Custom agents — no inherited keys, only ACP-specific (terminal)
         if extra_agents:

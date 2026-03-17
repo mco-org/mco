@@ -52,6 +52,22 @@ class TestAcpPermissionKeys(unittest.TestCase):
         keys = reg["mybot"].supported_permission_keys()
         self.assertEqual(keys, ["terminal"])
 
+    def test_claude_acp_has_permission_mode_flag(self) -> None:
+        """claude ACP adapter should map permission_mode to --permission-mode CLI flag."""
+        reg = adapter_registry(transport="acp")
+        claude = reg.get("claude")
+        if claude is None:
+            self.skipTest("claude not in ACP registry")
+        self.assertEqual(claude._permission_flags.get("permission_mode"), "--permission-mode")
+
+    def test_codex_acp_has_sandbox_flag(self) -> None:
+        """codex ACP adapter should map sandbox to --sandbox CLI flag."""
+        reg = adapter_registry(transport="acp")
+        codex = reg.get("codex")
+        if codex is None:
+            self.skipTest("codex not in ACP registry")
+        self.assertEqual(codex._permission_flags.get("sandbox"), "--sandbox")
+
 
 class TestCustomAgentRegistry(unittest.TestCase):
     def test_extra_agent_injected(self) -> None:

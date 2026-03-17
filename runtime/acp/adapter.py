@@ -72,6 +72,7 @@ class AcpAdapter:
         acp_command: Optional[List[str]] = None,
         capability_set: Optional[CapabilitySet] = None,
         permission_keys: Optional[List[str]] = None,
+        permission_flags: Optional[Dict[str, str]] = None,
     ) -> None:
         self.id = provider_id
         self._binary_name = binary_name
@@ -88,6 +89,9 @@ class AcpAdapter:
         # "terminal" is always available as an ACP-specific key;
         # other keys are inherited from the underlying provider.
         self._permission_keys = list(permission_keys or []) + ["terminal"]
+        # Maps permission key -> CLI flag name for the agent binary.
+        # e.g. {"permission_mode": "--permission-mode", "sandbox": "--sandbox"}
+        self._permission_flags = permission_flags or {}
         self._runs: Dict[str, _AcpRunHandle] = {}
 
     def detect(self) -> ProviderPresence:
@@ -133,16 +137,23 @@ class AcpAdapter:
         stderr_path = str(paths["raw_dir"] / "{}.stderr.log".format(self.id))
         run_id = "{}-acp-{}".format(self.id, uuid.uuid4().hex[:12])
 
-        client = AcpClient(
-            command=self._acp_command,
-            cwd=input_task.repo_root,
-            stderr_path=stderr_path,
-        )
-
         # Extract allow_paths and permissions from task metadata
         allow_paths = input_task.metadata.get("allow_paths", [])
         provider_perms = input_task.metadata.get("provider_permissions", {})
         enable_terminal = provider_perms.get("terminal", "") != ""
+
+        # Build ACP command with permission flags applied
+        acp_cmd = list(self._acp_command)
+        for perm_key, cli_flag in self._permission_flags.items():
+            value = provider_perms.get(perm_key)
+            if isinstance(value, str) and value.strip():
+                acp_cmd.extend([cli_flag, value.strip()])
+
+        client = AcpClient(
+            command=acp_cmd,
+            cwd=input_task.repo_root,
+            stderr_path=stderr_path,
+        )
 
         try:
             client.start(allow_paths=allow_paths, enable_terminal=enable_terminal)
