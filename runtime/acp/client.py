@@ -5,6 +5,7 @@ management, prompt dispatch, and cancellation.
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -40,6 +41,52 @@ class SessionUpdate:
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
+class ContentAccumulator:
+    """Accumulates typed ACP content blocks with structured rendering."""
+
+    def __init__(self) -> None:
+        self._blocks: List[Dict[str, Any]] = []
+
+    def add_block(self, block: Dict[str, Any]) -> None:
+        self._blocks.append(block)
+
+    def clear(self) -> None:
+        self._blocks.clear()
+
+    def collect_text(self) -> str:
+        """Return only text-type content (backward compatible)."""
+        parts = []
+        for b in self._blocks:
+            if b.get("type") == "text" and b.get("text"):
+                parts.append(b["text"])
+        return "\n".join(parts)
+
+    def collect_rendered(self) -> str:
+        """Return all content with type labels for human reading."""
+        parts: List[str] = []
+        for b in self._blocks:
+            btype = b.get("type", "unknown")
+            if btype == "text":
+                parts.append(b.get("text", ""))
+            elif btype == "thinking":
+                parts.append("[Thinking] {}".format(b.get("text", "")))
+            elif btype == "tool_call":
+                name = b.get("name", "unknown")
+                args = b.get("arguments", {})
+                parts.append("[Tool: {}] {}".format(name, json.dumps(args)))
+            elif btype == "tool_result":
+                parts.append("[Tool Result] {}".format(b.get("output", "")))
+            elif btype == "diff":
+                path = b.get("path", "")
+                content = b.get("content", "")
+                parts.append("[Diff: {}]\n{}".format(path, content))
+            else:
+                text = b.get("text", "") or b.get("content", "")
+                if text:
+                    parts.append("[{}] {}".format(btype, text))
+        return "\n".join(parts)
+
+
 class AcpClient:
     """Client for the Agent Client Protocol (JSON-RPC over stdio).
 
@@ -70,7 +117,7 @@ class AcpClient:
         self._stderr_path = stderr_path
         self._transport = JsonRpcTransport()
         self._agent_info: Optional[AgentInfo] = None
-        self._accumulated_text: List[str] = []
+        self._accumulator = ContentAccumulator()
         self._session_state: str = ""
 
     @property
@@ -85,13 +132,46 @@ class AcpClient:
     def agent_info(self) -> Optional[AgentInfo]:
         return self._agent_info
 
-    def start(self) -> None:
-        """Spawn the agent subprocess."""
+    def start(self, allow_paths: Optional[List[str]] = None) -> None:
+        """Spawn the agent subprocess and register fs/terminal handlers."""
         self._transport.start(
             command=self._command,
             cwd=self._cwd,
             env=self._env,
             stderr_path=self._stderr_path,
+        )
+        # Register ACP request handlers for bidirectional communication
+        from .handlers import handle_fs_read, handle_fs_write, TerminalManager
+        paths = allow_paths or ["."]
+        cwd = self._cwd
+        self._terminal_manager = TerminalManager(cwd)
+        self._transport.register_handler(
+            "fs/read_text_file",
+            lambda params: handle_fs_read(params, cwd, paths),
+        )
+        self._transport.register_handler(
+            "fs/write_text_file",
+            lambda params: handle_fs_write(params, cwd, paths),
+        )
+        self._transport.register_handler(
+            "terminal/create",
+            lambda params: {"terminalId": self._terminal_manager.create(params.get("command", ""))},
+        )
+        self._transport.register_handler(
+            "terminal/output",
+            lambda params: {"output": self._terminal_manager.output(params.get("terminalId", ""))},
+        )
+        self._transport.register_handler(
+            "terminal/wait_for_exit",
+            lambda params: {"exitCode": self._terminal_manager.wait_for_exit(params.get("terminalId", ""))},
+        )
+        self._transport.register_handler(
+            "terminal/kill",
+            lambda params: (self._terminal_manager.kill(params.get("terminalId", "")), {})[1],
+        )
+        self._transport.register_handler(
+            "terminal/release",
+            lambda params: (self._terminal_manager.release(params.get("terminalId", "")), {})[1],
         )
 
     def initialize(self, timeout: float = 30.0) -> AgentInfo:
@@ -148,7 +228,7 @@ class AcpClient:
         reaches "idle" (or drain window expires). This handles the case where
         the RPC response arrives before the final session/update notification.
         """
-        self._accumulated_text.clear()
+        self._accumulator.clear()
         self._session_state = "working"
 
         self._transport.send_request(
@@ -202,10 +282,9 @@ class AcpClient:
             raw=msg,
         )
 
-        # Accumulate text content
+        # Accumulate content blocks
         for block in update.content:
-            if block.get("type") == "text" and block.get("text"):
-                self._accumulated_text.append(block["text"])
+            self._accumulator.add_block(block)
 
         if update.state:
             self._session_state = update.state
@@ -214,7 +293,11 @@ class AcpClient:
 
     def collect_text(self) -> str:
         """Return all accumulated text from session/update notifications."""
-        return "\n".join(self._accumulated_text)
+        return self._accumulator.collect_text()
+
+    def collect_rendered(self) -> str:
+        """Return all accumulated content with type labels for human display."""
+        return self._accumulator.collect_rendered()
 
     def drain_updates(self) -> List[SessionUpdate]:
         """Drain all pending session/update notifications."""
@@ -228,4 +311,6 @@ class AcpClient:
 
     def close(self) -> None:
         """Shut down the agent process."""
+        if hasattr(self, "_terminal_manager"):
+            self._terminal_manager.close_all()
         self._transport.close()

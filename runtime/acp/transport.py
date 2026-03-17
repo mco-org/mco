@@ -45,6 +45,7 @@ class JsonRpcTransport:
         self._pending: Dict[int, threading.Event] = {}
         self._results: Dict[int, Dict[str, Any]] = {}
         self._notifications: queue.Queue[Dict[str, Any]] = queue.Queue()
+        self._request_handlers: Dict[str, Any] = {}
         self._reader_thread: Optional[threading.Thread] = None
         self._running = False
         self._stderr_path: Optional[str] = None
@@ -99,6 +100,10 @@ class JsonRpcTransport:
         )
         self._reader_thread.start()
 
+    def register_handler(self, method: str, handler) -> None:
+        """Register a handler for incoming requests from the agent."""
+        self._request_handlers[method] = handler
+
     def _read_loop(self) -> None:
         """Background thread: read NDJSON from stdout, route to pending or notifications."""
         assert self._process is not None
@@ -115,11 +120,29 @@ class JsonRpcTransport:
 
                 msg_id = msg.get("id")
                 if msg_id is not None and msg_id in self._pending:
-                    # Response to a request
+                    # Response to our request
                     self._results[msg_id] = msg
                     self._pending[msg_id].set()
+                elif msg_id is not None and "method" in msg:
+                    # Incoming request from agent — dispatch to handler
+                    method = msg["method"]
+                    handler = self._request_handlers.get(method)
+                    if handler:
+                        try:
+                            result = handler(msg.get("params", {}))
+                            response = {"jsonrpc": "2.0", "id": msg_id, "result": result}
+                        except Exception as exc:
+                            response = {"jsonrpc": "2.0", "id": msg_id, "error": {
+                                "code": -32603, "message": str(exc),
+                            }}
+                        self._write(response)
+                    else:
+                        response = {"jsonrpc": "2.0", "id": msg_id, "error": {
+                            "code": -32601, "message": "Method not found: {}".format(method),
+                        }}
+                        self._write(response)
                 else:
-                    # Notification or unsolicited message
+                    # Notification
                     self._notifications.put(msg)
         except (ValueError, OSError):
             pass
