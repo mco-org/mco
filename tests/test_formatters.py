@@ -13,6 +13,7 @@ class FormatterTests(unittest.TestCase):
             "provider_success_count": 2,
             "provider_failure_count": 0,
             "findings_count": 1,
+            "division_strategy": "files",
         }
         findings = [
             {
@@ -21,6 +22,10 @@ class FormatterTests(unittest.TestCase):
                 "title": "Unsafe | shell usage",
                 "recommendation": "Use allowlist\nand avoid interpolation",
                 "confidence": 0.8,
+                "consensus_level": "confirmed",
+                "consensus_score": 0.8,
+                "detected_by": ["claude", "codex"],
+                "source_scopes": ["claude=files:src/a.py", "codex=files:src/b.py"],
                 "evidence": {"file": "a.py", "line": 10, "snippet": "x"},
             }
         ]
@@ -29,6 +34,10 @@ class FormatterTests(unittest.TestCase):
         self.assertIn("Unsafe \\| shell usage", text)
         self.assertIn("allowlist<br>and avoid interpolation", text)
         self.assertIn("`a.py:10`", text)
+        self.assertIn("confirmed", text)
+        self.assertIn("score=0.80", text)
+        self.assertIn("Source Scope", text)
+        self.assertIn("claude=files:src/a.py", text)
 
     def test_markdown_pr_handles_empty_findings(self) -> None:
         payload = {
@@ -50,6 +59,8 @@ class FormatterTests(unittest.TestCase):
                 "title": "Unsafe shell",
                 "recommendation": "Use allowlist",
                 "confidence": 0.9,
+                "consensus_level": "confirmed",
+                "consensus_score": 0.6,
                 "fingerprint": "fp-1",
                 "detected_by": ["claude", "qwen"],
                 "evidence": {"file": "runtime/cli.py", "line": 12, "snippet": "os.system(x)"},
@@ -67,6 +78,8 @@ class FormatterTests(unittest.TestCase):
             "runtime/cli.py",
         )
         self.assertEqual(results[0]["properties"]["detected_by"], ["claude", "qwen"])  # type: ignore[index]
+        self.assertEqual(results[0]["properties"]["confidence"], 0.6)  # type: ignore[index]
+        self.assertEqual(results[0]["properties"]["consensus_level"], "confirmed")  # type: ignore[index]
 
     def test_sarif_handles_empty_findings(self) -> None:
         sarif = format_sarif({"decision": "PASS", "terminal_state": "COMPLETED", "findings_count": 0}, [])

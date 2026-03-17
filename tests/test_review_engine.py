@@ -11,7 +11,15 @@ from pathlib import Path
 from runtime.adapters.parsing import normalize_findings_from_text
 from runtime.config import ReviewPolicy
 from runtime.contracts import CapabilitySet, NormalizeContext, ProviderPresence, TaskInput, TaskRunRef, TaskStatus
-from runtime.review_engine import ReviewRequest, run_review
+from runtime.review_engine import (
+    ReviewRequest,
+    _agreement_ratio,
+    _apply_debate_results,
+    _build_debate_prompt,
+    _consensus_level,
+    _parse_debate_votes,
+    run_review,
+)
 
 
 @dataclass
@@ -182,6 +190,85 @@ class UnavailableFakeAdapter(FakeAdapter):
             auth_ok=False,
             reason=self._reason,
         )
+
+
+class ConsensusAlgorithmTests(unittest.TestCase):
+    def test_agreement_ratio_uses_total_providers_ran(self) -> None:
+        self.assertEqual(_agreement_ratio(2, 4), 0.5)
+        self.assertAlmostEqual(_agreement_ratio(1, 3), 1 / 3)
+
+    def test_consensus_level_boundaries(self) -> None:
+        self.assertEqual(_consensus_level(2, 4), "confirmed")
+        self.assertEqual(_consensus_level(2, 5), "needs-verification")
+        self.assertEqual(_consensus_level(1, 3), "unverified")
+        self.assertEqual(_consensus_level(1, 1), "unverified")
+
+    def test_build_debate_prompt_lists_findings(self) -> None:
+        prompt = _build_debate_prompt(
+            "Review this code.",
+            "codex",
+            [
+                {
+                    "title": "SQL injection",
+                    "severity": "high",
+                    "category": "security",
+                    "recommendation": "Use parameters",
+                    "detected_by": ["claude"],
+                    "evidence": {"file": "db.py", "line": 42},
+                }
+            ],
+        )
+        self.assertIn("You are reviewing findings from other agents", prompt)
+        self.assertIn("Finding 1: SQL injection at db.py:42 (reported by claude)", prompt)
+        self.assertIn("Your verdict: AGREE|DISAGREE|REFINE", prompt)
+
+    def test_parse_debate_votes_extracts_verdicts_and_reasons(self) -> None:
+        output = (
+            "Finding 1: SQL injection at db.py:42 (reported by claude)\n"
+            "Your verdict: AGREE\n"
+            "Reason: Reproduced from the query construction.\n\n"
+            "Finding 2: Cache stampede at cache.py:8 (reported by qwen)\n"
+            "Your verdict: REFINE\n"
+            "Reason: Issue exists, but severity should be medium.\n"
+        )
+        votes = _parse_debate_votes(output, expected_count=2)
+        self.assertEqual(len(votes), 2)
+        self.assertEqual(votes[0]["verdict"], "AGREE")
+        self.assertEqual(votes[1]["verdict"], "REFINE")
+        self.assertIn("severity should be medium", votes[1]["reason"])
+
+    def test_apply_debate_results_updates_score_and_refined_flag(self) -> None:
+        findings = [
+            {
+                "title": "SQL injection",
+                "category": "security",
+                "severity": "high",
+                "confidence": 0.8,
+                "fingerprint": "fp-1",
+                "detected_by": ["claude"],
+                "consensus_score": 0.4,
+                "consensus_level": "needs-verification",
+                "evidence": {"file": "db.py", "line": 42},
+            }
+        ]
+        debate_round = {
+            "findings": [
+                {
+                    "finding_key": "fp-1",
+                    "consensus_score_before": 0.4,
+                    "consensus_level_before": "needs-verification",
+                    "votes": [
+                        {"provider": "codex", "verdict": "AGREE", "reason": "Confirmed"},
+                        {"provider": "gemini", "verdict": "REFINE", "reason": "Narrow scope"},
+                    ],
+                    "vote_summary": {"agree": 1, "disagree": 0, "refine": 1},
+                }
+            ]
+        }
+        updated = _apply_debate_results(findings, debate_round, total_providers_ran=2)
+        self.assertEqual(updated[0]["consensus_level"], "confirmed")
+        self.assertEqual(updated[0]["consensus_score"], 0.8)
+        self.assertEqual(updated[0]["debate"]["refined"], True)
 
 
 class ReviewEngineTests(unittest.TestCase):
@@ -406,7 +493,7 @@ class ReviewEngineTests(unittest.TestCase):
                 "claude",
                 [
                     "First response from claude",
-                    "## Consensus\nMost providers agree on scope.\n## Divergence\nMinor phrasing differences.\n## Recommended Next Steps\nImplement and validate.",
+                    "## Consensus\nConfirmed findings are aligned.\n## Divergence\nOne provider omitted detail.\n## Recommended Next Steps\nImplement and validate.",
                 ],
             )
             qwen = FakeAdapter("qwen", "Response from qwen")
@@ -424,11 +511,43 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(synthesis.get("provider"), "claude")
             self.assertEqual(synthesis.get("success"), True)
             self.assertEqual(synthesis.get("reason"), "ok")
-            self.assertIn("## Consensus", str(synthesis.get("text", "")))
+            self.assertEqual(synthesis.get("has_consensus_fallback"), False)
+            self.assertIn("## Consensus Analysis", str(synthesis.get("text", "")))
+            self.assertIn("## Agent Narrative", str(synthesis.get("text", "")))
+            self.assertIn("consensus_level", claude.received_prompts[1])
             self.assertEqual(claude.runs, 2)
             self.assertEqual(qwen.runs, 1)
             self.assertGreaterEqual(len(claude.received_prompts), 2)
             self.assertIn("You are synthesizing outputs from multiple coding agents", claude.received_prompts[1])
+
+    def test_synthesis_failure_uses_consensus_fallback_and_reports_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = SequencedFakeAdapter(
+                "claude",
+                [
+                    "First response from claude",
+                    "",
+                ],
+            )
+            qwen = FakeAdapter("qwen", "Response from qwen")
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="summarize",
+                providers=["claude", "qwen"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+                synthesize=True,
+            )
+            result = run_review(req, adapters={"claude": claude, "qwen": qwen}, review_mode=False, write_artifacts=False)
+            self.assertIsNotNone(result.synthesis)
+            synthesis = result.synthesis or {}
+            self.assertEqual(synthesis.get("provider"), "claude")
+            self.assertEqual(synthesis.get("success"), False)
+            self.assertEqual(synthesis.get("reason"), "empty_final_text")
+            self.assertEqual(synthesis.get("has_consensus_fallback"), True)
+            self.assertIn("## Consensus Analysis", str(synthesis.get("text", "")))
+            self.assertNotIn("## Agent Narrative", str(synthesis.get("text", "")))
+            self.assertEqual((synthesis.get("narrative") or {}).get("success"), False)
 
     def test_synthesis_honors_explicit_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -495,6 +614,7 @@ class ReviewEngineTests(unittest.TestCase):
             run_payload = json.loads(Path(result.artifact_root or "", "run.json").read_text(encoding="utf-8"))
             self.assertIn("synthesis", run_payload)
             self.assertEqual(run_payload["synthesis"].get("provider"), "claude")
+            self.assertEqual(run_payload["consensus_summary"]["provider_count"], 1)
 
     def test_wait_all_keeps_fast_provider_when_other_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -555,11 +675,181 @@ class ReviewEngineTests(unittest.TestCase):
             merged = result.findings[0]
             self.assertEqual(merged.get("detected_by"), ["claude", "qwen"])
             self.assertEqual(merged.get("confidence"), 0.9)
+            self.assertEqual(merged.get("consensus_level"), "confirmed")
+            self.assertEqual(merged.get("consensus_score"), 0.9)
 
             findings_path = Path(result.artifact_root or "", "findings.json")
             payload = json.loads(findings_path.read_text(encoding="utf-8"))
             self.assertEqual(len(payload), 1)
             self.assertEqual(payload[0].get("detected_by"), ["claude", "qwen"])
+            self.assertEqual(payload[0].get("consensus_level"), "confirmed")
+
+    def test_review_assigns_needs_verification_when_two_of_five_providers_agree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shared = (
+                '{"findings":[{"finding_id":"f1","severity":"medium","category":"bug","title":"Shared issue",'
+                '"evidence":{"file":"runtime/cli.py","line":123,"snippet":"x"},"recommendation":"fix",'
+                '"confidence":0.8,"fingerprint":"fp1"}]}'
+            )
+            empty = '{"findings":[]}'
+            adapters = {
+                "claude": FakeAdapter("claude", shared),
+                "codex": FakeAdapter("codex", shared),
+                "gemini": FakeAdapter("gemini", empty),
+                "qwen": FakeAdapter("qwen", empty),
+                "opencode": FakeAdapter("opencode", empty),
+            }
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude", "codex", "gemini", "qwen", "opencode"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=True),
+            )
+            result = run_review(req, adapters=adapters)
+            merged = result.findings[0]
+            self.assertEqual(merged.get("consensus_level"), "needs-verification")
+            self.assertEqual(merged.get("consensus_score"), 0.32)
+
+    def test_stream_emits_consensus_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            events: list[dict] = []
+            claude = FakeAdapter(
+                "claude",
+                '{"findings":[{"finding_id":"f1","severity":"high","category":"bug","title":"Issue",'
+                '"evidence":{"file":"a.py","line":1,"snippet":"x"},"recommendation":"fix",'
+                '"confidence":0.7,"fingerprint":"fp1"}]}',
+            )
+            codex = FakeAdapter("codex", '{"findings":[]}')
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude", "codex"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=True),
+                stream_callback=events.append,
+            )
+            run_review(req, adapters={"claude": claude, "codex": codex}, write_artifacts=False)
+            consensus_event = [event for event in events if event["type"] == "consensus"][0]
+            self.assertEqual(consensus_event["provider_count"], 2)
+            self.assertEqual(consensus_event["level_counts"]["unverified"], 1)
+
+    def test_debate_round_adjusts_consensus_and_is_written_to_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = FakeAdapter(
+                "claude",
+                '{"findings":[{"finding_id":"f1","severity":"high","category":"security","title":"SQL injection",'
+                '"evidence":{"file":"db.py","line":42,"snippet":"query"},"recommendation":"fix",'
+                '"confidence":0.8,"fingerprint":"fp1"}]}',
+            )
+            codex = SequencedFakeAdapter(
+                "codex",
+                [
+                    '{"findings":[]}',
+                    "Finding 1: SQL injection at db.py:42 (reported by claude)\n"
+                    "Your verdict: AGREE\n"
+                    "Reason: Confirmed the unparameterized query path.\n",
+                ],
+            )
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude", "codex"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=True, debate=True),
+            )
+            result = run_review(req, adapters={"claude": claude, "codex": codex}, write_artifacts=False)
+            self.assertIsNotNone(result.debate_round)
+            self.assertEqual(result.findings[0]["consensus_score"], 0.8)
+            self.assertEqual(result.findings[0]["consensus_level"], "confirmed")
+            debate_round = result.debate_round or {}
+            self.assertIn("codex", debate_round.get("providers", {}))
+            finding_summary = debate_round.get("findings", [])[0]
+            self.assertEqual(finding_summary["vote_summary"]["agree"], 1)
+
+    def test_debate_round_emits_stream_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            events: list[dict] = []
+            claude = FakeAdapter(
+                "claude",
+                '{"findings":[{"finding_id":"f1","severity":"medium","category":"bug","title":"Issue",'
+                '"evidence":{"file":"a.py","line":1,"snippet":"x"},"recommendation":"fix",'
+                '"confidence":0.6,"fingerprint":"fp1"}]}',
+            )
+            codex = SequencedFakeAdapter(
+                "codex",
+                [
+                    '{"findings":[]}',
+                    "Finding 1: Issue at a.py:1 (reported by claude)\nYour verdict: DISAGREE\nReason: Could not reproduce.\n",
+                ],
+            )
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude", "codex"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=True, debate=True),
+                stream_callback=events.append,
+            )
+            run_review(req, adapters={"claude": claude, "codex": codex}, write_artifacts=False)
+            event_types = [event["type"] for event in events]
+            self.assertIn("debate_started", event_types)
+            self.assertIn("debate_finished", event_types)
+            result_event = [event for event in events if event["type"] == "result"][0]
+            self.assertIn("debate_round", result_event)
+
+    def test_debate_round_is_skipped_for_single_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            events: list[dict] = []
+            claude = SequencedFakeAdapter(
+                "claude",
+                [
+                    '{"findings":[{"finding_id":"f1","severity":"medium","category":"bug","title":"Issue",'
+                    '"evidence":{"file":"a.py","line":1,"snippet":"x"},"recommendation":"fix",'
+                    '"confidence":0.6,"fingerprint":"fp1"}]}',
+                    "Finding 1: should never run",
+                ],
+            )
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=True, debate=True),
+                stream_callback=events.append,
+            )
+            result = run_review(req, adapters={"claude": claude}, write_artifacts=False)
+            self.assertIsNone(result.debate_round)
+            self.assertEqual(claude.runs, 1)
+            event_types = [event["type"] for event in events]
+            self.assertNotIn("debate_started", event_types)
+            self.assertNotIn("debate_finished", event_types)
+
+    def test_consensus_score_is_zero_when_confidence_is_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude = FakeAdapter(
+                "claude",
+                '{"findings":[{"finding_id":"f1","severity":"high","category":"bug","title":"Zero confidence",'
+                '"evidence":{"file":"a.py","line":1,"snippet":"x"},"recommendation":"fix",'
+                '"confidence":0.0,"fingerprint":"fp1"}]}',
+            )
+            codex = FakeAdapter(
+                "codex",
+                '{"findings":[{"finding_id":"f2","severity":"high","category":"bug","title":"Zero confidence",'
+                '"evidence":{"file":"a.py","line":1,"snippet":"x"},"recommendation":"fix",'
+                '"confidence":0.0,"fingerprint":"fp2"}]}',
+            )
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude", "codex"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=True),
+            )
+            result = run_review(req, adapters={"claude": claude, "codex": codex}, write_artifacts=False)
+            self.assertEqual(result.findings_count, 1)
+            self.assertEqual(result.findings[0]["consensus_score"], 0.0)
+            self.assertEqual(result.findings[0]["consensus_level"], "confirmed")
 
     def test_progress_output_prevents_stall_timeout_in_run_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

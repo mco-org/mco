@@ -107,8 +107,12 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Agent-to-agent orchestration** — agents can dispatch tasks to other agents through MCO
 - **Dual mode** — `mco review` for structured code review findings, `mco run` for general task execution
 - **Cross-agent deduplication** — identical findings from multiple agents are merged automatically with `detected_by` provenance
+- **Consensus engine** — merged findings get `consensus_score = agreement_ratio × max_confidence` plus `confirmed` / `needs-verification` / `unverified` consensus levels
 - **Cross-session memory** — `--memory` flag persists findings and agent scores via [evermemos-mcp](https://pypi.org/project/evermemos-mcp/), building institutional knowledge across runs
 - **LLM synthesis** — `--synthesize` runs an extra pass to produce consensus/divergence summary across all agents
+- **Live terminal streaming** — `--stream live` renders rich real-time terminal progress; `--stream jsonl` remains available for machine consumers
+- **Debate mode** — `--debate` adds a second challenge round where agents critique the merged findings before final ranking
+- **Divide mode** — `--divide files|dimensions` splits review work by file slices or review dimensions while preserving the existing merge + consensus pipeline
 - **CI/CD integration** — `--format sarif` for GitHub Code Scanning, `--format markdown-pr` for PR comments
 - **Environment health check** — `mco doctor` probes binary presence, version, and auth status for all providers
 - **Token usage tracking** — `--include-token-usage` for best-effort per-agent and aggregate token consumption
@@ -116,6 +120,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Stateful sessions** — `mco session` for persistent multi-turn conversations with prompt queue and cancellation
 - **ACP transport** — `--transport acp` for structured JSON-RPC communication via the Agent Client Protocol
 - **Custom ACP agents** — `--agent NAME COMMAND` to register any ACP-compatible binary as a provider
+- **Custom agent registry** — `.mco/agents.yaml`, `.mcorc.yaml`, or `~/.mco/agents.yaml` can register shim, ACP, or Ollama-backed agents; inspect them with `mco agent list` / `mco agent check`
 - **Flexible prompt input** — `--file path`, `--file -` (stdin), or piped input for non-interactive workflows
 - **Quiet mode** — `--quiet` for pipe-friendly output (final text only, no headers)
 - **Config files** — `.mcorc.json` (project) and `~/.mco/config.json` (global) for persistent defaults
@@ -129,6 +134,17 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **ACP bidirectional handlers** — agents can read/write files and run terminal commands through MCO
 - **Extensible adapter contract** — uniform interface for any CLI agent, not limited to built-in providers
 - **Machine-readable output** — JSON, SARIF, or Markdown output for downstream automation
+
+## What's New in v0.9
+
+- **Consensus Engine** — findings are no longer just deduplicated. Each merged finding now carries:
+  - `agreement_ratio = detected_by_count / total_providers_ran`
+  - `consensus_score = agreement_ratio × max_confidence`
+  - `consensus_level = confirmed | needs-verification | unverified`
+- **Real-time terminal mode** — `--stream live` adds a human-friendly TTY renderer while preserving `--stream jsonl` for automation.
+- **Debate round** — `--debate` asks providers to challenge or refine merged findings before the final output.
+- **Divide mode** — `--divide files` balances file ownership across providers; `--divide dimensions` assigns providers to security, performance, maintainability, correctness, and error-handling perspectives.
+- **Custom agent registry** — MCO can now discover custom agents from `.mco/agents.yaml` / `~/.mco/agents.yaml`, including Ollama-backed local models.
 
 ## Built-in Providers
 
@@ -151,16 +167,20 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Architecture analysis | `mco run --providers claude,gemini,qwen` | Multi-perspective architecture assessment |
 | Pre-deploy health check | `mco doctor --json` | Verify all agents are installed and authenticated |
 | Consensus decision | `mco review --synthesize` | Summarize what agents agree on and where they diverge |
+| Debate findings | `mco review --debate --providers claude,codex,gemini` | Run an extra challenge round before final ranking |
+| File division review | `mco review --divide files` | Split changed files across providers, balanced by file size |
+| Dimension division review | `mco review --divide dimensions` | Give each provider a dedicated review dimension |
 | Persistent code review | `mco review --memory` | Findings accumulate across runs; agents learn what's already been flagged |
 | Diff-only review | `mco review --diff` | Review only changed files vs main branch |
 | Staged changes review | `mco review --staged` | Review only git staged changes |
 | Real-time event stream | `mco review --stream jsonl` | JSONL events to stdout as providers execute |
+| Live terminal stream | `mco review --stream live` | Rich terminal progress view for interactive TTY sessions |
 | Multi-turn session | `mco session start --provider claude` | Persistent session with conversation history |
 | Cancel running prompt | `mco session cancel my-review` | Interrupt running + queued prompts immediately |
 | Queue status | `mco session queue my-review` | Show running request ID and queue depth |
 | Multi-session broadcast | `mco session broadcast "prompt"` | Fan out to all active sessions, aggregate results |
 | ACP transport | `mco run --transport acp --providers claude` | Structured JSON-RPC communication with ACP agents |
-| Custom ACP agent | `mco run --agent mybot "mybot --acp" --transport acp` | Register and run a custom ACP agent |
+| Custom ACP agent | `mco run --agent mybot "mybot --acp"` | Register a temporary ACP-compatible agent; works with `shim` or `acp` transport |
 | Prompt from file | `mco review --file prompt.md --providers claude` | Read prompt from a file instead of inline |
 | Piped prompt | `cat prompt.md \| mco run --providers claude` | Read prompt from stdin pipe |
 | Quiet output | `mco run --quiet --providers claude --prompt "..."` | Print only final text, no headers |
@@ -170,6 +190,8 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Retrieve async result | `mco session result dev 42` | Get result of a previously queued nowait request |
 | Chain analysis | `mco review --chain --providers claude,codex` | Claude analyzes first, Codex challenges and supplements |
 | Perspective assignment | `mco review --perspectives-json '{"claude":"security","codex":"performance"}'` | Each provider focuses on a different review area |
+| List custom agents | `mco agent list` | Show built-in + configured custom agents |
+| Check one custom agent | `mco agent check my-ollama` | Validate one configured agent or Ollama model wrapper |
 
 ## Quick Start
 
@@ -250,6 +272,39 @@ mco doctor --json
 | SARIF 2.1.0 | `--format sarif` | Upload to GitHub Code Scanning |
 | Machine JSON | `--json` | Downstream automation |
 
+### Consensus Engine
+
+MCO v0.9 upgrades review merging from simple deduplication into a consensus analysis layer:
+
+- `agreement_ratio = detected_by_count / total_providers_ran`
+- `consensus_score = agreement_ratio × max_confidence`
+- `consensus_level = confirmed | needs-verification | unverified`
+
+Meaning of each level:
+
+- `confirmed` — at least 50% of providers reported the finding
+- `needs-verification` — 2+ providers reported it, but under 50% agreement
+- `unverified` — only one provider reported it
+
+Outputs now surface this consistently:
+
+- **JSON** — each finding includes `consensus_score` and `consensus_level`
+- **SARIF** — `confidence` is mapped from `consensus_score`
+- **Markdown** — findings are grouped by consensus level
+- **Chain mode** — confirmed findings are rendered as `confirmed-by` instead of `agree`
+
+### Review Coordination Modes
+
+| Mode | Flag | What it does |
+|------|------|--------------|
+| Parallel | default | All providers review the same scope independently |
+| Chain | `--chain` | Run providers sequentially; each sees prior analysis |
+| Debate | `--debate` | Run a second challenge round on merged findings |
+| Divide by files | `--divide files` | Evenly distribute files across providers, prioritizing large files first |
+| Divide by dimensions | `--divide dimensions` | Keep the same file scope, but assign each provider a review dimension |
+
+`--divide` is mutually exclusive with `--chain` and `--debate`.
+
 ### Result Modes
 
 | Mode | Behavior |
@@ -308,12 +363,14 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | `--staged` | off | Review only staged changes |
 | `--unstaged` | off | Review only unstaged working tree changes |
 | `--diff-base` | auto | Git ref for branch diff (e.g. `origin/main`, `HEAD~3`). Implies `--diff` |
-| `--stream` | off | `jsonl` — output real-time JSONL event stream to stdout |
+| `--stream` | off | `jsonl` for machine-readable events, `live` for interactive terminal rendering |
 | `--transport` | `shim` | `shim` (stdout parsing) or `acp` (Agent Client Protocol JSON-RPC) |
-| `--agent` | unset | Custom ACP agent: `--agent NAME "command"`. Requires `--transport acp` |
+| `--agent` | unset | Temporary custom ACP agent: `--agent NAME "command"`. Works with `shim` or `acp` transport |
 | `--file` | unset | Read prompt from file path, or `-` for stdin. Mutually exclusive with `--prompt` |
 | `--quiet` | off | Output only final text, no headers or formatting. Mutually exclusive with `--json`/`--stream` |
 | `--chain` | off | Run providers sequentially, feeding each output as context to the next |
+| `--debate` | off | Run a second challenge round on merged findings |
+| `--divide` | off | `files` or `dimensions` task division across providers |
 | `--perspectives-json` | unset | Per-provider review perspective JSON (e.g. `'{"claude":"security","codex":"performance"}'`) |
 
 Default provider permissions:
@@ -361,6 +418,46 @@ mco review \
 
 Run `mco review --help` for the full flag list.
 
+## Custom Agents
+
+MCO can load custom agents from:
+
+- `.mco/agents.yaml` in the repo root
+- `.mcorc.yaml` in the repo root
+- `~/.mco/agents.yaml` globally
+
+Inspect what MCO sees:
+
+```bash
+mco agent list
+mco agent check my-ollama
+```
+
+Example `.mco/agents.yaml`:
+
+```yaml
+agents:
+  - name: my-acp-agent
+    transport: acp
+    command: my-agent --acp
+    permission_keys: [sandbox]
+
+  - name: my-shim-agent
+    transport: shim
+    command: my-review-bot --json
+
+  - name: my-ollama
+    model: qwen2.5-coder:14b
+```
+
+How it works:
+
+- `transport: acp` registers a custom ACP provider
+- `transport: shim` registers a command-based shim provider
+- `model: ...` registers an Ollama-backed provider automatically
+
+This means local Ollama models can participate in the same `mco review` / `mco run` workflows as Claude, Codex, Gemini, OpenCode, and Qwen.
+
 ## Exit Codes
 
 | Code | Meaning |
@@ -379,7 +476,7 @@ You (Tech Lead)
      │
      ├─→ Claude Code  ──┐
      ├─→ Codex CLI      │
-     ├─→ Gemini CLI     ├─→ Deduplicate → Synthesize → Output
+     ├─→ Gemini CLI     ├─→ Consensus Engine → Debate / Synthesize → Output
      ├─→ OpenCode       │
      └─→ Qwen Code   ───┘
                               │

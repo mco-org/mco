@@ -85,3 +85,11 @@ class TestCustomAgentRegistry(unittest.TestCase):
         )
         self.assertIn("claude", reg)
         self.assertIn("custom", reg)
+
+    def test_extra_agent_injected_even_under_shim_transport(self) -> None:
+        reg = adapter_registry(
+            transport="shim",
+            extra_agents={"mybot": ["mybot", "--acp"]},
+        )
+        self.assertIn("mybot", reg)
+        self.assertTrue(hasattr(reg["mybot"], "_acp_command"))

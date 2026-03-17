@@ -1,13 +1,26 @@
 """Tests for structured streaming (--stream jsonl)."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import threading
 import unittest
 from unittest.mock import patch, MagicMock
 
 from runtime.config import ReviewPolicy
+from runtime.formatters import LiveStreamRenderer
 from runtime.review_engine import ReviewRequest, run_review, _emit_event, _now_iso
+
+
+class _TTYBuffer(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+class _PipeBuffer(io.StringIO):
+    def isatty(self) -> bool:
+        return False
 
 
 class TestEmitEvent(unittest.TestCase):
@@ -71,6 +84,7 @@ class TestStreamingEventSequence(unittest.TestCase):
         event_types = [e["type"] for e in events]
         # Must have run_started and result
         self.assertIn("run_started", event_types)
+        self.assertIn("consensus", event_types)
         self.assertIn("result", event_types)
         # run_started must be first
         self.assertEqual(event_types[0], "run_started")
@@ -106,6 +120,8 @@ class TestStreamingEventSequence(unittest.TestCase):
         self.assertIn("task_id", result_event)
         self.assertIn("provider_results", result_event)
         self.assertIsInstance(result_event["findings"], list)
+        consensus_event = [e for e in events if e["type"] == "consensus"][0]
+        self.assertIn("level_counts", consensus_event)
 
 
 class TestStreamingThreadSafety(unittest.TestCase):
@@ -279,6 +295,12 @@ class TestStreamCLIFlags(unittest.TestCase):
         args = parser.parse_args(["review", "--repo", ".", "--prompt", "t", "--stream", "jsonl"])
         self.assertEqual(args.stream, "jsonl")
 
+    def test_live_stream_flag_accepted(self) -> None:
+        from runtime.cli import build_parser
+        parser = build_parser()
+        args = parser.parse_args(["review", "--repo", ".", "--prompt", "t", "--stream", "live"])
+        self.assertEqual(args.stream, "live")
+
     def test_stream_and_json_rejected(self) -> None:
         from runtime.cli import main
         exit_code = main(["review", "--repo", ".", "--prompt", "t", "--stream", "jsonl", "--json"])
@@ -294,3 +316,262 @@ class TestStreamCLIFlags(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["review", "--repo", ".", "--prompt", "t"])
         self.assertIsNone(args.stream)
+
+
+class TestLiveStreamRenderer(unittest.TestCase):
+    def test_status_updates_and_provider_findings_are_rendered(self) -> None:
+        current_time = 0.0
+
+        def _clock() -> float:
+            return current_time
+
+        finding = {
+            "severity": "high",
+            "title": "Null dereference",
+            "evidence": {"file": "runtime/example.py", "line": 12},
+            "detected_by": ["claude"],
+        }
+        stdout_buf = _TTYBuffer()
+        renderer = LiveStreamRenderer(
+            stdout_buf,
+            is_tty=True,
+            clock=_clock,
+            refresh_interval_seconds=0,
+        )
+
+        renderer.handle_event({
+            "type": "run_started",
+            "providers": ["claude", "codex"],
+            "task_id": "task-1",
+            "review_mode": True,
+        })
+        renderer.handle_event({"type": "provider_started", "provider": "claude"})
+        current_time = 18.3
+        renderer.handle_event({
+            "type": "provider_finished",
+            "provider": "claude",
+            "success": True,
+            "findings_count": 1,
+            "wall_clock_seconds": 18.3,
+            "findings": [finding],
+        })
+        renderer.handle_event({
+            "type": "result",
+            "task_id": "task-1",
+            "decision": "PASS",
+            "terminal_state": "COMPLETED",
+            "findings_count": 1,
+            "findings": [finding],
+            "provider_results": {
+                "claude": {"success": True, "findings_count": 1, "wall_clock_seconds": 18.3},
+                "codex": {"success": True, "findings_count": 0, "wall_clock_seconds": 0.0},
+            },
+        })
+
+        output = stdout_buf.getvalue()
+        self.assertIn("[claude] ⏳ running... (elapsed 0.0s)", output)
+        self.assertIn("[claude] ✓ done — 1 findings (18.3s)", output)
+        self.assertIn("claude findings", output)
+        self.assertIn("HIGH", output)
+        self.assertIn("runtime/example.py:12", output)
+        self.assertIn("Final Merged Result", output)
+        self.assertIn("Consensus analysis", output)
+        self.assertIn("\x1b[", output)
+
+
+class TestLiveStreamFallback(unittest.TestCase):
+    @patch("runtime.cli.run_review")
+    def test_live_stream_downgrades_to_jsonl_on_non_tty(self, mock_run) -> None:
+        from runtime.cli import main
+        from runtime.review_engine import ReviewResult
+
+        def _fake_run(req, adapters=None, review_mode=True, write_artifacts=True):
+            assert req.stream_callback is not None
+            req.stream_callback({
+                "type": "run_started",
+                "task_id": "task-1",
+                "providers": ["claude"],
+                "review_mode": True,
+            })
+            req.stream_callback({
+                "type": "result",
+                "task_id": "task-1",
+                "decision": "PASS",
+                "terminal_state": "COMPLETED",
+                "findings_count": 0,
+                "findings": [],
+                "provider_results": {},
+            })
+            return ReviewResult(
+                task_id="task-1",
+                artifact_root=None,
+                decision="PASS",
+                terminal_state="COMPLETED",
+                provider_results={"claude": {"success": True, "findings_count": 0, "wall_clock_seconds": 0.1}},
+                findings_count=0,
+                parse_success_count=1,
+                parse_failure_count=0,
+                schema_valid_count=0,
+                dropped_findings_count=0,
+                findings=[],
+            )
+
+        mock_run.side_effect = _fake_run
+        stdout_buf = _PipeBuffer()
+        stderr_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+            exit_code = main([
+                "review",
+                "--repo",
+                ".",
+                "--prompt",
+                "t",
+                "--providers",
+                "claude",
+                "--stream",
+                "live",
+            ])
+
+        self.assertEqual(exit_code, 0)
+        lines = [line for line in stdout_buf.getvalue().splitlines() if line.strip()]
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertEqual(json.loads(lines[0])["type"], "run_started")
+        self.assertEqual(json.loads(lines[-1])["type"], "result")
+        self.assertEqual(stderr_buf.getvalue().strip(), "")
+
+
+class TestJsonlStreamingCli(unittest.TestCase):
+    @patch("runtime.cli.run_review")
+    def test_jsonl_stream_includes_consensus_and_debate_events(self, mock_run) -> None:
+        from runtime.cli import main
+        from runtime.review_engine import ReviewResult
+
+        debate_round = {
+            "enabled": True,
+            "provider_order": ["claude", "codex"],
+            "providers": {
+                "codex": {
+                    "reviewed_count": 1,
+                    "votes": [
+                        {
+                            "finding_key": "fp-1",
+                            "title": "Issue",
+                            "location": "a.py:1",
+                            "reported_by": ["claude"],
+                            "verdict": "AGREE",
+                            "reason": "Confirmed",
+                        }
+                    ],
+                    "success": True,
+                    "final_error": None,
+                }
+            },
+            "findings": [
+                {
+                    "finding_key": "fp-1",
+                    "title": "Issue",
+                    "location": "a.py:1",
+                    "reported_by": ["claude"],
+                    "consensus_score_before": 0.3,
+                    "consensus_level_before": "needs-verification",
+                    "consensus_score_after": 0.6,
+                    "consensus_level_after": "confirmed",
+                    "votes": [{"provider": "codex", "verdict": "AGREE", "reason": "Confirmed"}],
+                    "vote_summary": {"agree": 1, "disagree": 0, "refine": 0},
+                }
+            ],
+        }
+
+        def _fake_run(req, adapters=None, review_mode=True, write_artifacts=True):
+            assert req.stream_callback is not None
+            req.stream_callback({
+                "type": "run_started",
+                "task_id": "task-1",
+                "providers": ["claude", "codex"],
+                "review_mode": True,
+            })
+            req.stream_callback({
+                "type": "debate_started",
+                "task_id": "task-1",
+                "provider_count": 2,
+                "findings_count": 1,
+            })
+            req.stream_callback({
+                "type": "consensus",
+                "task_id": "task-1",
+                "provider_count": 2,
+                "level_counts": {"confirmed": 1, "needs-verification": 0, "unverified": 0},
+                "findings": [],
+                "division_strategy": None,
+            })
+            req.stream_callback({
+                "type": "debate_finished",
+                "task_id": "task-1",
+                "provider_count": 2,
+                "findings_count": 1,
+                "providers_with_votes": 1,
+            })
+            req.stream_callback({
+                "type": "result",
+                "task_id": "task-1",
+                "decision": "PASS",
+                "terminal_state": "COMPLETED",
+                "findings_count": 1,
+                "findings": [
+                    {
+                        "severity": "high",
+                        "category": "bug",
+                        "title": "Issue",
+                        "consensus_score": 0.6,
+                        "consensus_level": "confirmed",
+                        "evidence": {"file": "a.py", "line": 1},
+                    }
+                ],
+                "provider_results": {
+                    "claude": {"success": True, "findings_count": 1, "wall_clock_seconds": 0.2},
+                    "codex": {"success": True, "findings_count": 0, "wall_clock_seconds": 0.2},
+                },
+                "debate_round": debate_round,
+            })
+            return ReviewResult(
+                task_id="task-1",
+                artifact_root=None,
+                decision="PASS",
+                terminal_state="COMPLETED",
+                provider_results={
+                    "claude": {"success": True, "findings_count": 1, "wall_clock_seconds": 0.2},
+                    "codex": {"success": True, "findings_count": 0, "wall_clock_seconds": 0.2},
+                },
+                findings_count=1,
+                parse_success_count=2,
+                parse_failure_count=0,
+                schema_valid_count=1,
+                dropped_findings_count=0,
+                findings=[],
+                debate_round=debate_round,
+            )
+
+        mock_run.side_effect = _fake_run
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+            exit_code = main([
+                "review",
+                "--repo",
+                ".",
+                "--prompt",
+                "t",
+                "--providers",
+                "claude,codex",
+                "--stream",
+                "jsonl",
+                "--debate",
+            ])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr_buf.getvalue().strip(), "")
+        event_types = [json.loads(line)["type"] for line in stdout_buf.getvalue().splitlines() if line.strip()]
+        self.assertEqual(
+            event_types,
+            ["run_started", "debate_started", "consensus", "debate_finished", "result"],
+        )

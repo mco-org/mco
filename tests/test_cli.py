@@ -76,6 +76,8 @@ class CliTests(unittest.TestCase):
                 "best_effort",
                 "--provider-permissions-json",
                 '{"claude":{"permission_mode":"accept-edits"},"codex":{"sandbox":"read-only"}}',
+                "--divide",
+                "files",
                 "--strict-contract",
             ]
         )
@@ -96,7 +98,39 @@ class CliTests(unittest.TestCase):
             resolved.policy.provider_permissions.get("claude"),
             {"permission_mode": "accept-edits"},
         )
+        self.assertEqual(resolved.policy.divide, "files")
         self.assertTrue(resolved.policy.enforce_findings_contract)
+
+    def test_resolve_config_leaves_dimension_perspectives_empty_until_provider_filtering(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--prompt",
+                "x",
+                "--providers",
+                "claude,codex,gemini,qwen,opencode,extra",
+                "--divide",
+                "dimensions",
+            ]
+        )
+        resolved = _resolve_config(args)
+        self.assertEqual(resolved.policy.divide, "dimensions")
+        self.assertEqual(resolved.policy.perspectives, {})
+
+    def test_resolve_config_uses_file_config_max_provider_parallelism_when_cli_omits_it(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "review",
+                "--prompt",
+                "x",
+                "--providers",
+                "claude",
+            ]
+        )
+        resolved = _resolve_config(args, file_config={"policy": {"max_provider_parallelism": 3}})
+        self.assertEqual(resolved.policy.max_provider_parallelism, 3)
 
     def test_resolve_config_allows_cli_zero_to_force_full_parallel(self) -> None:
         parser = build_parser()
@@ -124,6 +158,18 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.synthesize)
         self.assertEqual(args.synth_provider, "")
         self.assertFalse(args.save_artifacts)
+
+    def test_parser_accepts_divide_flag(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["review", "--divide", "files"])
+        self.assertEqual(args.divide, "files")
+
+    def test_divide_is_mutually_exclusive_with_chain_and_debate(self) -> None:
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["review", "--divide", "files", "--chain"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["review", "--divide", "dimensions", "--debate"])
 
     def test_parser_rejects_config_flag(self) -> None:
         parser = build_parser()

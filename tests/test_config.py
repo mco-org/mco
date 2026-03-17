@@ -19,6 +19,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.policy.allow_paths, ["."])
         self.assertEqual(cfg.policy.provider_permissions, {})
         self.assertEqual(cfg.policy.enforcement_mode, "strict")
+        self.assertEqual(cfg.policy.divide, "")
 
     def test_default_mutable_fields_are_isolated(self) -> None:
         first = ReviewConfig()
