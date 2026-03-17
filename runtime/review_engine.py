@@ -1046,7 +1046,7 @@ def run_review(
                             "Review the above analysis critically. "
                             "Confirm valid findings, challenge questionable ones, "
                             "and add any issues that were missed."
-                        ).format(full_prompt, provider, output_text.strip())
+                        ).format(chain_prompt, provider, output_text.strip())
         elif max_workers <= 1:
             for provider in provider_order:
                 outcomes[provider] = _run_provider(

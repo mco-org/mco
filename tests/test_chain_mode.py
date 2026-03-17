@@ -42,7 +42,7 @@ class TestChainPromptBuilding(unittest.TestCase):
         providers = ["claude", "codex"]
         prior_outputs = {"claude": "Found SQL injection in db.py:42"}
 
-        # Simulate chain prompt for second provider
+        # Simulate chain prompt for second provider (accumulates on chain_prompt)
         chain_prompt = original_prompt
         for idx, provider in enumerate(providers):
             if idx > 0 and providers[idx - 1] in prior_outputs:
@@ -57,12 +57,43 @@ class TestChainPromptBuilding(unittest.TestCase):
                     "Review the above analysis critically. "
                     "Confirm valid findings, challenge questionable ones, "
                     "and add any issues that were missed."
-                ).format(original_prompt, prev, output)
+                ).format(chain_prompt, prev, output)
 
         self.assertIn("## Prior Analysis by claude", chain_prompt)
         self.assertIn("SQL injection", chain_prompt)
         self.assertIn("challenge questionable ones", chain_prompt)
         self.assertIn("Review this code.", chain_prompt)
+
+    def test_chain_three_providers_accumulates_all(self) -> None:
+        """Third provider should see outputs from both prior providers."""
+        original_prompt = "Review this code."
+        providers = ["claude", "codex", "gemini"]
+        prior_outputs = {
+            "claude": "Found SQL injection in db.py",
+            "codex": "Found N+1 query in api.py",
+        }
+
+        chain_prompt = original_prompt
+        for idx, provider in enumerate(providers):
+            if idx > 0 and providers[idx - 1] in prior_outputs:
+                prev = providers[idx - 1]
+                output = prior_outputs[prev]
+                chain_prompt = (
+                    "{}\n\n"
+                    "---\n"
+                    "## Prior Analysis by {}\n"
+                    "{}\n"
+                    "---\n\n"
+                    "Review the above analysis critically. "
+                    "Confirm valid findings, challenge questionable ones, "
+                    "and add any issues that were missed."
+                ).format(chain_prompt, prev, output)
+
+        # Third provider (gemini) should see BOTH prior analyses
+        self.assertIn("## Prior Analysis by claude", chain_prompt)
+        self.assertIn("SQL injection", chain_prompt)
+        self.assertIn("## Prior Analysis by codex", chain_prompt)
+        self.assertIn("N+1 query", chain_prompt)
 
     def test_chain_with_empty_prior_output_uses_base_prompt(self) -> None:
         """If prior provider produced no output, next provider gets base prompt."""

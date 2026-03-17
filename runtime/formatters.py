@@ -22,8 +22,6 @@ def _consensus_badge(detected_by: list, total_providers: int) -> str:
     n = len(detected_by) if isinstance(detected_by, list) else 0
     if total_providers <= 1 or n <= 0:
         return ""
-    if n >= total_providers and total_providers >= 2:
-        return "[{}/{} agree]".format(n, total_providers)
     if n >= 2:
         return "[{}/{} agree]".format(n, total_providers)
     return "[1 agent only]"
