@@ -838,6 +838,11 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
             raise ValueError("Invalid --perspectives-json: {}".format(exc))
         if not isinstance(parsed, dict):
             raise ValueError("--perspectives-json must be a JSON object, got {}".format(type(parsed).__name__))
+        for k, v in parsed.items():
+            if not isinstance(v, str):
+                raise ValueError(
+                    "--perspectives-json values must be strings, got {} for key '{}'".format(type(v).__name__, k)
+                )
         perspectives = {str(k): str(v) for k, v in parsed.items()}
     if not perspectives:
         perspectives = fc_policy.get("perspectives", {})

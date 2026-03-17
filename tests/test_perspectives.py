@@ -84,6 +84,30 @@ class TestPerspectiveValidation(unittest.TestCase):
         self.assertIn("JSON object", str(ctx.exception))
 
 
+    def test_non_string_value_raises(self) -> None:
+        """--perspectives-json with non-string values should raise."""
+        from runtime.cli import _resolve_config
+        from unittest.mock import MagicMock
+        args = MagicMock()
+        args.perspectives_json = '{"claude": ["security"]}'
+        args.providers = "claude"
+        args.artifact_base = "reports/review"
+        args.format = "text"
+        args.save_artifacts = False
+        args.strict_contract = False
+        args.provider_timeouts = ""
+        args.provider_permissions_json = ""
+        args.allow_paths = "."
+        args.max_provider_parallelism = 0
+        args.chain = False
+        for attr in ("enforcement_mode", "stall_timeout", "poll_interval", "review_hard_timeout",
+                      "quiet", "memory", "transport"):
+            delattr(args, attr)
+        with self.assertRaises(ValueError) as ctx:
+            _resolve_config(args)
+        self.assertIn("must be strings", str(ctx.exception))
+
+
 class TestPerspectiveInjection(unittest.TestCase):
     def test_perspective_prepended_to_prompt(self) -> None:
         """When a perspective is configured, it should appear in the prompt."""
