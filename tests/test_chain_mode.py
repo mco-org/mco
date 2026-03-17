@@ -13,10 +13,15 @@ class TestChainConfig(unittest.TestCase):
     def test_chain_default_false(self) -> None:
         policy = ReviewPolicy()
         self.assertFalse(policy.chain)
+        self.assertFalse(policy.debate)
 
     def test_chain_enabled(self) -> None:
         policy = ReviewPolicy(chain=True)
         self.assertTrue(policy.chain)
+
+    def test_debate_enabled(self) -> None:
+        policy = ReviewPolicy(debate=True)
+        self.assertTrue(policy.debate)
 
 
 class TestChainCLI(unittest.TestCase):
@@ -34,6 +39,16 @@ class TestChainCLI(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["run", "--chain"])
         self.assertTrue(args.chain)
+
+    def test_debate_flag_accepted(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["review", "--debate"])
+        self.assertTrue(args.debate)
+
+    def test_debate_and_chain_are_mutually_exclusive(self) -> None:
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["review", "--chain", "--debate"])
 
 
 class TestChainPromptBuilding(unittest.TestCase):

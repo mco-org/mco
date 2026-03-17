@@ -32,6 +32,9 @@ class CliOutputFormatsTests(unittest.TestCase):
                         "title": "Possible nil dereference",
                         "recommendation": "Guard against None before access",
                         "confidence": 0.91,
+                        "consensus_level": "unverified",
+                        "consensus_score": 0.91,
+                        "detected_by": ["codex"],
                         "evidence": {"file": "runtime/x.py", "line": 42, "snippet": "x.y"},
                     }
                 ],
@@ -55,7 +58,8 @@ class CliOutputFormatsTests(unittest.TestCase):
         report = output.getvalue()
         self.assertEqual(exit_code, 0)
         self.assertIn("## MCO Review Summary", report)
-        self.assertIn("| Severity | Category | Title | Location | Confidence | Recommendation |", report)
+        self.assertIn("| Severity | Category | Title | Location | Confidence | Consensus | Recommendation |", report)
+        self.assertIn("#### Unverified", report)
         self.assertIn("Possible nil dereference", report)
         self.assertIn("runtime/x.py:42", report)
 
@@ -99,6 +103,8 @@ class CliOutputFormatsTests(unittest.TestCase):
                         "title": "Hardcoded credential",
                         "recommendation": "Read from env var",
                         "confidence": 0.95,
+                        "consensus_level": "confirmed",
+                        "consensus_score": 0.63,
                         "evidence": {"file": "runtime/x.py", "line": 7, "snippet": "API_KEY='x'"},
                         "detected_by": ["claude", "qwen"],
                     }

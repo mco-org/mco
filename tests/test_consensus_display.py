@@ -49,6 +49,8 @@ class TestMarkdownPrConsensus(unittest.TestCase):
                 "title": "SQL injection",
                 "recommendation": "Use parameterized queries",
                 "confidence": 0.9,
+                "consensus_level": "confirmed",
+                "consensus_score": 0.6,
                 "detected_by": ["claude", "codex"],
                 "evidence": {"file": "db.py", "line": 42},
             },
@@ -58,16 +60,21 @@ class TestMarkdownPrConsensus(unittest.TestCase):
                 "title": "N+1 query",
                 "recommendation": "Use batch fetch",
                 "confidence": 0.5,
+                "consensus_level": "unverified",
+                "consensus_score": 0.17,
                 "detected_by": ["gemini"],
                 "evidence": {"file": "api.py", "line": 10},
             },
         ]
         text = format_markdown_pr(payload, findings, total_providers=3)
         self.assertIn("Consensus", text)
+        self.assertIn("#### Confirmed", text)
+        self.assertIn("#### Unverified", text)
         self.assertIn("[2/3 agree]", text)
         self.assertIn("[1 agent only]", text)
+        self.assertIn("score=0.60", text)
 
-    def test_no_consensus_column_with_single_provider(self) -> None:
+    def test_single_provider_still_displays_consensus_level_and_score(self) -> None:
         payload = {
             "decision": "PASS",
             "terminal_state": "COMPLETED",
@@ -82,13 +89,16 @@ class TestMarkdownPrConsensus(unittest.TestCase):
                 "title": "Long line",
                 "recommendation": "Break line",
                 "confidence": 0.6,
+                "consensus_level": "unverified",
+                "consensus_score": 0.6,
                 "detected_by": ["claude"],
                 "evidence": {"file": "x.py", "line": 1},
             },
         ]
         text = format_markdown_pr(payload, findings, total_providers=1)
-        self.assertNotIn("Consensus", text)
-        self.assertNotIn("[1 agent only]", text)
+        self.assertIn("Consensus", text)
+        self.assertIn("unverified", text)
+        self.assertIn("score=0.60", text)
 
     def test_backward_compatible_without_total_providers(self) -> None:
         """Calling without total_providers should still work."""
@@ -131,6 +141,8 @@ class TestChainModeConsensusBadge(unittest.TestCase):
                 "title": "SQL injection",
                 "recommendation": "Fix",
                 "confidence": 0.9,
+                "consensus_level": "confirmed",
+                "consensus_score": 0.9,
                 "detected_by": ["claude", "codex"],
                 "evidence": {"file": "db.py", "line": 42},
             },
@@ -138,3 +150,4 @@ class TestChainModeConsensusBadge(unittest.TestCase):
         text = format_markdown_pr(payload, findings, total_providers=2, chain_mode=True)
         self.assertIn("[confirmed by 2/2]", text)
         self.assertNotIn("[2/2 agree]", text)
+        self.assertIn("confirmed-by", text)

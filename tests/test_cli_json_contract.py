@@ -24,6 +24,7 @@ EXPECTED_JSON_KEYS = (
     "parse_failure_count",
     "schema_valid_count",
     "dropped_findings_count",
+    "findings",
 )
 EXPECTED_DETAILED_JSON_KEYS = EXPECTED_JSON_KEYS + (
     "result_mode",
@@ -63,6 +64,7 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(tuple(payload.keys()), EXPECTED_DETAILED_JSON_KEYS)
             self.assertEqual(payload["result_mode"], "stdout")
             self.assertIsNone(payload["artifact_root"])
+            self.assertEqual(payload["findings"], [])
             self.assertIsInstance(payload["provider_success_count"], int)
             self.assertIsInstance(payload["provider_failure_count"], int)
 
@@ -89,6 +91,7 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertEqual(tuple(payload.keys()), EXPECTED_DETAILED_JSON_KEYS)
             self.assertEqual(payload["result_mode"], "stdout")
             self.assertIsNone(payload["artifact_root"])
+            self.assertEqual(payload["findings"], [])
             self.assertEqual(payload["parse_success_count"], 0)
             self.assertEqual(payload["parse_failure_count"], 0)
 
@@ -123,6 +126,7 @@ class CliJsonContractTests(unittest.TestCase):
             )
             self.assertEqual(exit_code, 0)
             self.assertEqual(tuple(payload.keys()), EXPECTED_JSON_KEYS)
+            self.assertEqual(payload["findings"], [])
 
     def test_stdout_mode_json_includes_provider_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -378,6 +382,125 @@ class CliJsonContractTests(unittest.TestCase):
             self.assertIn("synthesis", payload)
             self.assertEqual(payload["synthesis"]["provider"], "codex")
             self.assertEqual(payload["synthesis"]["success"], True)
+
+    def test_json_output_includes_division_strategy_and_provider_scopes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = ReviewResult(
+                task_id="task-review-divide-1",
+                artifact_root=None,
+                decision="PASS",
+                terminal_state="COMPLETED",
+                provider_results={
+                    "codex": {
+                        "success": True,
+                        "assigned_scope": {"mode": "files", "paths": ["src/a.py"]},
+                    }
+                },
+                findings_count=0,
+                parse_success_count=0,
+                parse_failure_count=0,
+                schema_valid_count=0,
+                dropped_findings_count=0,
+                division_strategy="files",
+            )
+            exit_code, payload = self._invoke_json(
+                [
+                    "review",
+                    "--repo",
+                    tmpdir,
+                    "--prompt",
+                    "review",
+                    "--providers",
+                    "codex",
+                    "--json",
+                ],
+                result,
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["division_strategy"], "files")
+            self.assertEqual(payload["provider_scopes"]["codex"]["paths"], ["src/a.py"])
+
+    def test_json_output_includes_consensus_fields_and_debate_round(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = ReviewResult(
+                task_id="task-review-consensus-1",
+                artifact_root=None,
+                decision="PASS",
+                terminal_state="COMPLETED",
+                provider_results={"codex": {"success": True}},
+                findings_count=1,
+                parse_success_count=1,
+                parse_failure_count=0,
+                schema_valid_count=1,
+                dropped_findings_count=0,
+                findings=[
+                    {
+                        "severity": "high",
+                        "category": "security",
+                        "title": "SQL injection",
+                        "recommendation": "Use parameters",
+                        "confidence": 0.8,
+                        "consensus_score": 0.8,
+                        "consensus_level": "confirmed",
+                        "detected_by": ["claude", "codex"],
+                        "evidence": {"file": "db.py", "line": 42, "snippet": "query"},
+                    }
+                ],
+                debate_round={
+                    "enabled": True,
+                    "provider_order": ["claude", "codex"],
+                    "providers": {
+                        "codex": {
+                            "reviewed_count": 1,
+                            "votes": [
+                                {
+                                    "finding_key": "fp-1",
+                                    "title": "SQL injection",
+                                    "location": "db.py:42",
+                                    "reported_by": ["claude"],
+                                    "verdict": "AGREE",
+                                    "reason": "Confirmed",
+                                }
+                            ],
+                            "success": True,
+                            "final_error": None,
+                        }
+                    },
+                    "findings": [
+                        {
+                            "finding_key": "fp-1",
+                            "title": "SQL injection",
+                            "location": "db.py:42",
+                            "reported_by": ["claude"],
+                            "consensus_score_before": 0.4,
+                            "consensus_level_before": "needs-verification",
+                            "consensus_score_after": 0.8,
+                            "consensus_level_after": "confirmed",
+                            "votes": [{"provider": "codex", "verdict": "AGREE", "reason": "Confirmed"}],
+                            "vote_summary": {"agree": 1, "disagree": 0, "refine": 0},
+                        }
+                    ],
+                },
+                division_strategy="dimensions",
+            )
+            exit_code, payload = self._invoke_json(
+                [
+                    "review",
+                    "--repo",
+                    tmpdir,
+                    "--prompt",
+                    "review",
+                    "--providers",
+                    "codex",
+                    "--json",
+                ],
+                result,
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["division_strategy"], "dimensions")
+            self.assertEqual(payload["findings"][0]["consensus_score"], 0.8)
+            self.assertEqual(payload["findings"][0]["consensus_level"], "confirmed")
+            self.assertEqual(payload["debate_round"]["findings"][0]["vote_summary"]["agree"], 1)
 
     def test_invalid_synth_provider_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

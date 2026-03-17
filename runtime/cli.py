@@ -8,9 +8,15 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
 from .adapters import adapter_registry
-from .config import ReviewConfig, ReviewPolicy
+from .config import ReviewConfig, ReviewPolicy, load_agent_registrations
 from .contracts import ProviderPresence
-from .formatters import format_markdown_pr, format_sarif, _consensus_badge
+from .formatters import (
+    LiveStreamRenderer,
+    _consensus_badge,
+    _consensus_level_label,
+    format_markdown_pr,
+    format_sarif,
+)
 from .review_engine import ReviewRequest, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "opencode", "qwen")
@@ -96,8 +102,112 @@ MEMORY_EPILOG = (
 )
 
 
-def _doctor_adapter_registry(transport: str = "shim", extra_agents=None) -> Mapping[str, object]:
-    return adapter_registry(transport=transport, extra_agents=extra_agents)
+def _doctor_adapter_registry(transport: str = "shim", extra_agents=None, configured_agents=None) -> Mapping[str, object]:
+    return adapter_registry(transport=transport, extra_agents=extra_agents, configured_agents=configured_agents)
+
+
+def _normalize_cli_agent_pairs(raw_agents: object) -> Dict[str, List[str]]:
+    if raw_agents is None:
+        return {}
+    entries = raw_agents if isinstance(raw_agents, list) and raw_agents and isinstance(raw_agents[0], list) else [raw_agents]
+    normalized: Dict[str, List[str]] = {}
+    for entry in entries:
+        if not isinstance(entry, list) or len(entry) != 2:
+            continue
+        name = str(entry[0]).strip()
+        command = str(entry[1]).strip()
+        if not name or not command:
+            continue
+        import shlex
+
+        normalized[name] = shlex.split(command)
+    return normalized
+
+
+def _load_available_agents(repo_root: str, cli_agents: Optional[Dict[str, List[str]]] = None) -> List[Dict[str, object]]:
+    available: List[Dict[str, object]] = []
+    seen = set()
+    for provider in SUPPORTED_PROVIDERS:
+        available.append({"name": provider, "source": "builtin", "transport": "shim"})
+        seen.add(provider)
+    for agent in load_agent_registrations(repo_root):
+        name = str(agent.get("name", "")).strip()
+        if not name or name in seen:
+            continue
+        available.append({
+            "name": name,
+            "source": "config",
+            "transport": str(agent.get("transport", "shim")),
+            "command": agent.get("command"),
+            "model": agent.get("model"),
+            "timeout": agent.get("timeout"),
+            "permission_keys": agent.get("permission_keys", []),
+        })
+        seen.add(name)
+    for name, command in (cli_agents or {}).items():
+        if name in seen:
+            continue
+        available.append({
+            "name": name,
+            "source": "cli",
+            "transport": "acp",
+            "command": " ".join(command),
+        })
+        seen.add(name)
+    return available
+
+
+def _check_agent(repo_root: str, name: str, cli_agents: Optional[Dict[str, List[str]]] = None) -> Dict[str, object]:
+    configured_agents = load_agent_registrations(repo_root)
+    reg = adapter_registry(transport="shim", extra_agents=cli_agents, configured_agents=configured_agents)
+    adapter = reg.get(name)
+    if adapter is None:
+        return {
+            "name": name,
+            "ready": False,
+            "detected": False,
+            "binary_path": None,
+            "version": None,
+            "transport": None,
+            "reason": "unknown_agent",
+        }
+    probe = adapter.detect()
+    return {
+        "name": name,
+        "ready": bool(probe.detected and probe.auth_ok),
+        "detected": bool(probe.detected),
+        "binary_path": probe.binary_path,
+        "version": probe.version,
+        "transport": "acp" if hasattr(adapter, "_acp_command") else "shim",
+        "reason": probe.reason,
+    }
+
+
+def _stdout_is_tty() -> bool:
+    isatty = getattr(sys.stdout, "isatty", None)
+    return bool(callable(isatty) and isatty())
+
+
+def _build_stream_callback(stream_mode: Optional[str], *, chain_mode: bool = False):
+    if stream_mode == "jsonl":
+        import threading as _threading
+
+        _stream_lock = _threading.Lock()
+
+        def _stream_emit(event: dict) -> None:
+            line = json.dumps(event, ensure_ascii=True)
+            with _stream_lock:
+                print(line, flush=True)
+
+        return _stream_emit, "jsonl", None
+
+    if stream_mode == "live":
+        if not _stdout_is_tty():
+            return _build_stream_callback("jsonl", chain_mode=chain_mode)
+        renderer = LiveStreamRenderer(sys.stdout, chain_mode=chain_mode)
+        return renderer.handle_event, "live", renderer
+
+    return None, None, None
 
 
 def _resolve_prompt(args: argparse.Namespace) -> str:
@@ -227,6 +337,52 @@ def _consensus_badge_text(detected_by: list, total_providers: int, chain_mode: b
     return "  " + badge if badge else ""
 
 
+def _consensus_summary_text(finding: Dict[str, object], total_providers: int, chain_mode: bool = False) -> str:
+    parts: List[str] = []
+    level = _consensus_level_label(finding.get("consensus_level"), chain_mode=chain_mode)
+    if level:
+        parts.append(f"level={level}")
+    score = finding.get("consensus_score")
+    if isinstance(score, (int, float)):
+        parts.append(f"score={float(score):.2f}")
+    badge = _consensus_badge_text(finding.get("detected_by", []), total_providers, chain_mode=chain_mode).strip()
+    if badge:
+        parts.append(badge)
+    source_scopes = finding.get("source_scopes")
+    if isinstance(source_scopes, list) and source_scopes:
+        parts.append("scope=" + "; ".join(str(item) for item in source_scopes))
+    return ("  " + " ".join(parts)) if parts else ""
+
+
+def _render_debate_table(debate_round: Dict[str, object]) -> List[str]:
+    finding_rows = debate_round.get("findings", [])
+    if not isinstance(finding_rows, list) or not finding_rows:
+        return ["Debate Round", "- no debate votes recorded"]
+
+    lines = ["Debate Round", "Finding                                   Votes        Score", "-" * 72]
+    for item in finding_rows:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title", "-")).strip() or "-"
+        location = str(item.get("location", "-")).strip() or "-"
+        vote_summary = item.get("vote_summary", {})
+        if isinstance(vote_summary, dict):
+            votes = "A:{}/D:{}/R:{}".format(
+                vote_summary.get("agree", 0),
+                vote_summary.get("disagree", 0),
+                vote_summary.get("refine", 0),
+            )
+        else:
+            votes = "A:0/D:0/R:0"
+        score_text = "{} -> {}".format(
+            "{:.2f}".format(float(item.get("consensus_score_before", 0.0))),
+            "{:.2f}".format(float(item.get("consensus_score_after", 0.0))),
+        )
+        label = f"{title} @ {location}"
+        lines.append(f"{label[:40]:40s}  {votes:10s}  {score_text}")
+    return lines
+
+
 def _render_user_readable_report(
     command: str,
     result_mode: str,
@@ -244,6 +400,8 @@ def _render_user_readable_report(
     lines.append(f"- task_id: {payload['task_id']}")
     lines.append(f"- decision: {payload['decision']}")
     lines.append(f"- terminal_state: {payload['terminal_state']}")
+    if payload.get("division_strategy"):
+        lines.append(f"- division_strategy: {payload['division_strategy']}")
     lines.append(f"- providers: {', '.join(providers)}")
     lines.append(
         f"- provider_success/failure: {payload['provider_success_count']}/{payload['provider_failure_count']}"
@@ -276,8 +434,9 @@ def _render_user_readable_report(
         final_error = details.get("final_error")
         parse_reason = details.get("parse_reason")
         findings_count = details.get("findings_count")
+        assigned_scope = details.get("assigned_scope")
         lines.append(
-            f"- {provider}: success={success}, attempts={attempts}, final_error={final_error}, parse_reason={parse_reason}, findings={findings_count}"
+            f"- {provider}: success={success}, attempts={attempts}, final_error={final_error}, parse_reason={parse_reason}, findings={findings_count}, assigned_scope={assigned_scope}"
         )
         output_text = str(details.get("final_text", "")) or str(details.get("output_text", ""))
         if output_text:
@@ -301,6 +460,11 @@ def _render_user_readable_report(
         lines.append("Artifacts")
         lines.append("- artifact files are skipped in stdout mode")
 
+    debate_round = payload.get("debate_round")
+    if isinstance(debate_round, dict):
+        lines.append("")
+        lines.extend(_render_debate_table(debate_round))
+
     # Diff scope findings breakdown (only when findings have diff_scope tags)
     total_provider_count = len(providers)
     if findings and any(f.get("diff_scope") for f in findings):
@@ -311,25 +475,25 @@ def _render_user_readable_report(
             lines.append("")
             lines.append(f"In Diff ({len(in_diff)} findings)")
             for f in in_diff:
-                badge = _consensus_badge_text(f.get("detected_by", []), total_provider_count, chain_mode=chain_mode)
+                consensus = _consensus_summary_text(f, total_provider_count, chain_mode=chain_mode)
                 lines.append(
                     f"  {str(f.get('severity', '-')).upper():8s} "
                     f"{str(f.get('category', '-')):15s} "
                     f"{f.get('title', '-')}  "
                     f"{_finding_location_from_dict(f)}"
-                    f"{badge}"
+                    f"{consensus}"
                 )
         if related:
             lines.append("")
             lines.append(f"Related ({len(related)} findings)")
             for f in related:
-                badge = _consensus_badge_text(f.get("detected_by", []), total_provider_count, chain_mode=chain_mode)
+                consensus = _consensus_summary_text(f, total_provider_count, chain_mode=chain_mode)
                 lines.append(
                     f"  {str(f.get('severity', '-')).upper():8s} "
                     f"{str(f.get('category', '-')):15s} "
                     f"{f.get('title', '-')}  "
                     f"{_finding_location_from_dict(f)}"
-                    f"{badge}"
+                    f"{consensus}"
                 )
 
     return "\n".join(lines)
@@ -439,7 +603,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         nargs=2,
         metavar=("NAME", "COMMAND"),
         default=None,
-        help='Custom ACP agent: --agent mybot "mybot --acp". Requires --transport acp',
+        help='Temporary custom ACP agent: --agent mybot "mybot --acp". Works with shim or acp transport',
     )
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
@@ -517,9 +681,9 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Output only final text, no headers or formatting")
     output_excl.add_argument(
         "--stream",
-        choices=["jsonl"],
+        choices=["jsonl", "live"],
         default=None,
-        help="Output JSONL event stream to stdout",
+        help="Output streaming events to stdout (jsonl or live terminal mode)",
     )
 
     access = parser.add_argument_group("Access and Contracts")
@@ -540,10 +704,22 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         default="",
         help="Per-provider review perspective JSON, e.g. '{\"claude\":\"Focus on security issues\",\"codex\":\"Focus on performance\"}'",
     )
-    access.add_argument(
+    review_flow = access.add_mutually_exclusive_group()
+    review_flow.add_argument(
         "--chain",
         action="store_true",
         help="Chain mode: run providers sequentially, feeding each provider's output as context to the next",
+    )
+    review_flow.add_argument(
+        "--debate",
+        action="store_true",
+        help="Debate mode: run providers independently, then challenge each other's findings in a second round",
+    )
+    review_flow.add_argument(
+        "--divide",
+        choices=("files", "dimensions"),
+        default="",
+        help="Divide review work by file slices or review dimensions across providers",
     )
     access.add_argument(
         "--strict-contract",
@@ -611,6 +787,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated providers. Supported: claude,codex,gemini,opencode,qwen",
     )
     doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+
+    agent_cmd = subparsers.add_parser(
+        "agent",
+        help="List and inspect available agents",
+        description="Show built-in agents plus custom agents from config files or CLI flags.",
+        formatter_class=_HelpFormatter,
+    )
+    agent_sub = agent_cmd.add_subparsers(dest="agent_action", required=True)
+
+    agent_list = agent_sub.add_parser("list", help="List available agents", formatter_class=_HelpFormatter)
+    agent_list.add_argument("--repo", default=".", help="Repository root path")
+    agent_list.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    agent_list.add_argument(
+        "--agent",
+        nargs=2,
+        action="append",
+        metavar=("NAME", "COMMAND"),
+        default=[],
+        help='Temporary custom ACP agent: --agent mybot "mybot --acp"',
+    )
+
+    agent_check = agent_sub.add_parser("check", help="Check one agent", formatter_class=_HelpFormatter)
+    agent_check.add_argument("name", help="Agent name")
+    agent_check.add_argument("--repo", default=".", help="Repository root path")
+    agent_check.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    agent_check.add_argument(
+        "--agent",
+        nargs=2,
+        action="append",
+        metavar=("NAME", "COMMAND"),
+        default=[],
+        help='Temporary custom ACP agent: --agent mybot "mybot --acp"',
+    )
 
     run = subparsers.add_parser(
         "run",
@@ -790,6 +999,14 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     # Merge config file provider_timeouts first, then CLI overrides on top
     if fc_policy.get("provider_timeouts"):
         provider_timeouts.update(fc_policy["provider_timeouts"])
+    configured_agents = fc.get("agents", []) if isinstance(fc.get("agents"), list) else []
+    for agent in configured_agents:
+        if not isinstance(agent, dict):
+            continue
+        name = str(agent.get("name", "")).strip()
+        timeout = agent.get("timeout")
+        if name and isinstance(timeout, int) and timeout > 0 and name not in provider_timeouts:
+            provider_timeouts[name] = timeout
     provider_timeouts.update(_parse_provider_timeouts(args.provider_timeouts))
 
     # allow_paths: CLI > config file > hardcoded default
@@ -810,8 +1027,8 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         _parse_provider_permissions_json(args.provider_permissions_json),
     )
 
-    max_provider_parallelism = args.max_provider_parallelism
-    if max_provider_parallelism < 0:
+    max_provider_parallelism = getattr(args, "max_provider_parallelism", None)
+    if max_provider_parallelism is None:
         max_provider_parallelism = fc_policy.get("max_provider_parallelism", cfg.policy.max_provider_parallelism)
 
     # These are resolved by the config merge in main() (CLI > config > hardcoded).
@@ -847,6 +1064,10 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     if not perspectives:
         perspectives = fc_policy.get("perspectives", {})
 
+    divide = str(getattr(args, "divide", "") or fc_policy.get("divide", "") or "").strip()
+    if divide and divide not in ("files", "dimensions"):
+        raise ValueError("--divide must be one of: files, dimensions")
+
     policy = ReviewPolicy(
         timeout_seconds=cfg.policy.timeout_seconds,
         stall_timeout_seconds=stall_timeout_seconds,
@@ -863,6 +1084,8 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         enforcement_mode=enforcement_mode,
         perspectives=perspectives,
         chain=getattr(args, "chain", False) or fc_policy.get("chain", False),
+        debate=getattr(args, "debate", False) or fc_policy.get("debate", False),
+        divide=divide,
     )
     return ReviewConfig(providers=providers, artifact_base=artifact_base, policy=policy)
 
@@ -1160,9 +1383,9 @@ def _handle_session(args: argparse.Namespace) -> int:
 
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
-    # If --stream jsonl is in argv, suppress argparse stderr and emit JSONL error
+    # If streaming is requested, suppress argparse stderr and emit a machine-readable error.
     _raw_argv = argv if argv is not None else sys.argv[1:]
-    _wants_stream = "--stream" in _raw_argv and "jsonl" in _raw_argv
+    _wants_stream = "--stream" in _raw_argv and any(mode in _raw_argv for mode in ("jsonl", "live"))
     _parse_error_msg = ""
     if _wants_stream:
         # Override parser.error to capture the message without writing to stderr
@@ -1203,6 +1426,37 @@ def main(argv: List[str] | None = None) -> int:
         else:
             print(_render_doctor_report(payload))
         return 0
+
+    if args.command == "agent":
+        repo_root = str(Path(getattr(args, "repo", ".")).resolve())
+        cli_agents = _normalize_cli_agent_pairs(getattr(args, "agent", []))
+        if args.agent_action == "list":
+            payload = _load_available_agents(repo_root, cli_agents=cli_agents)
+            if getattr(args, "json", False):
+                print(json.dumps(payload, ensure_ascii=True))
+            else:
+                for item in payload:
+                    print(
+                        "{name:20s} {transport:5s} {source:7s} {detail}".format(
+                            name=str(item.get("name", "")),
+                            transport=str(item.get("transport", "")),
+                            source=str(item.get("source", "")),
+                            detail=str(item.get("model") or item.get("command") or ""),
+                        ).rstrip()
+                    )
+            return 0
+
+        if args.agent_action == "check":
+            payload = _check_agent(repo_root, args.name, cli_agents=cli_agents)
+            if getattr(args, "json", False):
+                print(json.dumps(payload, ensure_ascii=True))
+            else:
+                print(
+                    "Agent {name}: ready={ready} detected={detected} transport={transport} reason={reason}".format(
+                        **payload
+                    )
+                )
+            return 0
 
     if args.command == "findings":
         return _handle_findings(args)
@@ -1269,20 +1523,12 @@ def main(argv: List[str] | None = None) -> int:
             else:
                 setattr(args, attr, hardcoded_default)
 
-    # Build thread-safe stream emitter FIRST so even mutual-exclusion errors
-    # can be emitted as JSONL events
-    stream_mode = getattr(args, "stream", None)
-    stream_callback = None
-    if stream_mode == "jsonl":
-        import threading as _threading
-        _stream_lock = _threading.Lock()
-
-        def _stream_emit(event: dict) -> None:
-            line = json.dumps(event, ensure_ascii=True)
-            with _stream_lock:
-                print(line, flush=True)
-
-        stream_callback = _stream_emit
+    # Build stream emitter FIRST so mutual-exclusion/config errors can still stream.
+    requested_stream_mode = getattr(args, "stream", None)
+    stream_callback, stream_mode, stream_renderer = _build_stream_callback(
+        requested_stream_mode,
+        chain_mode=bool(getattr(args, "chain", False)),
+    )
 
     def _stream_error_exit(code: str, message: str) -> int:
         """Emit error event (if streaming) or print to stderr, then return 2."""
@@ -1300,22 +1546,32 @@ def main(argv: List[str] | None = None) -> int:
     if stream_mode and args.format not in ("report",):
         return _stream_error_exit("invalid_config", "--stream and --format are mutually exclusive")
 
+    configured_agents = file_config.get("agents", []) if isinstance(file_config.get("agents"), list) else []
+
     # Build extra_agents from --agent flag
-    agent_flag = getattr(args, "agent", None)
-    extra_agents = None
-    if agent_flag:
-        agent_name, agent_cmd = agent_flag
-        import shlex
-        extra_agents = {agent_name: shlex.split(agent_cmd)}
+    extra_agents = _normalize_cli_agent_pairs(getattr(args, "agent", None))
+    if not extra_agents:
+        extra_agents = None
 
     try:
         cfg = _resolve_config(args, file_config=file_config)
     except ValueError as exc:
         return _stream_error_exit("config_error", "Configuration error: {}".format(exc))
+    if cfg.policy.chain and cfg.policy.debate:
+        return _stream_error_exit("invalid_config", "--debate and --chain are mutually exclusive")
+    if cfg.policy.divide and cfg.policy.chain:
+        return _stream_error_exit("invalid_config", "--divide and --chain are mutually exclusive")
+    if cfg.policy.divide and cfg.policy.debate:
+        return _stream_error_exit("invalid_config", "--divide and --debate are mutually exclusive")
     repo_root = str(Path(args.repo).resolve())
 
     # Valid providers = built-in providers + custom agent names
     valid_providers = set(SUPPORTED_PROVIDERS)
+    valid_providers |= {
+        str(item.get("name", "")).strip()
+        for item in configured_agents
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    }
     if extra_agents:
         valid_providers |= set(extra_agents.keys())
 
@@ -1387,11 +1643,14 @@ def main(argv: List[str] | None = None) -> int:
         effective_result_mode = "both"
     write_artifacts = effective_result_mode in ("artifact", "both")
     transport = getattr(args, "transport", "shim")
-    adapters = _doctor_adapter_registry(transport=transport, extra_agents=extra_agents) if (transport != "shim" or extra_agents) else None
+    adapters = _doctor_adapter_registry(transport=transport, extra_agents=extra_agents, configured_agents=configured_agents) if (transport != "shim" or extra_agents or configured_agents) else None
     try:
         result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
         return _stream_error_exit("input_error", "Input error: {}".format(exc))
+    finally:
+        if stream_renderer is not None:
+            stream_renderer.close()
 
     # In stream mode, events were already emitted — just return exit code
     if stream_mode:
@@ -1425,9 +1684,19 @@ def main(argv: List[str] | None = None) -> int:
         "parse_failure_count": result.parse_failure_count,
         "schema_valid_count": result.schema_valid_count,
         "dropped_findings_count": result.dropped_findings_count,
+        "findings": result.findings,
     }
+    if result.division_strategy:
+        payload["division_strategy"] = result.division_strategy
+        payload["provider_scopes"] = {
+            provider: details.get("assigned_scope")
+            for provider, details in result.provider_results.items()
+            if details.get("assigned_scope") is not None
+        }
     if result.token_usage_summary is not None:
         payload["token_usage_summary"] = result.token_usage_summary
+    if result.debate_round is not None:
+        payload["debate_round"] = result.debate_round
     if result.synthesis is not None:
         payload["synthesis"] = result.synthesis
     if effective_result_mode == "artifact":
