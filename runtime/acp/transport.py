@@ -42,9 +42,11 @@ class JsonRpcTransport:
         self._next_id = 1
         self._id_lock = threading.Lock()
         self._write_lock = threading.Lock()
+        self._pending_lock = threading.Lock()
         self._pending: Dict[int, threading.Event] = {}
         self._results: Dict[int, Dict[str, Any]] = {}
         self._notifications: queue.Queue[Dict[str, Any]] = queue.Queue()
+        self._request_handlers: Dict[str, Any] = {}
         self._reader_thread: Optional[threading.Thread] = None
         self._running = False
         self._stderr_path: Optional[str] = None
@@ -99,10 +101,15 @@ class JsonRpcTransport:
         )
         self._reader_thread.start()
 
+    def register_handler(self, method: str, handler) -> None:
+        """Register a handler for incoming requests from the agent."""
+        self._request_handlers[method] = handler
+
     def _read_loop(self) -> None:
         """Background thread: read NDJSON from stdout, route to pending or notifications."""
-        assert self._process is not None
-        assert self._process.stdout is not None
+        if self._process is None or self._process.stdout is None:
+            self._running = False
+            return
         try:
             for raw_line in self._process.stdout:
                 line = raw_line.strip()
@@ -114,20 +121,44 @@ class JsonRpcTransport:
                     continue
 
                 msg_id = msg.get("id")
-                if msg_id is not None and msg_id in self._pending:
-                    # Response to a request
-                    self._results[msg_id] = msg
-                    self._pending[msg_id].set()
+                matched_event = None
+                with self._pending_lock:
+                    if msg_id is not None and msg_id in self._pending:
+                        # Response to our request
+                        self._results[msg_id] = msg
+                        matched_event = self._pending[msg_id]
+
+                if matched_event is not None:
+                    matched_event.set()
+                elif msg_id is not None and "method" in msg:
+                    # Incoming request from agent — dispatch to handler
+                    method = msg["method"]
+                    handler = self._request_handlers.get(method)
+                    if handler:
+                        try:
+                            result = handler(msg.get("params", {}))
+                            response = {"jsonrpc": "2.0", "id": msg_id, "result": result}
+                        except Exception as exc:
+                            response = {"jsonrpc": "2.0", "id": msg_id, "error": {
+                                "code": -32603, "message": str(exc),
+                            }}
+                        self._write(response)
+                    else:
+                        response = {"jsonrpc": "2.0", "id": msg_id, "error": {
+                            "code": -32601, "message": "Method not found: {}".format(method),
+                        }}
+                        self._write(response)
                 else:
-                    # Notification or unsolicited message
+                    # Notification
                     self._notifications.put(msg)
         except (ValueError, OSError):
             pass
         finally:
             self._running = False
             # Wake up any pending requests so they don't hang forever
-            for event in list(self._pending.values()):
-                event.set()
+            with self._pending_lock:
+                for event in list(self._pending.values()):
+                    event.set()
 
     def send_request(
         self,
@@ -148,7 +179,8 @@ class JsonRpcTransport:
             self._next_id += 1
 
         event = threading.Event()
-        self._pending[msg_id] = event
+        with self._pending_lock:
+            self._pending[msg_id] = event
 
         request: Dict[str, Any] = {
             "jsonrpc": "2.0",
@@ -161,14 +193,16 @@ class JsonRpcTransport:
         self._write(request)
 
         if not event.wait(timeout):
-            self._pending.pop(msg_id, None)
-            self._results.pop(msg_id, None)
+            with self._pending_lock:
+                self._pending.pop(msg_id, None)
+                self._results.pop(msg_id, None)
             raise TimeoutError(
                 "No response for '{}' within {}s".format(method, timeout),
             )
 
-        result_msg = self._results.pop(msg_id, None)
-        self._pending.pop(msg_id, None)
+        with self._pending_lock:
+            result_msg = self._results.pop(msg_id, None)
+            self._pending.pop(msg_id, None)
 
         if result_msg is None:
             raise TransportClosed("Transport closed while waiting for response")
@@ -234,13 +268,14 @@ class JsonRpcTransport:
                     pass
             self._process = None
         # Wake pending requests
-        for event in list(self._pending.values()):
-            event.set()
+        with self._pending_lock:
+            for event in list(self._pending.values()):
+                event.set()
 
     def _write(self, msg: Dict[str, Any]) -> None:
         """Write a JSON message to stdin (thread-safe)."""
-        assert self._process is not None
-        assert self._process.stdin is not None
+        if self._process is None or self._process.stdin is None:
+            raise TransportClosed("Transport is not started or stdin unavailable")
         with self._write_lock:
             try:
                 self._process.stdin.write(json.dumps(msg) + "\n")

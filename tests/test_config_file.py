@@ -1,0 +1,88 @@
+# tests/test_config_file.py
+"""Tests for config file loading and merging."""
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import unittest
+
+from runtime.config import load_config_files
+
+
+class TestLoadConfigFiles(unittest.TestCase):
+    def test_no_config_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = load_config_files(tmp)
+            self.assertEqual(result, {})
+
+    def test_project_config_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {"providers": ["claude"], "quiet": True}
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                json.dump(cfg, f)
+            result = load_config_files(tmp)
+            self.assertEqual(result["providers"], ["claude"])
+            self.assertTrue(result["quiet"])
+
+    def test_global_config_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            global_dir = os.path.join(tmp, ".mco")
+            os.makedirs(global_dir)
+            cfg = {"transport": "acp"}
+            with open(os.path.join(global_dir, "config.json"), "w") as f:
+                json.dump(cfg, f)
+            result = load_config_files("/nonexistent", global_config_dir=global_dir)
+            self.assertEqual(result["transport"], "acp")
+
+    def test_project_overrides_global(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            global_dir = os.path.join(tmp, "global", ".mco")
+            os.makedirs(global_dir)
+            with open(os.path.join(global_dir, "config.json"), "w") as f:
+                json.dump({"providers": ["claude"], "quiet": False}, f)
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                json.dump({"providers": ["claude", "codex"]}, f)
+            result = load_config_files(tmp, global_config_dir=global_dir)
+            self.assertEqual(result["providers"], ["claude", "codex"])
+            self.assertFalse(result["quiet"])  # global value preserved when not overridden
+
+    def test_policy_deep_merged(self) -> None:
+        """Project policy should merge into global policy, not replace it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            global_dir = os.path.join(tmp, "global", ".mco")
+            os.makedirs(global_dir)
+            with open(os.path.join(global_dir, "config.json"), "w") as f:
+                json.dump({"policy": {"stall_timeout_seconds": 600, "enforcement_mode": "best_effort"}}, f)
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                json.dump({"policy": {"stall_timeout_seconds": 300}}, f)
+            result = load_config_files(tmp, global_config_dir=global_dir)
+            # Project overrides stall_timeout
+            self.assertEqual(result["policy"]["stall_timeout_seconds"], 300)
+            # Global enforcement_mode preserved (not clobbered)
+            self.assertEqual(result["policy"]["enforcement_mode"], "best_effort")
+
+    def test_artifact_base_from_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                json.dump({"artifact_base": "reports/global"}, f)
+            result = load_config_files(tmp)
+            self.assertEqual(result["artifact_base"], "reports/global")
+
+    def test_config_enforcement_mode_wired(self) -> None:
+        """enforcement_mode from config file should reach _resolve_config."""
+        from runtime.cli import build_parser, _resolve_config
+        import tempfile, json, os
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                json.dump({"policy": {"enforcement_mode": "best_effort", "poll_interval_seconds": 9.5}}, f)
+            result = load_config_files(tmp)
+            self.assertEqual(result["policy"]["enforcement_mode"], "best_effort")
+            self.assertEqual(result["policy"]["poll_interval_seconds"], 9.5)
+
+    def test_invalid_json_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                f.write("not valid json {{{")
+            result = load_config_files(tmp)
+            self.assertEqual(result, {})

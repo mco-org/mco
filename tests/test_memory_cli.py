@@ -39,12 +39,13 @@ class TestMemoryCliArgs(unittest.TestCase):
         exit_code = main(["review", "--repo", ".", "--prompt", "test", "--memory", "--space", "coding:foo"])
         self.assertEqual(exit_code, 2)
 
-    def test_no_memory_flag_defaults_false(self):
+    def test_no_memory_flag_defaults_suppressed(self):
         parser = build_parser()
         args = parser.parse_args([
             "review", "--repo", ".", "--prompt", "test",
         ])
-        self.assertFalse(args.memory)
+        # With argparse.SUPPRESS, memory attr is absent when not passed
+        self.assertFalse(getattr(args, "memory", False))
 
 
 class TestReviewRequestMemoryField(unittest.TestCase):

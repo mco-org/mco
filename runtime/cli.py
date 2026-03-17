@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Mapping
+from typing import Dict, List, Mapping, Optional
 
 from .adapters import adapter_registry
 from .config import ReviewConfig, ReviewPolicy
@@ -96,8 +96,43 @@ MEMORY_EPILOG = (
 )
 
 
-def _doctor_adapter_registry(transport: str = "shim") -> Mapping[str, object]:
-    return adapter_registry(transport=transport)
+def _doctor_adapter_registry(transport: str = "shim", extra_agents=None) -> Mapping[str, object]:
+    return adapter_registry(transport=transport, extra_agents=extra_agents)
+
+
+def _resolve_prompt(args: argparse.Namespace) -> str:
+    """Resolve prompt from --prompt, --file, or piped stdin.
+
+    Raises ValueError with a human-readable message on failure.
+    """
+    prompt = getattr(args, "prompt", "") or ""
+    file_path = getattr(args, "file", "") or ""
+
+    if prompt:
+        return prompt
+
+    if file_path:
+        if file_path == "-":
+            text = sys.stdin.read().strip()
+            if not text:
+                raise ValueError("Empty input from stdin.")
+            return text
+        path = Path(file_path)
+        if not path.exists():
+            raise ValueError("File not found: {}".format(file_path))
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise ValueError("Empty prompt file: {}".format(file_path))
+        return text
+
+    # Check for piped stdin
+    if not sys.stdin.isatty():
+        text = sys.stdin.read().strip()
+        if not text:
+            raise ValueError("Empty input from stdin.")
+        return text
+
+    raise ValueError("Either --prompt or --file is required.")
 
 
 def _doctor_provider_presence(providers: List[str]) -> Dict[str, ProviderPresence]:
@@ -371,26 +406,35 @@ def _merge_provider_permissions(
 def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     scope = parser.add_argument_group("Execution Scope")
     scope.add_argument("--repo", default=".", help="Repository root path")
-    scope.add_argument("--prompt", required=True, help="Task prompt")
+    prompt_group = scope.add_mutually_exclusive_group()
+    prompt_group.add_argument("--prompt", default="", help="Task prompt (inline)")
+    prompt_group.add_argument("--file", default="", help="Read prompt from file path, or '-' for stdin")
     scope.add_argument(
         "--providers",
-        default=",".join(DEFAULT_CONFIG.providers),
-        help="Comma-separated providers. Supported: claude,codex,gemini,opencode,qwen",
+        default=argparse.SUPPRESS,
+        help="Comma-separated providers (default from config or: claude,codex,gemini,opencode,qwen)",
     )
     scope.add_argument("--target-paths", default=".", help="Comma-separated task scope paths")
     scope.add_argument("--task-id", default="", help="Optional stable task id")
     scope.add_argument(
         "--transport",
         choices=("shim", "acp"),
-        default="shim",
+        default=argparse.SUPPRESS,
         help="Agent communication transport. shim: stdout parsing (default), acp: Agent Client Protocol (JSON-RPC)",
+    )
+    scope.add_argument(
+        "--agent",
+        nargs=2,
+        metavar=("NAME", "COMMAND"),
+        default=None,
+        help='Custom ACP agent: --agent mybot "mybot --acp". Requires --transport acp',
     )
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
     timeouts.add_argument(
         "--max-provider-parallelism",
         type=int,
-        default=DEFAULT_POLICY.max_provider_parallelism,
+        default=argparse.SUPPRESS,
         help="Provider fan-out concurrency. 0 means full parallelism",
     )
     timeouts.add_argument(
@@ -401,19 +445,19 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     timeouts.add_argument(
         "--stall-timeout",
         type=int,
-        default=DEFAULT_POLICY.stall_timeout_seconds,
+        default=argparse.SUPPRESS,
         help="Cancel a provider when output progress is idle for N seconds",
     )
     timeouts.add_argument(
         "--poll-interval",
         type=float,
-        default=DEFAULT_POLICY.poll_interval_seconds,
+        default=argparse.SUPPRESS,
         help="Provider status polling interval in seconds",
     )
     timeouts.add_argument(
         "--review-hard-timeout",
         type=int,
-        default=DEFAULT_POLICY.review_hard_timeout_seconds,
+        default=argparse.SUPPRESS,
         help="Review-mode hard deadline in seconds (0 disables)",
     )
 
@@ -455,12 +499,15 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Force artifact writes when result-mode is stdout",
     )
-    output.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
-    output.add_argument(
+    output_excl = output.add_mutually_exclusive_group()
+    output_excl.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    output_excl.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS,
+        help="Output only final text, no headers or formatting")
+    output_excl.add_argument(
         "--stream",
         choices=["jsonl"],
         default=None,
-        help="Output JSONL event stream to stdout (mutually exclusive with --json and --format)",
+        help="Output JSONL event stream to stdout",
     )
 
     access = parser.add_argument_group("Access and Contracts")
@@ -468,7 +515,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     access.add_argument(
         "--enforcement-mode",
         choices=("strict", "best_effort"),
-        default=DEFAULT_POLICY.enforcement_mode,
+        default=argparse.SUPPRESS,
         help="strict fails closed when permission requirements are unmet",
     )
     access.add_argument(
@@ -486,6 +533,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     memory.add_argument(
         "--memory",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Enable memory layer (requires evermemos-mcp). Injects history context and writes back findings",
     )
     memory.add_argument(
@@ -654,8 +702,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sess_send = session_sub.add_parser("send", help="Send a prompt to a session", formatter_class=_HelpFormatter)
     sess_send.add_argument("name", help="Session name")
-    sess_send.add_argument("prompt", help="Prompt text")
+    sess_send.add_argument("prompt", nargs="?", default="", help="Prompt text")
+    sess_send.add_argument("--file", default="", help="Read prompt from file, or '-' for stdin")
     sess_send.add_argument("--repo", default=".", help="Repository root path")
+    sess_send.add_argument("--no-wait", action="store_true", help="Return after queuing, don't wait for result")
     sess_send.add_argument("--json", action="store_true", help="JSON output")
 
     sess_broadcast = session_sub.add_parser("broadcast", help="Send prompt to all active sessions", formatter_class=_HelpFormatter)
@@ -680,6 +730,11 @@ def build_parser() -> argparse.ArgumentParser:
     sess_resume.add_argument("name", help="Session name")
     sess_resume.add_argument("--repo", default=".", help="Repository root path")
 
+    sess_ensure = session_sub.add_parser("ensure", help="Create or return existing session", formatter_class=_HelpFormatter)
+    sess_ensure.add_argument("--provider", required=True, help="Agent provider")
+    sess_ensure.add_argument("--name", required=True, help="Session name")
+    sess_ensure.add_argument("--repo", default=".", help="Repository root path")
+
     sess_cancel = session_sub.add_parser("cancel", help="Cancel running + queued prompts", formatter_class=_HelpFormatter)
     sess_cancel.add_argument("name", help="Session name")
     sess_cancel.add_argument("--repo", default=".", help="Repository root path")
@@ -693,26 +748,56 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_config(args: argparse.Namespace) -> ReviewConfig:
+def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None) -> ReviewConfig:
     cfg = ReviewConfig()
+    fc = file_config or {}
+    fc_policy = fc.get("policy", {}) if isinstance(fc.get("policy"), dict) else {}
+
     providers = _parse_providers(args.providers) if args.providers else list(cfg.providers)
-    artifact_base = args.artifact_base or cfg.artifact_base
+
+    # artifact_base: CLI > config file > hardcoded default
+    artifact_base = args.artifact_base if args.artifact_base != cfg.artifact_base else fc.get("artifact_base", cfg.artifact_base)
+
     provider_timeouts = dict(cfg.policy.provider_timeouts)
+    # Merge config file provider_timeouts first, then CLI overrides on top
+    if fc_policy.get("provider_timeouts"):
+        provider_timeouts.update(fc_policy["provider_timeouts"])
     provider_timeouts.update(_parse_provider_timeouts(args.provider_timeouts))
-    allow_paths = _parse_paths(args.allow_paths) if args.allow_paths else list(cfg.policy.allow_paths)
+
+    # allow_paths: CLI > config file > hardcoded default
+    if args.allow_paths and args.allow_paths != ".":
+        allow_paths = _parse_paths(args.allow_paths)
+    elif fc_policy.get("allow_paths"):
+        allow_paths = fc_policy["allow_paths"] if isinstance(fc_policy["allow_paths"], list) else [fc_policy["allow_paths"]]
+    else:
+        allow_paths = list(cfg.policy.allow_paths)
+
+    # provider_permissions: merge config file base, then CLI JSON on top
+    base_permissions = dict(cfg.policy.provider_permissions)
+    if fc_policy.get("provider_permissions") and isinstance(fc_policy["provider_permissions"], dict):
+        for k, v in fc_policy["provider_permissions"].items():
+            base_permissions[k] = dict(base_permissions.get(k, {}), **v) if isinstance(v, dict) else v
     provider_permissions = _merge_provider_permissions(
-        cfg.policy.provider_permissions,
+        base_permissions,
         _parse_provider_permissions_json(args.provider_permissions_json),
     )
+
     max_provider_parallelism = args.max_provider_parallelism
     if max_provider_parallelism < 0:
-        max_provider_parallelism = cfg.policy.max_provider_parallelism
-    enforcement_mode = args.enforcement_mode or cfg.policy.enforcement_mode
-    stall_timeout_seconds = args.stall_timeout if args.stall_timeout > 0 else cfg.policy.stall_timeout_seconds
-    poll_interval_seconds = args.poll_interval if args.poll_interval > 0 else cfg.policy.poll_interval_seconds
-    review_hard_timeout_seconds = (
-        args.review_hard_timeout if args.review_hard_timeout >= 0 else cfg.policy.review_hard_timeout_seconds
-    )
+        max_provider_parallelism = fc_policy.get("max_provider_parallelism", cfg.policy.max_provider_parallelism)
+
+    # These are resolved by the config merge in main() (CLI > config > hardcoded).
+    # Use getattr for safety when called outside main() (e.g. tests).
+    enforcement_mode = getattr(args, "enforcement_mode", None) or fc_policy.get("enforcement_mode", cfg.policy.enforcement_mode)
+    stall_timeout_seconds = getattr(args, "stall_timeout", None)
+    if stall_timeout_seconds is None:
+        stall_timeout_seconds = fc_policy.get("stall_timeout_seconds", cfg.policy.stall_timeout_seconds)
+    poll_interval_seconds = getattr(args, "poll_interval", None)
+    if poll_interval_seconds is None:
+        poll_interval_seconds = fc_policy.get("poll_interval_seconds", cfg.policy.poll_interval_seconds)
+    review_hard_timeout_seconds = getattr(args, "review_hard_timeout", None)
+    if review_hard_timeout_seconds is None:
+        review_hard_timeout_seconds = fc_policy.get("review_hard_timeout_seconds", cfg.policy.review_hard_timeout_seconds)
     enforce_findings_contract = bool(args.strict_contract)
 
     policy = ReviewPolicy(
@@ -829,8 +914,8 @@ def _handle_memory(args: argparse.Namespace) -> int:
 def _handle_session(args: argparse.Namespace) -> int:
     """Handle the session subcommand."""
     from pathlib import Path
-    from .session.manager import start_session, stop_session, list_sessions, resume_session
-    from .session.client import send_prompt, broadcast_prompt, cancel_session as client_cancel, queue_status
+    from .session.manager import start_session, stop_session, list_sessions, resume_session, ensure_session
+    from .session.client import send_prompt, send_prompt_nowait, broadcast_prompt, cancel_session as client_cancel, queue_status
     from .session.state import load_history, load_state
 
     repo_root = str(Path(args.repo).resolve())
@@ -852,7 +937,40 @@ def _handle_session(args: argparse.Namespace) -> int:
         return 0
 
     if args.session_action == "send":
-        result = send_prompt(repo_root, args.name, args.prompt)
+        prompt = args.prompt or ""
+        file_path = getattr(args, "file", "") or ""
+        if file_path:
+            if file_path == "-":
+                prompt = sys.stdin.read()
+            else:
+                p = Path(file_path)
+                if not p.exists():
+                    print("File not found: {}".format(file_path), file=sys.stderr)
+                    return 2
+                prompt = p.read_text(encoding="utf-8")
+        if not prompt and not sys.stdin.isatty():
+            prompt = sys.stdin.read()
+        if not prompt:
+            print("Prompt is required (positional, --file, or piped stdin).", file=sys.stderr)
+            return 2
+        if getattr(args, "no_wait", False):
+            result = send_prompt_nowait(repo_root, args.name, prompt)
+            if getattr(args, "json", False):
+                print(json.dumps(result, ensure_ascii=True))
+            else:
+                if result.get("status") == "queued":
+                    print("Queued as request #{} (position {})".format(
+                        result.get("request_id", "?"), result.get("position", "?")))
+                else:
+                    print("Error: {}".format(result.get("message", "unknown")), file=sys.stderr)
+                    return 2
+            return 0
+        try:
+            result = send_prompt(repo_root, args.name, prompt)
+        except KeyboardInterrupt:
+            print("\nCancelling...", file=sys.stderr)
+            client_cancel(repo_root, args.name)
+            return 130
         if getattr(args, "json", False):
             print(json.dumps(result, ensure_ascii=True))
         else:
@@ -961,6 +1079,16 @@ def _handle_session(args: argparse.Namespace) -> int:
                 return 2
         return 0
 
+    if args.session_action == "ensure":
+        try:
+            state = ensure_session(args.provider, repo_root=repo_root, name=args.name)
+            print("Session '{}' ready (provider={}, pid={})".format(
+                state.name, state.provider, state.pid))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        return 0
+
     print("Unknown session action.", file=sys.stderr)
     return 2
 
@@ -999,7 +1127,8 @@ def main(argv: List[str] | None = None) -> int:
             print(err_event, flush=True)
         return int(exc.code) if isinstance(exc.code, int) else 2
     if args.command == "doctor":
-        providers = [item for item in _parse_providers(args.providers) if item in SUPPORTED_PROVIDERS]
+        providers_str = getattr(args, "providers", ",".join(DEFAULT_CONFIG.providers))
+        providers = [item for item in _parse_providers(providers_str) if item in SUPPORTED_PROVIDERS]
         if not providers:
             print("No valid providers selected.", file=sys.stderr)
             return 2
@@ -1037,6 +1166,44 @@ def main(argv: List[str] | None = None) -> int:
         parser.error("unsupported command")
         return 2
 
+    # Load config files and apply as defaults for args the user didn't set
+    from .config import load_config_files
+    repo_root_for_config = str(Path(getattr(args, "repo", ".")).resolve())
+    file_config = load_config_files(repo_root_for_config)
+
+    policy_cfg = file_config.get("policy", {}) if isinstance(file_config.get("policy"), dict) else {}
+
+    # Group 1: top-level flags
+    _TOP_LEVEL_DEFAULTS = {
+        "providers": ",".join(DEFAULT_CONFIG.providers),
+        "transport": "shim",
+        "quiet": False,
+        "memory": False,
+    }
+    for attr, hardcoded_default in _TOP_LEVEL_DEFAULTS.items():
+        if not hasattr(args, attr):
+            if attr == "providers" and "providers" in file_config:
+                setattr(args, attr, ",".join(file_config["providers"]))
+            elif attr in file_config:
+                setattr(args, attr, file_config[attr])
+            else:
+                setattr(args, attr, hardcoded_default)
+
+    # Group 2: policy flags (config key names differ from args attr names)
+    _POLICY_DEFAULTS = {
+        "stall_timeout": ("stall_timeout_seconds", DEFAULT_POLICY.stall_timeout_seconds),
+        "max_provider_parallelism": ("max_provider_parallelism", DEFAULT_POLICY.max_provider_parallelism),
+        "poll_interval": ("poll_interval_seconds", DEFAULT_POLICY.poll_interval_seconds),
+        "review_hard_timeout": ("review_hard_timeout_seconds", DEFAULT_POLICY.review_hard_timeout_seconds),
+        "enforcement_mode": ("enforcement_mode", DEFAULT_POLICY.enforcement_mode),
+    }
+    for attr, (config_key, hardcoded_default) in _POLICY_DEFAULTS.items():
+        if not hasattr(args, attr):
+            if config_key in policy_cfg:
+                setattr(args, attr, policy_cfg[config_key])
+            else:
+                setattr(args, attr, hardcoded_default)
+
     # Build thread-safe stream emitter FIRST so even mutual-exclusion errors
     # can be emitted as JSONL events
     stream_mode = getattr(args, "stream", None)
@@ -1064,18 +1231,36 @@ def main(argv: List[str] | None = None) -> int:
             print(message, file=sys.stderr)
         return 2
 
-    # Validate --stream mutual exclusion (now uses _stream_error_exit for JSONL errors)
-    if stream_mode and args.json:
-        return _stream_error_exit("invalid_config", "--stream and --json are mutually exclusive")
+    # Validate --stream / --format mutual exclusion (--stream vs --json is handled by argparse)
     if stream_mode and args.format not in ("report",):
         return _stream_error_exit("invalid_config", "--stream and --format are mutually exclusive")
 
+    # Build extra_agents from --agent flag
+    agent_flag = getattr(args, "agent", None)
+    extra_agents = None
+    if agent_flag:
+        agent_name, agent_cmd = agent_flag
+        import shlex
+        extra_agents = {agent_name: shlex.split(agent_cmd)}
+
     try:
-        cfg = _resolve_config(args)
+        cfg = _resolve_config(args, file_config=file_config)
     except ValueError as exc:
         return _stream_error_exit("config_error", "Configuration error: {}".format(exc))
     repo_root = str(Path(args.repo).resolve())
-    providers = [item for item in cfg.providers if item in SUPPORTED_PROVIDERS]
+
+    # Valid providers = built-in providers + custom agent names
+    valid_providers = set(SUPPORTED_PROVIDERS)
+    if extra_agents:
+        valid_providers |= set(extra_agents.keys())
+
+    providers = [item for item in cfg.providers if item in valid_providers]
+    # Auto-add custom agent to providers if not already listed
+    if extra_agents:
+        for name in extra_agents:
+            if name not in providers:
+                providers.append(name)
+
     if not providers:
         return _stream_error_exit("invalid_providers", "No valid providers selected.")
     synth_provider = args.synth_provider.strip() if isinstance(args.synth_provider, str) else ""
@@ -1107,9 +1292,13 @@ def main(argv: List[str] | None = None) -> int:
     elif args.unstaged:
         diff_mode = "unstaged"
 
+    try:
+        prompt = _resolve_prompt(args)
+    except ValueError as exc:
+        return _stream_error_exit("input_error", str(exc))
     req = ReviewRequest(
         repo_root=repo_root,
-        prompt=args.prompt,
+        prompt=prompt,
         providers=providers,  # type: ignore[arg-type]
         artifact_base=str(Path(cfg.artifact_base).resolve()),
         policy=cfg.policy,
@@ -1133,7 +1322,7 @@ def main(argv: List[str] | None = None) -> int:
         effective_result_mode = "both"
     write_artifacts = effective_result_mode in ("artifact", "both")
     transport = getattr(args, "transport", "shim")
-    adapters = _doctor_adapter_registry(transport=transport) if transport != "shim" else None
+    adapters = _doctor_adapter_registry(transport=transport, extra_agents=extra_agents) if (transport != "shim" or extra_agents) else None
     try:
         result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
@@ -1141,6 +1330,17 @@ def main(argv: List[str] | None = None) -> int:
 
     # In stream mode, events were already emitted — just return exit code
     if stream_mode:
+        if result.decision == "FAIL":
+            return 2
+        if review_mode and result.decision == "INCONCLUSIVE":
+            return 3
+        return 0
+
+    if getattr(args, "quiet", False):
+        for prov_id, prov_data in result.provider_results.items():
+            text = prov_data.get("final_text", "") or prov_data.get("output_text", "")
+            if text:
+                print(text)
         if result.decision == "FAIL":
             return 2
         if review_mode and result.decision == "INCONCLUSIVE":

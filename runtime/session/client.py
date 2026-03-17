@@ -102,6 +102,37 @@ def send_prompt(
         client.close()
 
 
+def send_prompt_nowait(
+    repo_root: str,
+    name: str,
+    prompt: str,
+) -> Dict[str, Any]:
+    """Send a prompt and return immediately after the queued ack.
+
+    Does not wait for the worker to process the request.
+    Returns {status: "queued", request_id, position} or error.
+    """
+    sock_path = _socket_path(repo_root, name)
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(10.0)
+    try:
+        client.connect(sock_path)
+        client.sendall(json.dumps({"action": "send", "prompt": prompt}).encode("utf-8") + b"\n")
+        reader = _LineReader(client)
+        first = reader.read_one()
+        if first is None:
+            return {"status": "error", "message": "Empty response from daemon"}
+        return first  # Return queued ack (or error) immediately
+    except socket.timeout:
+        return {"status": "error", "message": "Timeout connecting to daemon"}
+    except ConnectionRefusedError:
+        return {"status": "error", "message": "Cannot connect to session daemon"}
+    except FileNotFoundError:
+        return {"status": "error", "message": "Session socket not found"}
+    finally:
+        client.close()
+
+
 def ping_session(repo_root: str, name: str) -> bool:
     """Check if a session daemon is alive."""
     sock_path = _socket_path(repo_root, name)

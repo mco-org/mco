@@ -233,6 +233,9 @@ def _worker_loop(
             ctx.current_request = None
 
 
+_MAX_REQUEST_SIZE = 1024 * 1024  # 1 MB
+
+
 def _read_request(conn: socket.socket) -> Optional[Dict[str, Any]]:
     """Read a single JSON-line request from the connection."""
     data = b""
@@ -241,6 +244,8 @@ def _read_request(conn: socket.socket) -> Optional[Dict[str, Any]]:
         if not chunk:
             break
         data += chunk
+        if len(data) > _MAX_REQUEST_SIZE:
+            raise ValueError("Request exceeds maximum size of {} bytes".format(_MAX_REQUEST_SIZE))
         if b"\n" in data:
             break
     if not data:
