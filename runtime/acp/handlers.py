@@ -6,6 +6,7 @@ files or run terminal commands through MCO.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import threading
 from pathlib import Path
@@ -82,30 +83,38 @@ class TerminalManager:
             tid = "term-{}".format(self._next_id)
             self._next_id += 1
 
+        cmd = shlex.split(command)
+        if not cmd:
+            raise ValueError("Empty terminal command")
+
         proc = subprocess.Popen(
-            command,
-            shell=True,
+            cmd,
             cwd=self._cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
         )
-        self._terminals[tid] = proc
-        self._output_buffers[tid] = []
+        with self._lock:
+            self._terminals[tid] = proc
+            self._output_buffers[tid] = []
 
         # Background reader
         def _reader():
             for line in proc.stdout:
-                self._output_buffers[tid].append(line)
+                with self._lock:
+                    buf = self._output_buffers.get(tid)
+                    if buf is not None:
+                        buf.append(line)
         threading.Thread(target=_reader, daemon=True).start()
 
         return tid
 
     def output(self, terminal_id: str) -> str:
         """Return buffered output and clear buffer."""
-        buf = self._output_buffers.get(terminal_id, [])
-        text = "".join(buf)
-        buf.clear()
+        with self._lock:
+            buf = self._output_buffers.get(terminal_id, [])
+            text = "".join(buf)
+            buf.clear()
         return text
 
     def wait_for_exit(self, terminal_id: str, timeout: float = 60.0) -> int:

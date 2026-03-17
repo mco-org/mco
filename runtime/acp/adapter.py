@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import threading
 import time
 import uuid
@@ -114,7 +115,9 @@ class AcpAdapter:
 
     def run(self, input_task: TaskInput) -> TaskRunRef:
         """Start an ACP session and send the prompt."""
-        artifact_root = str(input_task.metadata.get("artifact_root", "/tmp/mco"))
+        artifact_root = str(input_task.metadata.get(
+            "artifact_root", os.path.join(tempfile.gettempdir(), "mco-{}".format(os.getuid())),
+        ))
         paths = expected_paths(artifact_root, input_task.task_id, (self.id,))
         root = paths["root"]
         paths["providers_dir"].mkdir(parents=True, exist_ok=True)

@@ -145,7 +145,8 @@ def _load_agent_rates(
     """
     try:
         raw = client.fetch_history(space=space, memory_type="episodic_memory", limit=100)
-    except Exception:
+    except Exception as exc:
+        print("[mco-bridge] failed to load agent rates: {}".format(exc), file=sys.stderr)
         return {}
 
     # Parse and deduplicate scores
@@ -279,8 +280,8 @@ def _pre_run_impl(
                 space=context_space, memory_type="episodic_memory", limit=100,
             )
             ctx.run_count = _count_run_markers(context_history)
-        except Exception:
-            pass
+        except Exception as exc:
+            print("[mco-bridge] failed to count run markers: {}".format(exc), file=sys.stderr)
 
     # Step 5: Retrieve agent scores for weight computation
     from .cold_start import get_agent_weights
@@ -357,8 +358,8 @@ def _post_run_impl(
             fhash = finding.get("finding_hash", "")
             if fhash:
                 existing_by_hash[fhash] = finding
-    except Exception:
-        pass  # cold start or connection issue — proceed with empty history
+    except Exception as exc:
+        print("[mco-bridge] failed to load existing findings: {}".format(exc), file=sys.stderr)
 
     # --- Confidence calculation (before remember) ---
     from .confidence import finding_confidence as _finding_confidence
@@ -460,8 +461,8 @@ def _post_run_impl(
                 existing_agent_scores[key] = score_obj
             except (ValueError, json.JSONDecodeError, KeyError):
                 continue
-    except Exception:
-        pass
+    except Exception as exc:
+        print("[mco-bridge] failed to load agent scores: {}".format(exc), file=sys.stderr)
 
     scores_written = 0
     for key, new_score in new_scores.items():

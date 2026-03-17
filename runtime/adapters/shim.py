@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -98,7 +99,9 @@ class ShimAdapterBase:
         if not isinstance(cmd, list) or not cmd:
             raise ValueError("adapter run command is empty")
 
-        artifact_root = str(input_task.metadata.get("artifact_root", "/tmp/mco"))
+        artifact_root = str(input_task.metadata.get(
+            "artifact_root", os.path.join(tempfile.gettempdir(), "mco-{}".format(os.getuid())),
+        ))
         paths = expected_paths(artifact_root, input_task.task_id, (self.id,))
         root = paths["root"]
         paths["providers_dir"].mkdir(parents=True, exist_ok=True)

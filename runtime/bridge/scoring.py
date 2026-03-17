@@ -7,6 +7,7 @@ false-positive (rejected) rates.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
@@ -190,8 +191,8 @@ def update_stack_aggregate(
                 existing_by_key[key] = score_obj
             except (ValueError, json.JSONDecodeError, KeyError):
                 continue
-    except Exception:
-        pass  # cold start or connection issue — proceed with empty history
+    except Exception as exc:
+        print("[mco-bridge] failed to load agent scores for stack update: {}".format(exc), file=sys.stderr)
 
     # Step 4-5: Merge and write back
     for key, new_score in new_scores.items():
