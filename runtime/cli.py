@@ -35,14 +35,18 @@ class _HelpFormatter(argparse.RawTextHelpFormatter):
 
 TOP_LEVEL_DESCRIPTION = (
     "MCO - Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.\n"
-    "Use `run` for general tasks and `review` for structured findings."
+    "Use `run` for general tasks and `review` for structured findings with consensus, debate, division, and streaming."
 )
 
 TOP_LEVEL_EPILOG = (
     "Examples:\n"
     "  mco doctor --json\n"
     "  mco run --repo . --prompt \"Summarize this repo.\" --providers claude,codex\n"
-    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --json\n\n"
+    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --json\n"
+    "  mco review --repo . --prompt \"Review for bugs.\" --debate\n"
+    "  mco review --repo . --prompt \"Review for bugs.\" --divide dimensions\n"
+    "  mco review --repo . --prompt \"Review for bugs.\" --stream live\n"
+    "  mco agent list\n\n"
     "Use `mco doctor -h`, `mco run -h`, or `mco review -h` for full command options."
 )
 
