@@ -1000,7 +1000,8 @@ def run_review(
                 continue
             provider_seen.add(provider)
             provider_order.append(provider)
-        provider_order = sorted(provider_order)
+        # Preserve user-specified order — critical for --chain where sequence matters.
+        # Do NOT sort here; the caller controls ordering via request.providers.
 
         _emit_event(request, {
             "type": "run_started",

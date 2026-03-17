@@ -35,6 +35,55 @@ class TestPerspectiveCLI(unittest.TestCase):
         self.assertEqual(args.perspectives_json, "")
 
 
+class TestPerspectiveValidation(unittest.TestCase):
+    def test_invalid_json_raises_value_error(self) -> None:
+        """Invalid --perspectives-json should raise, not silently ignore."""
+        from runtime.cli import _resolve_config
+        from unittest.mock import MagicMock
+        args = MagicMock()
+        args.perspectives_json = "not valid json{"
+        args.providers = "claude"
+        args.artifact_base = "reports/review"
+        args.format = "text"
+        args.save_artifacts = False
+        args.strict_contract = False
+        args.provider_timeouts = ""
+        args.provider_permissions_json = ""
+        args.allow_paths = "."
+        args.max_provider_parallelism = 0
+        args.chain = False
+        # Suppress-based attributes
+        for attr in ("enforcement_mode", "stall_timeout", "poll_interval", "review_hard_timeout",
+                      "quiet", "memory", "transport"):
+            delattr(args, attr)
+        with self.assertRaises(ValueError) as ctx:
+            _resolve_config(args)
+        self.assertIn("--perspectives-json", str(ctx.exception))
+
+    def test_non_dict_perspectives_raises(self) -> None:
+        """--perspectives-json with a non-object should raise."""
+        from runtime.cli import _resolve_config
+        from unittest.mock import MagicMock
+        args = MagicMock()
+        args.perspectives_json = '["not", "a", "dict"]'
+        args.providers = "claude"
+        args.artifact_base = "reports/review"
+        args.format = "text"
+        args.save_artifacts = False
+        args.strict_contract = False
+        args.provider_timeouts = ""
+        args.provider_permissions_json = ""
+        args.allow_paths = "."
+        args.max_provider_parallelism = 0
+        args.chain = False
+        for attr in ("enforcement_mode", "stall_timeout", "poll_interval", "review_hard_timeout",
+                      "quiet", "memory", "transport"):
+            delattr(args, attr)
+        with self.assertRaises(ValueError) as ctx:
+            _resolve_config(args)
+        self.assertIn("JSON object", str(ctx.exception))
+
+
 class TestPerspectiveInjection(unittest.TestCase):
     def test_perspective_prepended_to_prompt(self) -> None:
         """When a perspective is configured, it should appear in the prompt."""

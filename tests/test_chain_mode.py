@@ -2,6 +2,7 @@
 """Tests for chain mode — sequential multi-agent analysis."""
 from __future__ import annotations
 
+import tempfile
 import unittest
 
 from runtime.config import ReviewPolicy
@@ -135,3 +136,54 @@ class TestChainPromptBuilding(unittest.TestCase):
         self.assertIn("Focus on performance", final_prompt)
         self.assertIn("Found 2 security issues", final_prompt)
         self.assertIn("Review code.", final_prompt)
+
+
+class TestChainProviderOrder(unittest.TestCase):
+    """End-to-end: chain mode must preserve user-specified provider order."""
+
+    def test_chain_preserves_provider_order_via_run_review(self) -> None:
+        from runtime.review_engine import ReviewRequest, run_review
+        from runtime.contracts import ProviderPresence, CapabilitySet, TaskRunRef, TaskStatus
+
+        captured_prompts = {}
+
+        class _CapturingAdapter:
+            def __init__(self, pid: str) -> None:
+                self.id = pid
+            def detect(self):
+                return ProviderPresence(provider=self.id, detected=True, binary_path="/bin/true", version="1", auth_ok=True)
+            def capabilities(self):
+                return CapabilitySet(tiers=["C0"], supports_native_async=False, supports_poll_endpoint=False,
+                                     supports_resume_after_restart=False, supports_schema_enforcement=False,
+                                     min_supported_version="0.1", tested_os=["macos"])
+            def run(self, task_input):
+                captured_prompts[self.id] = task_input.prompt
+                return TaskRunRef(task_id=task_input.task_id, provider=self.id, run_id="r1",
+                                  artifact_path=task_input.metadata["artifact_root"], started_at="now")
+            def poll(self, ref):
+                return TaskStatus(task_id=ref.task_id, provider=self.id, run_id=ref.run_id,
+                                  attempt_state="SUCCEEDED", completed=True)
+            def cancel(self, ref):
+                pass
+            def normalize(self, raw, ctx):
+                return []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # gemini first, claude second — intentionally NOT alphabetical
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review code",
+                providers=["gemini", "claude"],
+                artifact_base="{}/artifacts".format(tmpdir),
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, chain=True),
+            )
+            adapters = {"gemini": _CapturingAdapter("gemini"), "claude": _CapturingAdapter("claude")}
+            result = run_review(req, adapters=adapters)
+
+            # Provider results must preserve input order (gemini before claude)
+            keys = list(result.provider_results.keys())
+            self.assertEqual(keys, ["gemini", "claude"])
+
+            # Both providers should have received the prompt
+            self.assertIn("review code", captured_prompts.get("gemini", ""))
+            self.assertIn("review code", captured_prompts.get("claude", ""))

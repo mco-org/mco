@@ -221,9 +221,9 @@ def _finding_location_from_dict(finding: Dict[str, object]) -> str:
     return file_path
 
 
-def _consensus_badge_text(detected_by: list, total_providers: int) -> str:
+def _consensus_badge_text(detected_by: list, total_providers: int, chain_mode: bool = False) -> str:
     """Return a space-prefixed consensus badge or empty string."""
-    badge = _consensus_badge(detected_by, total_providers)
+    badge = _consensus_badge(detected_by, total_providers, chain_mode=chain_mode)
     return "  " + badge if badge else ""
 
 
@@ -234,6 +234,7 @@ def _render_user_readable_report(
     payload: Dict[str, object],
     provider_results: Dict[str, Dict[str, object]],
     findings: Optional[List[Dict[str, object]]] = None,
+    chain_mode: bool = False,
 ) -> str:
     lines: List[str] = []
     title = "Review" if command == "review" else "Run"
@@ -310,7 +311,7 @@ def _render_user_readable_report(
             lines.append("")
             lines.append(f"In Diff ({len(in_diff)} findings)")
             for f in in_diff:
-                badge = _consensus_badge_text(f.get("detected_by", []), total_provider_count)
+                badge = _consensus_badge_text(f.get("detected_by", []), total_provider_count, chain_mode=chain_mode)
                 lines.append(
                     f"  {str(f.get('severity', '-')).upper():8s} "
                     f"{str(f.get('category', '-')):15s} "
@@ -322,7 +323,7 @@ def _render_user_readable_report(
             lines.append("")
             lines.append(f"Related ({len(related)} findings)")
             for f in related:
-                badge = _consensus_badge_text(f.get("detected_by", []), total_provider_count)
+                badge = _consensus_badge_text(f.get("detected_by", []), total_provider_count, chain_mode=chain_mode)
                 lines.append(
                     f"  {str(f.get('severity', '-')).upper():8s} "
                     f"{str(f.get('category', '-')):15s} "
@@ -756,6 +757,12 @@ def build_parser() -> argparse.ArgumentParser:
     sess_ensure.add_argument("--name", required=True, help="Session name")
     sess_ensure.add_argument("--repo", default=".", help="Repository root path")
 
+    sess_result = session_sub.add_parser("result", help="Retrieve result of a nowait request", formatter_class=_HelpFormatter)
+    sess_result.add_argument("name", help="Session name")
+    sess_result.add_argument("request_id", type=int, help="Request ID from --no-wait send")
+    sess_result.add_argument("--repo", default=".", help="Repository root path")
+    sess_result.add_argument("--json", action="store_true", help="JSON output")
+
     sess_cancel = session_sub.add_parser("cancel", help="Cancel running + queued prompts", formatter_class=_HelpFormatter)
     sess_cancel.add_argument("name", help="Session name")
     sess_cancel.add_argument("--repo", default=".", help="Repository root path")
@@ -827,10 +834,11 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     if perspectives_json:
         try:
             parsed = json.loads(perspectives_json)
-            if isinstance(parsed, dict):
-                perspectives = {str(k): str(v) for k, v in parsed.items()}
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid --perspectives-json: {}".format(exc))
+        if not isinstance(parsed, dict):
+            raise ValueError("--perspectives-json must be a JSON object, got {}".format(type(parsed).__name__))
+        perspectives = {str(k): str(v) for k, v in parsed.items()}
     if not perspectives:
         perspectives = fc_policy.get("perspectives", {})
 
@@ -951,7 +959,7 @@ def _handle_session(args: argparse.Namespace) -> int:
     """Handle the session subcommand."""
     from pathlib import Path
     from .session.manager import start_session, stop_session, list_sessions, resume_session, ensure_session
-    from .session.client import send_prompt, send_prompt_nowait, broadcast_prompt, cancel_session as client_cancel, queue_status
+    from .session.client import send_prompt, send_prompt_nowait, broadcast_prompt, cancel_session as client_cancel, queue_status, get_result
     from .session.state import load_history, load_state
 
     repo_root = str(Path(args.repo).resolve())
@@ -1092,6 +1100,22 @@ def _handle_session(args: argparse.Namespace) -> int:
                     print("Cancelled {} request(s) in session '{}'.".format(cancelled, args.name))
                 else:
                     print("Nothing running in session '{}'.".format(args.name))
+            else:
+                print("Error: {}".format(result.get("message", "unknown error")), file=sys.stderr)
+                return 2
+        return 0
+
+    if args.session_action == "result":
+        result = get_result(repo_root, args.name, args.request_id)
+        if getattr(args, "json", False):
+            print(json.dumps(result, ensure_ascii=True))
+        else:
+            status = result.get("status", "error")
+            if status == "ok":
+                print(result.get("response", ""))
+            elif status == "pending":
+                print("Request #{} is still running.".format(args.request_id))
+                return 1
             else:
                 print("Error: {}".format(result.get("message", "unknown error")), file=sys.stderr)
                 return 2
@@ -1406,7 +1430,7 @@ def main(argv: List[str] | None = None) -> int:
             print(json.dumps(payload, ensure_ascii=True))
         else:
             if args.format == "markdown-pr":
-                print(format_markdown_pr(payload, result.findings, total_providers=len(providers)))
+                print(format_markdown_pr(payload, result.findings, total_providers=len(providers), chain_mode=getattr(args, "chain", False)))
             elif args.format == "sarif":
                 print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
             else:
@@ -1418,6 +1442,7 @@ def main(argv: List[str] | None = None) -> int:
                         payload,
                         result.provider_results,
                         result.findings,
+                        chain_mode=getattr(args, "chain", False),
                     )
                 )
     else:
@@ -1428,7 +1453,7 @@ def main(argv: List[str] | None = None) -> int:
             print(json.dumps(detailed_payload, ensure_ascii=True))
         else:
             if args.format == "markdown-pr":
-                print(format_markdown_pr(payload, result.findings, total_providers=len(providers)))
+                print(format_markdown_pr(payload, result.findings, total_providers=len(providers), chain_mode=getattr(args, "chain", False)))
             elif args.format == "sarif":
                 print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
             else:
@@ -1440,6 +1465,7 @@ def main(argv: List[str] | None = None) -> int:
                         payload,
                         result.provider_results,
                         result.findings,
+                        chain_mode=getattr(args, "chain", False),
                     )
                 )
 

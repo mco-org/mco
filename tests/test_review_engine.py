@@ -643,7 +643,7 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(result.parse_success_count, 2)
             self.assertEqual(result.parse_failure_count, 0)
 
-    def test_parallel_run_json_provider_order_is_sorted(self) -> None:
+    def test_parallel_run_json_provider_order_preserves_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             codex = TimedFakeAdapter(
                 "codex",
@@ -664,7 +664,8 @@ class ReviewEngineTests(unittest.TestCase):
             result = run_review(req, adapters={"codex": codex, "claude": claude})
             run_payload = json.loads(Path(result.artifact_root, "run.json").read_text(encoding="utf-8"))
             keys = list(run_payload["provider_results"].keys())
-            self.assertEqual(keys, sorted(keys))
+            # Provider order should preserve user input, not be alphabetically sorted
+            self.assertEqual(keys, ["codex", "claude"])
             self.assertEqual(run_payload["effective_cwd"], str(Path(tmpdir).resolve()))
             expected_allow_hash = hashlib.sha256(
                 json.dumps(run_payload["allow_paths"], ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(

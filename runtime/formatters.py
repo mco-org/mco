@@ -14,14 +14,20 @@ _SARIF_LEVEL_BY_SEVERITY = {
 }
 
 
-def _consensus_badge(detected_by: list, total_providers: int) -> str:
+def _consensus_badge(detected_by: list, total_providers: int, chain_mode: bool = False) -> str:
     """Return a human-readable consensus badge for a finding.
 
-    Based on how many providers independently detected the same issue.
+    In parallel mode: based on independent agreement across providers.
+    In chain mode: later agents reviewed earlier agents' output, so
+    "agree" becomes "confirmed" to reflect non-independent validation.
     """
     n = len(detected_by) if isinstance(detected_by, list) else 0
     if total_providers <= 1 or n <= 0:
         return ""
+    if chain_mode:
+        if n >= 2:
+            return "[confirmed by {}/{}]".format(n, total_providers)
+        return "[unconfirmed]"
     if n >= 2:
         return "[{}/{} agree]".format(n, total_providers)
     return "[1 agent only]"
@@ -45,7 +51,7 @@ def _finding_location(finding: Dict[str, object]) -> str:
     return file_path
 
 
-def format_markdown_pr(payload: Dict[str, object], findings: List[Dict[str, object]], total_providers: int = 0) -> str:
+def format_markdown_pr(payload: Dict[str, object], findings: List[Dict[str, object]], total_providers: int = 0, chain_mode: bool = False) -> str:
     counts = {level: 0 for level in _SEVERITY_ORDER}
     for finding in findings:
         severity = str(finding.get("severity", "")).lower()
@@ -107,7 +113,7 @@ def format_markdown_pr(payload: Dict[str, object], findings: List[Dict[str, obje
         else:
             confidence_text = "-"
         detected_by = finding.get("detected_by", [])
-        badge = _consensus_badge(detected_by, total_providers) if has_consensus else ""
+        badge = _consensus_badge(detected_by, total_providers, chain_mode=chain_mode) if has_consensus else ""
         cols = [
             f"`{_escape_markdown_cell(str(finding.get('severity', '-')).lower())}`",
             _escape_markdown_cell(finding.get("category", "-")),

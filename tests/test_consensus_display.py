@@ -101,3 +101,40 @@ class TestMarkdownPrConsensus(unittest.TestCase):
         }
         text = format_markdown_pr(payload, [])
         self.assertIn("_No findings reported._", text)
+
+
+class TestChainModeConsensusBadge(unittest.TestCase):
+    def test_chain_mode_uses_confirmed_language(self) -> None:
+        badge = _consensus_badge(["claude", "codex"], 3, chain_mode=True)
+        self.assertEqual(badge, "[confirmed by 2/3]")
+
+    def test_chain_mode_unconfirmed(self) -> None:
+        badge = _consensus_badge(["claude"], 3, chain_mode=True)
+        self.assertEqual(badge, "[unconfirmed]")
+
+    def test_parallel_mode_uses_agree_language(self) -> None:
+        badge = _consensus_badge(["claude", "codex"], 3, chain_mode=False)
+        self.assertEqual(badge, "[2/3 agree]")
+
+    def test_chain_mode_in_markdown_pr(self) -> None:
+        payload = {
+            "decision": "FAIL",
+            "terminal_state": "COMPLETED",
+            "provider_success_count": 2,
+            "provider_failure_count": 0,
+            "findings_count": 1,
+        }
+        findings = [
+            {
+                "severity": "high",
+                "category": "security",
+                "title": "SQL injection",
+                "recommendation": "Fix",
+                "confidence": 0.9,
+                "detected_by": ["claude", "codex"],
+                "evidence": {"file": "db.py", "line": 42},
+            },
+        ]
+        text = format_markdown_pr(payload, findings, total_providers=2, chain_mode=True)
+        self.assertIn("[confirmed by 2/2]", text)
+        self.assertNotIn("[2/2 agree]", text)
