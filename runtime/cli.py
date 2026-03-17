@@ -101,7 +101,10 @@ def _doctor_adapter_registry(transport: str = "shim", extra_agents=None) -> Mapp
 
 
 def _resolve_prompt(args: argparse.Namespace) -> str:
-    """Resolve prompt from --prompt, --file, or piped stdin."""
+    """Resolve prompt from --prompt, --file, or piped stdin.
+
+    Raises ValueError with a human-readable message on failure.
+    """
     prompt = getattr(args, "prompt", "") or ""
     file_path = getattr(args, "file", "") or ""
 
@@ -112,29 +115,24 @@ def _resolve_prompt(args: argparse.Namespace) -> str:
         if file_path == "-":
             text = sys.stdin.read().strip()
             if not text:
-                print("Empty input from stdin.", file=sys.stderr)
-                raise SystemExit(2)
+                raise ValueError("Empty input from stdin.")
             return text
         path = Path(file_path)
         if not path.exists():
-            print("File not found: {}".format(file_path), file=sys.stderr)
-            raise SystemExit(2)
+            raise ValueError("File not found: {}".format(file_path))
         text = path.read_text(encoding="utf-8").strip()
         if not text:
-            print("Empty prompt file: {}".format(file_path), file=sys.stderr)
-            raise SystemExit(2)
+            raise ValueError("Empty prompt file: {}".format(file_path))
         return text
 
     # Check for piped stdin
     if not sys.stdin.isatty():
         text = sys.stdin.read().strip()
         if not text:
-            print("Empty input from stdin.", file=sys.stderr)
-            raise SystemExit(2)
+            raise ValueError("Empty input from stdin.")
         return text
 
-    print("Either --prompt or --file is required.", file=sys.stderr)
-    raise SystemExit(2)
+    raise ValueError("Either --prompt or --file is required.")
 
 
 def _doctor_provider_presence(providers: List[str]) -> Dict[str, ProviderPresence]:
@@ -453,13 +451,13 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     timeouts.add_argument(
         "--poll-interval",
         type=float,
-        default=DEFAULT_POLICY.poll_interval_seconds,
+        default=argparse.SUPPRESS,
         help="Provider status polling interval in seconds",
     )
     timeouts.add_argument(
         "--review-hard-timeout",
         type=int,
-        default=DEFAULT_POLICY.review_hard_timeout_seconds,
+        default=argparse.SUPPRESS,
         help="Review-mode hard deadline in seconds (0 disables)",
     )
 
@@ -517,7 +515,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     access.add_argument(
         "--enforcement-mode",
         choices=("strict", "best_effort"),
-        default=DEFAULT_POLICY.enforcement_mode,
+        default=argparse.SUPPRESS,
         help="strict fails closed when permission requirements are unmet",
     )
     access.add_argument(
@@ -788,14 +786,18 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     if max_provider_parallelism < 0:
         max_provider_parallelism = fc_policy.get("max_provider_parallelism", cfg.policy.max_provider_parallelism)
 
-    # enforcement_mode: CLI > config file > hardcoded default
-    enforcement_mode = args.enforcement_mode or fc_policy.get("enforcement_mode", cfg.policy.enforcement_mode)
-
-    stall_timeout_seconds = args.stall_timeout if args.stall_timeout > 0 else fc_policy.get("stall_timeout_seconds", cfg.policy.stall_timeout_seconds)
-    poll_interval_seconds = args.poll_interval if args.poll_interval > 0 else fc_policy.get("poll_interval_seconds", cfg.policy.poll_interval_seconds)
-    review_hard_timeout_seconds = (
-        args.review_hard_timeout if args.review_hard_timeout >= 0 else fc_policy.get("review_hard_timeout_seconds", cfg.policy.review_hard_timeout_seconds)
-    )
+    # These are resolved by the config merge in main() (CLI > config > hardcoded).
+    # Use getattr for safety when called outside main() (e.g. tests).
+    enforcement_mode = getattr(args, "enforcement_mode", None) or fc_policy.get("enforcement_mode", cfg.policy.enforcement_mode)
+    stall_timeout_seconds = getattr(args, "stall_timeout", None)
+    if stall_timeout_seconds is None:
+        stall_timeout_seconds = fc_policy.get("stall_timeout_seconds", cfg.policy.stall_timeout_seconds)
+    poll_interval_seconds = getattr(args, "poll_interval", None)
+    if poll_interval_seconds is None:
+        poll_interval_seconds = fc_policy.get("poll_interval_seconds", cfg.policy.poll_interval_seconds)
+    review_hard_timeout_seconds = getattr(args, "review_hard_timeout", None)
+    if review_hard_timeout_seconds is None:
+        review_hard_timeout_seconds = fc_policy.get("review_hard_timeout_seconds", cfg.policy.review_hard_timeout_seconds)
     enforce_findings_contract = bool(args.strict_contract)
 
     policy = ReviewPolicy(
@@ -1191,6 +1193,9 @@ def main(argv: List[str] | None = None) -> int:
     _POLICY_DEFAULTS = {
         "stall_timeout": ("stall_timeout_seconds", DEFAULT_POLICY.stall_timeout_seconds),
         "max_provider_parallelism": ("max_provider_parallelism", DEFAULT_POLICY.max_provider_parallelism),
+        "poll_interval": ("poll_interval_seconds", DEFAULT_POLICY.poll_interval_seconds),
+        "review_hard_timeout": ("review_hard_timeout_seconds", DEFAULT_POLICY.review_hard_timeout_seconds),
+        "enforcement_mode": ("enforcement_mode", DEFAULT_POLICY.enforcement_mode),
     }
     for attr, (config_key, hardcoded_default) in _POLICY_DEFAULTS.items():
         if not hasattr(args, attr):
@@ -1287,7 +1292,10 @@ def main(argv: List[str] | None = None) -> int:
     elif args.unstaged:
         diff_mode = "unstaged"
 
-    prompt = _resolve_prompt(args)
+    try:
+        prompt = _resolve_prompt(args)
+    except ValueError as exc:
+        return _stream_error_exit("input_error", str(exc))
     req = ReviewRequest(
         repo_root=repo_root,
         prompt=prompt,

@@ -113,6 +113,9 @@ class AcpAdapter:
     def capabilities(self) -> CapabilitySet:
         return self._capability_set
 
+    def supported_permission_keys(self) -> List[str]:
+        return ["permission_mode", "terminal"]
+
     def run(self, input_task: TaskInput) -> TaskRunRef:
         """Start an ACP session and send the prompt."""
         artifact_root = str(input_task.metadata.get(

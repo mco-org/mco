@@ -210,8 +210,37 @@ class TestArgparseErrorsEmitEvents(unittest.TestCase):
                 exit_code = main(["review", "--repo", ".", "--stream", "jsonl"])
             except SystemExit as exc:
                 exit_code = int(exc.code) if isinstance(exc.code, int) else 2
-        # Must exit 2 since no prompt was provided
         self.assertEqual(exit_code, 2)
+        # Must have JSONL error event on stdout
+        output = stdout_buf.getvalue().strip()
+        self.assertTrue(output, "Expected JSONL error event on stdout")
+        event = json.loads(output.splitlines()[-1])
+        self.assertEqual(event["type"], "error")
+        # stderr must be empty — pure JSONL protocol
+        self.assertEqual(stderr_buf.getvalue().strip(), "", "stderr must be empty in stream mode")
+
+    def test_empty_stdin_stream_emits_jsonl_error(self) -> None:
+        """Empty piped stdin with --stream jsonl should emit JSONL error, not stderr."""
+        from runtime.cli import main
+        from unittest.mock import patch
+        import io
+        import contextlib
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        mock_stdin = io.StringIO("")
+        mock_stdin.isatty = lambda: False  # type: ignore
+        with patch("sys.stdin", mock_stdin), \
+             contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+            try:
+                exit_code = main(["review", "--repo", ".", "--stream", "jsonl"])
+            except SystemExit as exc:
+                exit_code = int(exc.code) if isinstance(exc.code, int) else 2
+        self.assertEqual(exit_code, 2)
+        output = stdout_buf.getvalue().strip()
+        self.assertTrue(output, "Expected JSONL error event on stdout")
+        event = json.loads(output.splitlines()[-1])
+        self.assertEqual(event["type"], "error")
+        self.assertEqual(stderr_buf.getvalue().strip(), "", "stderr must be empty in stream mode")
 
     def test_bad_stream_value_emits_jsonl_error(self) -> None:
         from runtime.cli import main

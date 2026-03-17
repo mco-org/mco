@@ -39,11 +39,10 @@ class TestResolvePrompt(unittest.TestCase):
         from unittest.mock import patch, MagicMock
         parser = build_parser()
         args = parser.parse_args(["run", "--providers", "claude"])
-        # Mock stdin as a tty so _resolve_prompt doesn't try to read from it
         mock_stdin = MagicMock()
         mock_stdin.isatty.return_value = True
         with patch("sys.stdin", mock_stdin):
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(ValueError):
                 _resolve_prompt(args)
 
     def test_prompt_and_file_mutual_exclusion(self) -> None:
@@ -54,11 +53,11 @@ class TestResolvePrompt(unittest.TestCase):
 
     def test_empty_stdin_rejected(self) -> None:
         import io
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
         parser = build_parser()
         args = parser.parse_args(["run", "--file", "-", "--providers", "claude"])
         with patch("sys.stdin", io.StringIO("")):
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(ValueError):
                 _resolve_prompt(args)
 
     def test_empty_file_rejected(self) -> None:
@@ -67,7 +66,7 @@ class TestResolvePrompt(unittest.TestCase):
             f.flush()
             parser = build_parser()
             args = parser.parse_args(["run", "--file", f.name, "--providers", "claude"])
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(ValueError):
                 _resolve_prompt(args)
             os.unlink(f.name)
 
@@ -79,7 +78,7 @@ class TestResolvePrompt(unittest.TestCase):
         mock_stdin = io.StringIO("")
         mock_stdin.isatty = lambda: False  # type: ignore
         with patch("sys.stdin", mock_stdin):
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(ValueError):
                 _resolve_prompt(args)
 
 

@@ -69,6 +69,17 @@ class TestLoadConfigFiles(unittest.TestCase):
             result = load_config_files(tmp)
             self.assertEqual(result["artifact_base"], "reports/global")
 
+    def test_config_enforcement_mode_wired(self) -> None:
+        """enforcement_mode from config file should reach _resolve_config."""
+        from runtime.cli import build_parser, _resolve_config
+        import tempfile, json, os
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
+                json.dump({"policy": {"enforcement_mode": "best_effort", "poll_interval_seconds": 9.5}}, f)
+            result = load_config_files(tmp)
+            self.assertEqual(result["policy"]["enforcement_mode"], "best_effort")
+            self.assertEqual(result["policy"]["poll_interval_seconds"], 9.5)
+
     def test_invalid_json_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, ".mcorc.json"), "w") as f:
