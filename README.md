@@ -113,6 +113,8 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Environment health check** — `mco doctor` probes binary presence, version, and auth status for all providers
 - **Token usage tracking** — `--include-token-usage` for best-effort per-agent and aggregate token consumption
 - **Progress-driven timeouts** — agents run freely until completion; cancel only when output goes idle
+- **Stateful sessions** — `mco session` for persistent multi-turn conversations with prompt queue and cancellation
+- **ACP transport** — `--transport acp` for structured JSON-RPC communication via the Agent Client Protocol
 - **Extensible adapter contract** — uniform interface for any CLI agent, not limited to built-in providers
 - **Machine-readable output** — JSON, SARIF, or Markdown output for downstream automation
 
@@ -142,7 +144,10 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Staged changes review | `mco review --staged` | Review only git staged changes |
 | Real-time event stream | `mco review --stream jsonl` | JSONL events to stdout as providers execute |
 | Multi-turn session | `mco session start --provider claude` | Persistent session with conversation history |
+| Cancel running prompt | `mco session cancel my-review` | Interrupt running + queued prompts immediately |
+| Queue status | `mco session queue my-review` | Show running request ID and queue depth |
 | Multi-session broadcast | `mco session broadcast "prompt"` | Fan out to all active sessions, aggregate results |
+| ACP transport | `mco run --transport acp --providers claude` | Structured JSON-RPC communication with ACP agents |
 
 ## Quick Start
 
@@ -277,6 +282,7 @@ MCO is zero-config by default. You can run it directly with built-in defaults an
 | `--unstaged` | off | Review only unstaged working tree changes |
 | `--diff-base` | auto | Git ref for branch diff (e.g. `origin/main`, `HEAD~3`). Implies `--diff` |
 | `--stream` | off | `jsonl` — output real-time JSONL event stream to stdout |
+| `--transport` | `shim` | `shim` (stdout parsing) or `acp` (Agent Client Protocol JSON-RPC) |
 
 Default provider permissions:
 
