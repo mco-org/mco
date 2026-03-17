@@ -7,6 +7,79 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-18
+### Added
+- Consensus engine with agreement-based scoring (`consensus_score`, `confirmed` / `needs-verification` / `unverified`).
+- `--stream live` for real-time terminal progress per provider.
+- `--debate` mode for structured multi-agent challenge rounds.
+- `--divide files|dimensions` for task splitting across providers.
+- Custom agent ecosystem: `.mco/agents.yaml` config, Ollama adapter, `mco agent list` / `mco agent check`.
+- `has_consensus_fallback` field in synthesis output.
+
+### Changed
+- `--synthesize` now produces algorithm-driven consensus analysis plus optional agent narrative.
+- Findings are sorted by consensus level and then consensus score.
+- SARIF confidence now maps to `consensus_score`.
+- Markdown PR output now groups findings by consensus level.
+
+### Fixed
+- `--divide files` no longer collects non-source directories.
+- Empty file-slice providers are skipped instead of scanning the full repository.
+- `synthesis.success` now correctly reflects narrative provider status.
+- `max_provider_parallelism` config file fallback is restored.
+- `--divide dimensions` now assigns after provider filtering.
+- `OllamaAdapter` no longer hijacks `command+model` agents.
+- Incomplete agents without `command` or `model` are filtered from the registry.
+
+## [0.8.0] - 2026-03-17
+### Added
+- `--chain` mode for sequential multi-agent analysis.
+- `--perspectives-json` for per-provider review focus.
+- Consensus badges (`[N/M agree]` and chain-specific confirmed-by labels) in human-readable outputs.
+- Session result retrieval for queued or asynchronous session runs.
+
+### Changed
+- Session retry behavior now classifies errors and applies exponential backoff.
+
+### Fixed
+- Fixed a critical `--no-wait` session data-loss issue.
+
+## [0.7.0] - 2026-03-17
+### Added
+- `--file` and stdin prompt ingestion for `run` / `review`.
+- Temporary `--agent` registration for custom ACP-compatible agents.
+- `--quiet` output mode and config-file loading support.
+- `mco session ensure`, `--no-wait`, and Ctrl+C-aware session cancellation improvements.
+- ACP expansion with structured rendering plus bidirectional filesystem and terminal handlers.
+
+### Fixed
+- Fixed `allow_paths` passthrough, deep config merge behavior, and empty-stdin rejection.
+- Hardened ACP permission keys and launch-flag handling.
+- Improved thread safety around pending session state and streaming buffers.
+
+## [0.6.0] - 2026-03-16
+### Added
+- Stateful multi-turn sessions via `mco session`.
+- Session prompt queueing with cancellation support.
+- ACP (Agent Client Protocol) transport layer.
+- Data-driven ACP protocol conformance tests.
+
+## [0.5.0] - 2026-03-16
+### Added
+- Diff-only review mode with `--diff`, `--staged`, and `--unstaged`.
+- `mco serve` MCP server mode.
+- Structured streaming via `--stream jsonl`.
+
+## [0.4.0] - 2026-03-12
+### Added
+- Cross-session memory bridge with `--memory` and `--space`.
+- Passive confirmation, forget-cleaner, and confidence-scored finding persistence.
+- Agent reliability scoring, task classification, and tech-stack priors.
+- `mco findings` and `mco memory` subcommands.
+
+### Fixed
+- Correctness fixes for canonical latest-view deduplication, category-aware priors, `memory_id` propagation, and per-finding changed-file tracking.
+
 ## [0.3.5] - 2026-03-10
 ### Changed
 - Default providers list now includes all 5 supported providers (claude, codex, gemini, opencode, qwen) instead of only claude and codex.
