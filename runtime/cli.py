@@ -540,6 +540,11 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Per-provider review perspective JSON, e.g. '{\"claude\":\"Focus on security issues\",\"codex\":\"Focus on performance\"}'",
     )
     access.add_argument(
+        "--chain",
+        action="store_true",
+        help="Chain mode: run providers sequentially, feeding each provider's output as context to the next",
+    )
+    access.add_argument(
         "--strict-contract",
         action="store_true",
         help="Review mode only: enforce strict findings JSON contract",
@@ -844,6 +849,7 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         provider_permissions=provider_permissions,
         enforcement_mode=enforcement_mode,
         perspectives=perspectives,
+        chain=getattr(args, "chain", False) or fc_policy.get("chain", False),
     )
     return ReviewConfig(providers=providers, artifact_base=artifact_base, policy=policy)
 

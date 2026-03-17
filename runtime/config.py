@@ -25,6 +25,7 @@ class ReviewPolicy:
     provider_permissions: Dict[str, Dict[str, str]] = field(default_factory=dict)
     enforcement_mode: str = "strict"
     perspectives: Dict[str, str] = field(default_factory=dict)
+    chain: bool = False
 
 
 @dataclass(frozen=True)
