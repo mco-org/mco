@@ -120,8 +120,12 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Quiet mode** — `--quiet` for pipe-friendly output (final text only, no headers)
 - **Config files** — `.mcorc.json` (project) and `~/.mco/config.json` (global) for persistent defaults
 - **Idempotent sessions** — `mco session ensure` creates-or-returns a session in one call
-- **Async send** — `--no-wait` returns immediately after queuing a prompt
+- **Async send** — `--no-wait` returns immediately after queuing a prompt; retrieve results later via `session result`
 - **Ctrl+C cancel** — interrupt `session send` gracefully, automatically cancels the running prompt
+- **Chain mode** — `--chain` runs providers sequentially, feeding each provider's output as context to the next for challenge-and-supplement workflows
+- **Per-provider perspectives** — `--perspectives-json` assigns different review focus areas (security, performance, maintainability) to each provider
+- **Consensus badges** — findings show `[N/M agree]` in parallel mode or `[confirmed by N/M]` in chain mode to surface cross-agent agreement
+- **Session retry with error classification** — session dispatch retries retryable errors (timeout, rate limit, network) with exponential backoff; partial output preserved on timeout
 - **ACP bidirectional handlers** — agents can read/write files and run terminal commands through MCO
 - **Extensible adapter contract** — uniform interface for any CLI agent, not limited to built-in providers
 - **Machine-readable output** — JSON, SARIF, or Markdown output for downstream automation
@@ -163,6 +167,9 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Config-driven run | (uses `.mcorc.json`) | Persistent project defaults without CLI flags |
 | Idempotent session | `mco session ensure --provider claude --name dev` | Create or return existing session |
 | Async prompt | `mco session send dev "task" --no-wait` | Queue prompt and return immediately |
+| Retrieve async result | `mco session result dev 42` | Get result of a previously queued nowait request |
+| Chain analysis | `mco review --chain --providers claude,codex` | Claude analyzes first, Codex challenges and supplements |
+| Perspective assignment | `mco review --perspectives-json '{"claude":"security","codex":"performance"}'` | Each provider focuses on a different review area |
 
 ## Quick Start
 
@@ -306,6 +313,8 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | `--agent` | unset | Custom ACP agent: `--agent NAME "command"`. Requires `--transport acp` |
 | `--file` | unset | Read prompt from file path, or `-` for stdin. Mutually exclusive with `--prompt` |
 | `--quiet` | off | Output only final text, no headers or formatting. Mutually exclusive with `--json`/`--stream` |
+| `--chain` | off | Run providers sequentially, feeding each output as context to the next |
+| `--perspectives-json` | unset | Per-provider review perspective JSON (e.g. `'{"claude":"security","codex":"performance"}'`) |
 
 Default provider permissions:
 
@@ -339,7 +348,13 @@ mco review \
   "policy": {
     "stall_timeout_seconds": 600,
     "enforcement_mode": "best_effort",
-    "max_provider_parallelism": 3
+    "max_provider_parallelism": 3,
+    "chain": false,
+    "perspectives": {
+      "claude": "Focus on security vulnerabilities and injection attacks",
+      "codex": "Focus on performance bottlenecks and resource leaks",
+      "gemini": "Focus on code maintainability and design patterns"
+    }
   }
 }
 ```
