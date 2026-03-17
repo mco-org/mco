@@ -74,6 +74,18 @@ class TestSessionCLIParsing(unittest.TestCase):
         args = parser.parse_args(["session", "queue", "my-review", "--json"])
         self.assertTrue(args.json)
 
+    def test_session_result_accepted(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["session", "result", "my-review", "42"])
+        self.assertEqual(args.session_action, "result")
+        self.assertEqual(args.name, "my-review")
+        self.assertEqual(args.request_id, 42)
+
+    def test_session_result_json(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["session", "result", "my-review", "1", "--json"])
+        self.assertTrue(args.json)
+
     def test_session_requires_action(self) -> None:
         parser = build_parser()
         with self.assertRaises(SystemExit):

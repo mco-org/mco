@@ -635,6 +635,12 @@ def _run_provider(
     poll_interval_seconds = _poll_interval_seconds(request.policy)
     review_hard_timeout_seconds = request.policy.review_hard_timeout_seconds if review_mode else 0
 
+    # Inject per-provider perspective if configured
+    provider_prompt = full_prompt
+    perspective = request.policy.perspectives.get(provider, "")
+    if perspective:
+        provider_prompt = "## Review Perspective\n{}\n\n{}".format(perspective, full_prompt)
+
     def runner(_attempt: int) -> AttemptResult:
         run_ref = None
         try:
@@ -648,7 +654,7 @@ def _run_provider(
                 metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
             input_task = TaskInput(
                 task_id=resolved_task_id,
-                prompt=full_prompt,
+                prompt=provider_prompt,
                 repo_root=request.repo_root,
                 target_paths=target_paths,
                 timeout_seconds=provider_stall_timeout,
@@ -994,7 +1000,8 @@ def run_review(
                 continue
             provider_seen.add(provider)
             provider_order.append(provider)
-        provider_order = sorted(provider_order)
+        # Preserve user-specified order — critical for --chain where sequence matters.
+        # Do NOT sort here; the caller controls ordering via request.providers.
 
         _emit_event(request, {
             "type": "run_started",
@@ -1008,7 +1015,40 @@ def run_review(
         else:
             max_workers = max(1, min(len(provider_order), request.policy.max_provider_parallelism))
         outcomes: Dict[str, _ProviderExecutionOutcome] = {}
-        if max_workers <= 1:
+
+        # Chain mode: sequential execution where each provider gets prior outputs as context
+        if request.policy.chain and len(provider_order) > 1:
+            chain_prompt = full_prompt
+            for idx, provider in enumerate(provider_order):
+                outcomes[provider] = _run_provider(
+                    request,
+                    runtime,
+                    adapter_map,
+                    resolved_task_id,
+                    runtime_artifact_base,
+                    write_artifacts,
+                    chain_prompt,
+                    normalized_targets,
+                    normalized_allow_paths,
+                    review_mode,
+                    provider,
+                )
+                # Append this provider's output as context for the next provider
+                if idx < len(provider_order) - 1:
+                    pr = outcomes[provider].provider_result
+                    output_text = str(pr.get("final_text", "")) or str(pr.get("output_text", ""))
+                    if output_text.strip():
+                        chain_prompt = (
+                            "{}\n\n"
+                            "---\n"
+                            "## Prior Analysis by {}\n"
+                            "{}\n"
+                            "---\n\n"
+                            "Review the above analysis critically. "
+                            "Confirm valid findings, challenge questionable ones, "
+                            "and add any issues that were missed."
+                        ).format(chain_prompt, provider, output_text.strip())
+        elif max_workers <= 1:
             for provider in provider_order:
                 outcomes[provider] = _run_provider(
                     request,

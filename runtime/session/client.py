@@ -117,7 +117,8 @@ def send_prompt_nowait(
     client.settimeout(10.0)
     try:
         client.connect(sock_path)
-        client.sendall(json.dumps({"action": "send", "prompt": prompt}).encode("utf-8") + b"\n")
+        # Tell daemon this is fire-and-forget so it won't block waiting to send result
+        client.sendall(json.dumps({"action": "send", "prompt": prompt, "nowait": True}).encode("utf-8") + b"\n")
         reader = _LineReader(client)
         first = reader.read_one()
         if first is None:
@@ -156,6 +157,15 @@ def queue_status(repo_root: str, name: str) -> Dict[str, Any]:
     """Query queue status of a session daemon."""
     sock_path = _socket_path(repo_root, name)
     return _send_request(sock_path, {"action": "queue"}, timeout=5.0)
+
+
+def get_result(repo_root: str, name: str, request_id: int) -> Dict[str, Any]:
+    """Retrieve the result of a previously submitted nowait request.
+
+    Returns the result if the request has completed, or {status: "pending"}.
+    """
+    sock_path = _socket_path(repo_root, name)
+    return _send_request(sock_path, {"action": "result", "request_id": request_id}, timeout=5.0)
 
 
 def broadcast_prompt(
