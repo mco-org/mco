@@ -115,6 +115,14 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Progress-driven timeouts** — agents run freely until completion; cancel only when output goes idle
 - **Stateful sessions** — `mco session` for persistent multi-turn conversations with prompt queue and cancellation
 - **ACP transport** — `--transport acp` for structured JSON-RPC communication via the Agent Client Protocol
+- **Custom ACP agents** — `--agent NAME COMMAND` to register any ACP-compatible binary as a provider
+- **Flexible prompt input** — `--file path`, `--file -` (stdin), or piped input for non-interactive workflows
+- **Quiet mode** — `--quiet` for pipe-friendly output (final text only, no headers)
+- **Config files** — `.mcorc.json` (project) and `~/.mco/config.json` (global) for persistent defaults
+- **Idempotent sessions** — `mco session ensure` creates-or-returns a session in one call
+- **Async send** — `--no-wait` returns immediately after queuing a prompt
+- **Ctrl+C cancel** — interrupt `session send` gracefully, automatically cancels the running prompt
+- **ACP bidirectional handlers** — agents can read/write files and run terminal commands through MCO
 - **Extensible adapter contract** — uniform interface for any CLI agent, not limited to built-in providers
 - **Machine-readable output** — JSON, SARIF, or Markdown output for downstream automation
 
@@ -148,6 +156,13 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Queue status | `mco session queue my-review` | Show running request ID and queue depth |
 | Multi-session broadcast | `mco session broadcast "prompt"` | Fan out to all active sessions, aggregate results |
 | ACP transport | `mco run --transport acp --providers claude` | Structured JSON-RPC communication with ACP agents |
+| Custom ACP agent | `mco run --agent mybot "mybot --acp" --transport acp` | Register and run a custom ACP agent |
+| Prompt from file | `mco review --file prompt.md --providers claude` | Read prompt from a file instead of inline |
+| Piped prompt | `cat prompt.md \| mco run --providers claude` | Read prompt from stdin pipe |
+| Quiet output | `mco run --quiet --providers claude --prompt "..."` | Print only final text, no headers |
+| Config-driven run | (uses `.mcorc.json`) | Persistent project defaults without CLI flags |
+| Idempotent session | `mco session ensure --provider claude --name dev` | Create or return existing session |
+| Async prompt | `mco session send dev "task" --no-wait` | Queue prompt and return immediately |
 
 ## Quick Start
 
@@ -254,7 +269,12 @@ mco run \
 
 ## Defaults and Overrides
 
-MCO is zero-config by default. You can run it directly with built-in defaults and override behavior with CLI flags only.
+MCO is zero-config by default. You can also persist defaults in config files:
+
+- **Project config**: `.mcorc.json` in the repo root
+- **Global config**: `~/.mco/config.json`
+
+Merge order: CLI flags > project config > global config > built-in defaults. Nested objects (like `policy`) are deep-merged.
 
 ### Key Runtime Flags
 
@@ -283,6 +303,9 @@ MCO is zero-config by default. You can run it directly with built-in defaults an
 | `--diff-base` | auto | Git ref for branch diff (e.g. `origin/main`, `HEAD~3`). Implies `--diff` |
 | `--stream` | off | `jsonl` — output real-time JSONL event stream to stdout |
 | `--transport` | `shim` | `shim` (stdout parsing) or `acp` (Agent Client Protocol JSON-RPC) |
+| `--agent` | unset | Custom ACP agent: `--agent NAME "command"`. Requires `--transport acp` |
+| `--file` | unset | Read prompt from file path, or `-` for stdin. Mutually exclusive with `--prompt` |
+| `--quiet` | off | Output only final text, no headers or formatting. Mutually exclusive with `--json`/`--stream` |
 
 Default provider permissions:
 
@@ -303,6 +326,22 @@ mco review \
   --review-hard-timeout 1800 \
   --max-provider-parallelism 0 \
   --provider-timeouts qwen=900,codex=900
+```
+
+### Config File Example
+
+```json
+// .mcorc.json
+{
+  "providers": ["claude", "codex", "gemini"],
+  "transport": "acp",
+  "quiet": true,
+  "policy": {
+    "stall_timeout_seconds": 600,
+    "enforcement_mode": "best_effort",
+    "max_provider_parallelism": 3
+  }
+}
 ```
 
 Run `mco review --help` for the full flag list.
