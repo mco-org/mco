@@ -498,3 +498,84 @@ class DivideRuntimeTests(unittest.TestCase):
             self.assertEqual(result.findings[0]["consensus_score"], 0.8)
             consensus_event = next(event for event in events if event["type"] == "consensus")
             self.assertEqual(consensus_event["provider_count"], 1)
+            self.assertEqual(consensus_event["division_strategy"], "files")
+            skipped_event = next(
+                event
+                for event in events
+                if event["type"] == "provider_finished" and event["provider"] == "codex"
+            )
+            self.assertTrue(skipped_event["skipped"])
+            self.assertEqual(skipped_event["reason"], "no_files_assigned")
+
+    def test_dimensions_division_stream_events_include_division_strategy(self) -> None:
+        from runtime.contracts import CapabilitySet, NormalizeContext, ProviderPresence, TaskInput, TaskRunRef, TaskStatus
+
+        events: list[dict] = []
+
+        class _CapturingAdapter:
+            def __init__(self, provider: str) -> None:
+                self.id = provider
+
+            def detect(self):
+                return ProviderPresence(provider=self.id, detected=True, binary_path="/bin/true", version="1", auth_ok=True)
+
+            def capabilities(self):
+                return CapabilitySet(
+                    tiers=["C0"],
+                    supports_native_async=False,
+                    supports_poll_endpoint=False,
+                    supports_resume_after_restart=False,
+                    supports_schema_enforcement=False,
+                    min_supported_version="0.1",
+                    tested_os=["macos"],
+                )
+
+            def run(self, task_input: TaskInput):
+                artifact_root = Path(task_input.metadata["artifact_root"]) / task_input.task_id
+                raw_dir = artifact_root / "raw"
+                providers_dir = artifact_root / "providers"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                providers_dir.mkdir(parents=True, exist_ok=True)
+                (raw_dir / f"{self.id}.stdout.log").write_text('{"findings":[]}', encoding="utf-8")
+                (raw_dir / f"{self.id}.stderr.log").write_text("", encoding="utf-8")
+                return TaskRunRef(task_id=task_input.task_id, provider=self.id, run_id="r1", artifact_path=str(artifact_root), started_at="now")
+
+            def poll(self, ref):
+                return TaskStatus(
+                    task_id=ref.task_id,
+                    provider=ref.provider,
+                    run_id=ref.run_id,
+                    attempt_state="SUCCEEDED",
+                    completed=True,
+                    heartbeat_at="now",
+                    output_path=None,
+                )
+
+            def cancel(self, ref):
+                pass
+
+            def normalize(self, raw: object, ctx: NormalizeContext):
+                return []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude", "codex"],
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False, divide="dimensions"),
+                target_paths=["."],
+                stream_callback=events.append,
+            )
+            result = run_review(
+                req,
+                adapters={"claude": _CapturingAdapter("claude"), "codex": _CapturingAdapter("codex")},
+                write_artifacts=False,
+            )
+            self.assertEqual(result.division_strategy, "dimensions")
+            run_started = next(event for event in events if event["type"] == "run_started")
+            consensus_event = next(event for event in events if event["type"] == "consensus")
+            result_event = next(event for event in events if event["type"] == "result")
+            self.assertEqual(run_started["division_strategy"], "dimensions")
+            self.assertEqual(consensus_event["division_strategy"], "dimensions")
+            self.assertEqual(result_event["division_strategy"], "dimensions")

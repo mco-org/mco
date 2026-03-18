@@ -1192,7 +1192,7 @@ def _handle_session(args: argparse.Namespace) -> int:
     from pathlib import Path
     from .session.manager import start_session, stop_session, list_sessions, resume_session, ensure_session
     from .session.client import send_prompt, send_prompt_nowait, broadcast_prompt, cancel_session as client_cancel, queue_status, get_result
-    from .session.state import load_history, load_state
+    from .session.state import load_history
 
     repo_root = str(Path(args.repo).resolve())
 
@@ -1451,7 +1451,11 @@ def main(argv: List[str] | None = None) -> int:
             return 0
 
         if args.agent_action == "check":
-            payload = _check_agent(repo_root, args.name, cli_agents=cli_agents)
+            agent_name = args.name.strip() if isinstance(args.name, str) else ""
+            if not agent_name:
+                print("Agent name is required.", file=sys.stderr)
+                return 2
+            payload = _check_agent(repo_root, agent_name, cli_agents=cli_agents)
             if getattr(args, "json", False):
                 print(json.dumps(payload, ensure_ascii=True))
             else:

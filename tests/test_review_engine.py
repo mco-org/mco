@@ -7,6 +7,7 @@ import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from runtime.adapters.parsing import normalize_findings_from_text
 from runtime.config import ReviewPolicy
@@ -18,6 +19,7 @@ from runtime.review_engine import (
     _build_debate_prompt,
     _consensus_level,
     _parse_debate_votes,
+    _run_debate_round,
     run_review,
 )
 
@@ -269,6 +271,26 @@ class ConsensusAlgorithmTests(unittest.TestCase):
         self.assertEqual(updated[0]["consensus_level"], "confirmed")
         self.assertEqual(updated[0]["consensus_score"], 0.8)
         self.assertEqual(updated[0]["debate"]["refined"], True)
+
+    def test_run_debate_round_skips_when_no_findings(self) -> None:
+        req = ReviewRequest(
+            repo_root=".",
+            prompt="Review",
+            providers=["claude", "codex"],
+            artifact_base="/tmp/art",
+            policy=ReviewPolicy(timeout_seconds=3, max_retries=0, debate=True),
+        )
+        result = _run_debate_round(
+            req,
+            runtime=MagicMock(),
+            adapter_map={},
+            resolved_task_id="task-1",
+            merged_findings=[],
+            provider_order=["claude", "codex"],
+            normalized_targets=["."],
+            normalized_allow_paths=["."],
+        )
+        self.assertEqual(result, {"enabled": False, "reason": "no_findings"})
 
 
 class ReviewEngineTests(unittest.TestCase):

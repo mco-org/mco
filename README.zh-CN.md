@@ -157,6 +157,28 @@ MCO 设计为被任意编排方 Agent 或 AI IDE 调用 — Claude Code、Cursor
 | 查看 Agent 注册表 | `mco agent list` | 列出内置 + 自定义 Agent |
 | 检查单个 Agent | `mco agent check my-ollama` | 验证某个自定义 Agent 或 Ollama 包装器 |
 
+注意：`--debate` 与 `--divide` 互斥，不能同时使用。
+
+辩论模式完整示例：
+
+```bash
+mco review \
+  --repo . \
+  --prompt "审查这个 PR，并在最终排序前质疑证据不足的 finding。" \
+  --providers claude,codex,gemini \
+  --debate
+```
+
+分工模式完整示例：
+
+```bash
+mco review \
+  --repo . \
+  --prompt "审查这个 PR 的正确性和性能问题。" \
+  --providers claude,codex,gemini \
+  --divide dimensions
+```
+
 ## 快速开始
 
 通过 npm 安装（需要系统有 Python 3）：
@@ -355,11 +377,11 @@ mco review \
 
 ## 自定义 Agent
 
-MCO 可以从以下位置加载自定义 Agent：
+配置文件按以下优先级加载：
 
-- 仓库根目录下的 `.mco/agents.yaml`
-- 仓库根目录下的 `.mcorc.yaml`
-- 全局的 `~/.mco/agents.yaml`
+1. `.mco/agents.yaml`（项目级）
+2. `.mcorc.yaml`（项目根目录）
+3. `~/.mco/agents.yaml`（全局）
 
 查看当前可见的 Agent：
 

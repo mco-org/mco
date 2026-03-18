@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import unittest
+from unittest.mock import patch
 
 from runtime.cli import (
     _parse_paths,
@@ -201,6 +202,17 @@ class CliTests(unittest.TestCase):
         self.assertIn("INCONCLUSIVE", help_text)
         # Config-overridable flags use argparse.SUPPRESS, so default isn't shown
         self.assertIn("--stall-timeout", help_text)
+
+    @patch("runtime.cli._check_agent")
+    def test_agent_check_rejects_empty_name(self, mock_check) -> None:
+        from runtime.cli import main
+
+        stderr_buf = io.StringIO()
+        with contextlib.redirect_stderr(stderr_buf):
+            exit_code = main(["agent", "check", "", "--repo", "."])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("Agent name is required.", stderr_buf.getvalue())
+        mock_check.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -676,6 +676,13 @@ def _agreement_ratio(detected_by_count: int, total_providers_ran: int) -> float:
 
 
 def _consensus_level(detected_by_count: int, total_providers_ran: int) -> ConsensusLevel:
+    """Map provider agreement into consensus buckets.
+
+    Thresholds:
+    - detected_by_count <= 1 -> unverified
+    - agreement_ratio >= 0.5 -> confirmed
+    - otherwise -> needs-verification
+    """
     if detected_by_count <= 1:
         return "unverified"
     if _agreement_ratio(detected_by_count, total_providers_ran) >= 0.5:
@@ -953,6 +960,9 @@ def _run_debate_round(
     normalized_targets: List[str],
     normalized_allow_paths: List[str],
 ) -> Dict[str, object]:
+    if not merged_findings:
+        return {"enabled": False, "reason": "no_findings"}
+
     debate_round: Dict[str, object] = {
         "enabled": True,
         "provider_order": list(provider_order),
@@ -1886,11 +1896,14 @@ def run_review(
                 normalized_targets,
                 normalized_allow_paths,
             )
-            merged_findings = _apply_debate_results(
-                merged_findings,
-                debate_round,
-                total_providers_ran=len(active_provider_order),
-            )
+            if debate_round.get("enabled", True):
+                merged_findings = _apply_debate_results(
+                    merged_findings,
+                    debate_round,
+                    total_providers_ran=len(active_provider_order),
+                )
+            else:
+                debate_round = None
         merged_findings = _attach_source_scopes(merged_findings, provider_results)
         consensus_counts = _consensus_counts(merged_findings)
 
