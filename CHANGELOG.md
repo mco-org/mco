@@ -7,6 +7,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-03-18
+### Changed
+- Refactored `run_review()` into 4 phase functions for maintainability.
+- Replaced `ArgumentParser.error` monkeypatch with `_StreamSafeParser` subclass.
+- Improved CLI help text for `--file` priority and per-provider vs global timeout clarity.
+
+### Fixed
+- `adapter.cancel()` failures are now logged instead of being silently swallowed.
+- Duplicate agent names in `agents.yaml` now emit a warning and only the first entry is registered.
+- Removed the unused `load_state` import.
+- `mco agent check` now rejects empty agent names.
+- Debate rounds now skip early when zero findings exist.
+- Added streaming + divide mode regression coverage.
+- Documented `--debate` / `--divide` mutual exclusivity in the README.
+- Documented agent config-file priority order in the README.
+
 ## [0.9.0] - 2026-03-18
 ### Added
 - Consensus engine with agreement-based scoring (`consensus_score`, `confirmed` / `needs-verification` / `unverified`).
