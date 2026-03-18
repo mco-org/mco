@@ -100,6 +100,30 @@ agents:
             self.assertEqual(config["providers"], ["claude"])
             self.assertEqual(config["agents"][0]["name"], "my-lint-bot")
 
+    @patch("runtime.config._warn")
+    def test_duplicate_agent_names_warn_and_keep_first(self, mock_warn) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            agents_dir = Path(tmp) / ".mco"
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            (agents_dir / "agents.yaml").write_text(
+                """
+agents:
+  - name: duplicate-bot
+    command: "first-agent"
+    transport: shim
+  - name: duplicate-bot
+    command: "second-agent"
+    transport: acp
+""".strip(),
+                encoding="utf-8",
+            )
+            agents = load_agent_registrations(tmp)
+            self.assertEqual(len(agents), 1)
+            self.assertEqual(agents[0]["name"], "duplicate-bot")
+            self.assertEqual(agents[0]["command"], "first-agent")
+            mock_warn.assert_called_once()
+            self.assertIn("duplicate-bot", mock_warn.call_args.args[0])
+
 
 class TestAgentRegistry(unittest.TestCase):
     def test_registry_merges_builtin_cli_and_config_agents(self) -> None:

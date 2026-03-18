@@ -508,6 +508,34 @@ class _ProviderExecutionOutcome:
     provider_result: Dict[str, object]
 
 
+@dataclass(frozen=True)
+class _DivisionPreparation:
+    provider_target_paths: Dict[str, List[str]]
+    provider_prompts: Dict[str, str]
+    provider_assigned_scopes: Dict[str, Dict[str, object]]
+    provider_perspectives: Dict[str, str]
+    skipped_outcomes: Dict[str, _ProviderExecutionOutcome]
+    no_op_result: Optional[ReviewResult] = None
+
+
+@dataclass(frozen=True)
+class _CollectedResults:
+    provider_results: Dict[str, Dict[str, object]]
+    merged_findings: List[Dict[str, object]]
+    parse_success_count: int
+    parse_failure_count: int
+    schema_valid_count: int
+    dropped_findings_count: int
+    token_usage_summary: Optional[Dict[str, object]]
+    debate_round: Optional[Dict[str, object]]
+    consensus_counts: Dict[str, int]
+    counts: Dict[str, int]
+    decision: str
+    synthesis: Optional[Dict[str, object]]
+    active_provider_order: List[str]
+    terminal_state: TaskState
+
+
 def _safe_resolve(repo_root: Path, raw_path: str) -> Path:
     candidate_raw = Path(raw_path)
     base = candidate_raw if candidate_raw.is_absolute() else (repo_root / candidate_raw)
@@ -548,6 +576,286 @@ def _normalize_scopes(repo_root: str, target_paths: List[str], allow_paths: List
         normalized_target.append(rel if rel else ".")
 
     return normalized_target, normalized_allow
+
+
+def _prepare_diff_mode(
+    request: ReviewRequest,
+    review_mode: bool,
+    task_id: str,
+    normalized_targets: List[str],
+    division_strategy: Optional[str],
+) -> Tuple[Optional[Set[str]], str, List[str], Optional[ReviewResult]]:
+    diff_file_set: Optional[Set[str]] = None
+    diff_prompt_prefix = ""
+    if not request.diff_mode:
+        return diff_file_set, request.prompt, normalized_targets, None
+
+    from .diff_utils import detect_main_branch, diff_content, diff_files
+
+    diff_base = request.diff_base
+    if request.diff_mode == "branch" and not diff_base:
+        diff_base = detect_main_branch(request.repo_root)
+    changed = diff_files(request.repo_root, request.diff_mode, diff_base)
+
+    user_target = request.target_paths or ["."]
+    if user_target != ["."]:
+        user_dirs = set(user_target)
+        changed = [
+            path for path in changed
+            if any(path == directory or path.startswith(directory.rstrip("/") + "/") for directory in user_dirs)
+        ]
+
+    if not changed:
+        if request.stream_callback is None:
+            print(
+                "No changes detected for the specified diff mode. Nothing to review.",
+                file=sys.stderr,
+            )
+        return None, request.prompt, normalized_targets, ReviewResult(
+            task_id=task_id,
+            artifact_root=None,
+            decision="PASS",
+            terminal_state="COMPLETED",
+            provider_results={},
+            findings_count=0,
+            parse_success_count=0,
+            parse_failure_count=0,
+            schema_valid_count=0,
+            dropped_findings_count=0,
+            findings=[],
+            division_strategy=division_strategy,
+        )
+
+    diff_file_set = set(changed)
+    normalized_targets = changed
+
+    diff_text = diff_content(request.repo_root, request.diff_mode, diff_base)
+    if diff_text:
+        diff_prompt_prefix = (
+            f"{diff_text}\n\n"
+            "Review the changes above and any code directly affected by them.\n"
+            "Do not report issues in unchanged code unless they are directly "
+            "caused or exposed by the changes.\n\n"
+            "---\n"
+        )
+
+    return diff_file_set, diff_prompt_prefix + request.prompt, normalized_targets, None
+
+
+def _prepare_division(
+    request: ReviewRequest,
+    review_mode: bool,
+    task_id: str,
+    provider_order: List[str],
+    normalized_targets: List[str],
+    normalized_allow_paths: List[str],
+    division_strategy: Optional[str],
+    full_prompt: str,
+    prompt_body: str,
+) -> _DivisionPreparation:
+    provider_target_paths: Dict[str, List[str]] = {provider: list(normalized_targets) for provider in provider_order}
+    provider_prompts: Dict[str, str] = {provider: full_prompt for provider in provider_order}
+    provider_assigned_scopes: Dict[str, Dict[str, object]] = {}
+    provider_perspectives: Dict[str, str] = {
+        provider: str(request.policy.perspectives.get(provider, ""))
+        for provider in provider_order
+    }
+    skipped_outcomes: Dict[str, _ProviderExecutionOutcome] = {}
+
+    if division_strategy == "files":
+        discovered_files = _discover_review_files(request.repo_root, normalized_targets)
+        if not discovered_files:
+            return _DivisionPreparation(
+                provider_target_paths=provider_target_paths,
+                provider_prompts=provider_prompts,
+                provider_assigned_scopes=provider_assigned_scopes,
+                provider_perspectives=provider_perspectives,
+                skipped_outcomes=skipped_outcomes,
+                no_op_result=ReviewResult(
+                    task_id=task_id,
+                    artifact_root=None,
+                    decision="PASS",
+                    terminal_state="COMPLETED",
+                    provider_results={},
+                    findings_count=0,
+                    parse_success_count=0,
+                    parse_failure_count=0,
+                    schema_valid_count=0,
+                    dropped_findings_count=0,
+                    findings=[],
+                    division_strategy=division_strategy,
+                ),
+            )
+        file_assignments = _distribute_files_round_robin(provider_order, discovered_files)
+        for provider in provider_order:
+            assigned_files = list(file_assignments.get(provider, []))
+            provider_target_paths[provider] = assigned_files
+            provider_assigned_scopes[provider] = {
+                "mode": "files",
+                "paths": assigned_files,
+                "path_count": len(assigned_files),
+            }
+            if assigned_files:
+                provider_prompts[provider] = (
+                    _build_prompt(prompt_body, assigned_files)
+                    if review_mode
+                    else _build_run_prompt(prompt_body, assigned_files, normalized_allow_paths)
+                )
+            else:
+                skipped_outcomes[provider] = _skipped_provider_outcome(
+                    request,
+                    provider,
+                    provider_assigned_scopes[provider],
+                )
+    elif division_strategy == "dimensions":
+        dimension_assignments = _assign_division_dimensions(provider_order)
+        for provider in provider_order:
+            assigned = dict(dimension_assignments.get(provider, {}))
+            assigned["paths"] = list(normalized_targets)
+            provider_assigned_scopes[provider] = assigned
+            if not provider_perspectives.get(provider):
+                provider_perspectives[provider] = str(assigned.get("perspective", ""))
+
+    return _DivisionPreparation(
+        provider_target_paths=provider_target_paths,
+        provider_prompts=provider_prompts,
+        provider_assigned_scopes=provider_assigned_scopes,
+        provider_perspectives=provider_perspectives,
+        skipped_outcomes=skipped_outcomes,
+    )
+
+
+def _execute_providers(
+    request: ReviewRequest,
+    runtime: OrchestratorRuntime,
+    adapter_map: Mapping[str, ProviderAdapter],
+    resolved_task_id: str,
+    runtime_artifact_base: str,
+    write_artifacts: bool,
+    review_mode: bool,
+    provider_order: List[str],
+    runnable_providers: List[str],
+    provider_prompts: Dict[str, str],
+    provider_target_paths: Dict[str, List[str]],
+    normalized_targets: List[str],
+    normalized_allow_paths: List[str],
+    provider_assigned_scopes: Dict[str, Dict[str, object]],
+    provider_perspectives: Dict[str, str],
+    skipped_outcomes: Dict[str, _ProviderExecutionOutcome],
+) -> Dict[str, _ProviderExecutionOutcome]:
+    if request.policy.max_provider_parallelism <= 0:
+        max_workers = max(1, len(provider_order))
+    else:
+        max_workers = max(1, min(len(provider_order), request.policy.max_provider_parallelism))
+    outcomes: Dict[str, _ProviderExecutionOutcome] = dict(skipped_outcomes)
+
+    if request.policy.chain and len(runnable_providers) > 1:
+        chain_prompt = next(iter(provider_prompts.values()), "")
+        for idx, provider in enumerate(runnable_providers):
+            outcomes[provider] = _run_provider(
+                request,
+                runtime,
+                adapter_map,
+                resolved_task_id,
+                runtime_artifact_base,
+                write_artifacts,
+                chain_prompt,
+                provider_target_paths.get(provider, normalized_targets),
+                normalized_allow_paths,
+                review_mode,
+                provider,
+                provider_assigned_scopes.get(provider),
+                provider_perspectives.get(provider),
+            )
+            if idx < len(runnable_providers) - 1:
+                provider_result = outcomes[provider].provider_result
+                output_text = str(provider_result.get("final_text", "")) or str(provider_result.get("output_text", ""))
+                if output_text.strip():
+                    chain_prompt = (
+                        "{}\n\n"
+                        "---\n"
+                        "## Prior Analysis by {}\n"
+                        "{}\n"
+                        "---\n\n"
+                        "Review the above analysis critically. "
+                        "Confirm valid findings, challenge questionable ones, "
+                        "and add any issues that were missed."
+                    ).format(chain_prompt, provider, output_text.strip())
+        return outcomes
+
+    if max_workers <= 1:
+        for provider in runnable_providers:
+            outcomes[provider] = _run_provider(
+                request,
+                runtime,
+                adapter_map,
+                resolved_task_id,
+                runtime_artifact_base,
+                write_artifacts,
+                provider_prompts.get(provider, ""),
+                provider_target_paths.get(provider, normalized_targets),
+                normalized_allow_paths,
+                review_mode,
+                provider,
+                provider_assigned_scopes.get(provider),
+                provider_perspectives.get(provider),
+            )
+        return outcomes
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_provider,
+                request,
+                runtime,
+                adapter_map,
+                resolved_task_id,
+                runtime_artifact_base,
+                write_artifacts,
+                provider_prompts.get(provider, ""),
+                provider_target_paths.get(provider, normalized_targets),
+                normalized_allow_paths,
+                review_mode,
+                provider,
+                provider_assigned_scopes.get(provider),
+                provider_perspectives.get(provider),
+            ): provider
+            for provider in runnable_providers
+        }
+        hard_timeout = request.policy.review_hard_timeout_seconds
+        stall_timeout = request.policy.stall_timeout_seconds
+        outer_timeout = (hard_timeout if hard_timeout > 0 else stall_timeout * 2) + 60
+        try:
+            for future in as_completed(futures, timeout=outer_timeout):
+                provider = futures[future]
+                try:
+                    outcomes[provider] = future.result()
+                except Exception as exc:  # pragma: no cover - protective guard
+                    if write_artifacts:
+                        _ensure_provider_artifacts(runtime_artifact_base, resolved_task_id, provider)
+                    outcomes[provider] = _ProviderExecutionOutcome(
+                        provider=provider,
+                        success=False,
+                        parse_ok=False,
+                        schema_valid_count=0,
+                        dropped_count=0,
+                        findings=[],
+                        provider_result={"success": False, "reason": "internal_error", "error": str(exc)},
+                    )
+        except TimeoutError:
+            for future, provider in futures.items():
+                if provider not in outcomes:
+                    future.cancel()
+                    outcomes[provider] = _ProviderExecutionOutcome(
+                        provider=provider,
+                        success=False,
+                        parse_ok=False,
+                        schema_valid_count=0,
+                        dropped_count=0,
+                        findings=[],
+                        provider_result={"success": False, "reason": "executor_timeout"},
+                    )
+    return outcomes
 
 
 def _supported_permission_keys(adapter: ProviderAdapter) -> Set[str]:
@@ -1346,8 +1654,13 @@ def _run_provider(
                     if run_ref is not None:
                         try:
                             adapter.cancel(run_ref)
-                        except (OSError, ProcessLookupError):
-                            pass
+                        except Exception as exc:
+                            _emit_event(request, {
+                                "type": "provider_error",
+                                "provider": provider,
+                                "error_kind": "cancel_failed",
+                                "message": str(exc),
+                            })
                     raw_dir = Path(run_ref.artifact_path) / "raw"
                     timeout_stdout = _read_text(raw_dir / f"{provider}.stdout.log")
                     timeout_stderr = _read_text(raw_dir / f"{provider}.stderr.log")
@@ -1379,8 +1692,13 @@ def _run_provider(
                 if run_ref is not None:
                     try:
                         adapter.cancel(run_ref)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _emit_event(request, {
+                            "type": "provider_error",
+                            "provider": provider,
+                            "error_kind": "cancel_failed",
+                            "message": str(exc),
+                        })
                 fallback_payload = {
                     "cancel_reason": "provider_poll_timeout",
                     "wall_clock_seconds": round(time.time() - started, 3),
@@ -1522,6 +1840,387 @@ def _run_provider(
     )
 
 
+def _collect_results(
+    request: ReviewRequest,
+    runtime: OrchestratorRuntime,
+    adapter_map: Mapping[str, ProviderAdapter],
+    resolved_task_id: str,
+    artifact_root: Optional[str],
+    root_path: Optional[Path],
+    runtime_artifact_base: Optional[str],
+    review_mode: bool,
+    write_artifacts: bool,
+    division_strategy: Optional[str],
+    diff_file_set: Optional[Set[str]],
+    prompt_body: str,
+    provider_order: List[str],
+    normalized_targets: List[str],
+    normalized_allow_paths: List[str],
+    outcomes: Dict[str, _ProviderExecutionOutcome],
+    run_hooks: Optional[Any],
+) -> _CollectedResults:
+    _ = artifact_root, runtime_artifact_base, prompt_body
+    provider_results: Dict[str, Dict[str, object]] = {}
+    required_provider_success: Dict[str, bool] = {}
+    aggregated_findings: List[NormalizedFinding] = []
+    parse_success_count = 0
+    parse_failure_count = 0
+    schema_valid_count = 0
+    dropped_findings_count = 0
+
+    for provider in provider_order:
+        outcome = outcomes[provider]
+        provider_results[provider] = outcome.provider_result
+        is_skipped = bool(outcome.provider_result.get("skipped"))
+        if not is_skipped:
+            required_provider_success[provider] = outcome.success
+        aggregated_findings.extend(outcome.findings)
+        if review_mode and not is_skipped:
+            if outcome.parse_ok:
+                parse_success_count += 1
+            else:
+                parse_failure_count += 1
+            schema_valid_count += outcome.schema_valid_count
+            dropped_findings_count += outcome.dropped_count
+
+    token_usage_summary = _aggregate_token_usage_summary(provider_results) if request.include_token_usage else None
+
+    active_provider_order = [provider for provider in provider_order if provider in required_provider_success]
+    terminal_state = runtime.evaluate_terminal_state(required_provider_success)
+    aggregated_findings.sort(key=lambda item: (item.provider, item.finding_id, item.fingerprint))
+    merged_findings = _merge_findings_across_providers(
+        aggregated_findings,
+        total_providers_ran=len(active_provider_order),
+    )
+    merged_findings = _tag_diff_scope(merged_findings, diff_file_set)
+    debate_round: Optional[Dict[str, object]] = None
+    if review_mode and request.policy.debate and len(active_provider_order) > 1:
+        debate_round = _run_debate_round(
+            request,
+            runtime,
+            adapter_map,
+            resolved_task_id,
+            merged_findings,
+            active_provider_order,
+            normalized_targets,
+            normalized_allow_paths,
+        )
+        if debate_round.get("enabled", True):
+            merged_findings = _apply_debate_results(
+                merged_findings,
+                debate_round,
+                total_providers_ran=len(active_provider_order),
+            )
+        else:
+            debate_round = None
+    merged_findings = _attach_source_scopes(merged_findings, provider_results)
+    consensus_counts = _consensus_counts(merged_findings)
+
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for finding in merged_findings:
+        severity = str(finding.get("severity", "")).lower()
+        if severity in counts:
+            counts[severity] = counts.get(severity, 0) + 1
+
+    if review_mode and counts.get("critical", 0) > 0:
+        decision = "FAIL"
+    elif review_mode and counts.get("high", 0) >= request.policy.high_escalation_threshold:
+        decision = "ESCALATE"
+    elif review_mode and request.policy.enforce_findings_contract and len(merged_findings) == 0:
+        decision = "INCONCLUSIVE"
+    elif review_mode and terminal_state == TaskState.FAILED:
+        decision = "FAIL"
+    elif review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
+        decision = "PARTIAL"
+    elif not review_mode and terminal_state == TaskState.FAILED:
+        decision = "FAIL"
+    elif not review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
+        decision = "PARTIAL"
+    else:
+        decision = "PASS"
+
+    findings_json = merged_findings
+
+    if run_hooks is not None:
+        run_hooks.invoke_post_run(
+            findings=findings_json,
+            provider_results=provider_results,
+            repo_root=request.repo_root,
+            prompt=request.prompt,
+            providers=list(request.providers),
+        )
+
+    synthesis: Optional[Dict[str, object]] = None
+    if request.synthesize:
+        consensus_text = _format_consensus_summary_markdown(
+            merged_findings,
+            total_providers_ran=len(active_provider_order),
+        )
+        selected_synthesis_provider = _resolve_synthesis_provider(active_provider_order, request.synthesis_provider)
+        if selected_synthesis_provider is None:
+            synthesis = {
+                "provider": request.synthesis_provider,
+                "success": False,
+                "reason": (
+                    "requested_provider_not_selected"
+                    if request.synthesis_provider
+                    else "no_provider_available"
+                ),
+                "text": consensus_text,
+            }
+        else:
+            _emit_event(request, {
+                "type": "synthesis_started",
+                "provider": selected_synthesis_provider,
+            })
+            synthesis_prompt = _build_synthesis_prompt(
+                review_mode,
+                decision,
+                terminal_state.value,
+                provider_results,
+                merged_findings,
+            )
+            with tempfile.TemporaryDirectory(prefix="mco-synthesis-") as synthesis_artifact_base:
+                synthesis_request = ReviewRequest(
+                    repo_root=request.repo_root,
+                    prompt=synthesis_prompt,
+                    providers=[selected_synthesis_provider],  # type: ignore[list-item]
+                    artifact_base=synthesis_artifact_base,
+                    policy=request.policy,
+                    task_id=request.task_id,
+                    target_paths=request.target_paths,
+                    include_token_usage=request.include_token_usage,
+                    synthesize=False,
+                    synthesis_provider=None,
+                )
+                synthesis_outcome = _run_provider(
+                    synthesis_request,
+                    runtime,
+                    adapter_map,
+                    resolved_task_id,
+                    synthesis_artifact_base,
+                    False,
+                    synthesis_prompt,
+                    normalized_targets,
+                    normalized_allow_paths,
+                    False,
+                    selected_synthesis_provider,
+                )
+            synthesis_provider_result = synthesis_outcome.provider_result
+            synthesis_text = str(synthesis_provider_result.get("final_text", "")) or str(
+                synthesis_provider_result.get("output_text", "")
+            )
+            narrative_success = bool(synthesis_provider_result.get("success")) and bool(synthesis_text.strip())
+            has_consensus_fallback = not narrative_success
+            failure_reason = synthesis_provider_result.get("final_error")
+            if failure_reason is None:
+                failure_reason = synthesis_provider_result.get("response_reason")
+            if failure_reason is None:
+                failure_reason = synthesis_provider_result.get("reason")
+            synthesis_reason = "ok" if narrative_success else (
+                str(failure_reason) if failure_reason not in (None, "") else "synthesis_failed"
+            )
+            _emit_event(request, {
+                "type": "synthesis_finished",
+                "success": narrative_success,
+            })
+            combined_text = consensus_text
+            if narrative_success and synthesis_text.strip():
+                combined_text = (
+                    f"{consensus_text}\n\n## Agent Narrative\n{synthesis_text.strip()}"
+                )
+            synthesis = {
+                "provider": selected_synthesis_provider,
+                "success": narrative_success,
+                "reason": synthesis_reason,
+                "text": combined_text,
+                "consensus_text": consensus_text,
+                "has_consensus_fallback": has_consensus_fallback,
+                "attempts": synthesis_provider_result.get("attempts"),
+                "final_error": synthesis_provider_result.get("final_error"),
+                "wall_clock_seconds": synthesis_provider_result.get("wall_clock_seconds"),
+                "response_ok": synthesis_provider_result.get("response_ok"),
+                "response_reason": synthesis_provider_result.get("response_reason"),
+                "narrative": {
+                    "provider": selected_synthesis_provider,
+                    "success": narrative_success,
+                    "reason": synthesis_reason,
+                    "text": synthesis_text,
+                },
+            }
+            if request.include_token_usage:
+                synthesis["token_usage"] = synthesis_provider_result.get("token_usage")
+                synthesis["token_usage_completeness"] = synthesis_provider_result.get(
+                    "token_usage_completeness",
+                )
+
+    if review_mode and write_artifacts and root_path:
+        _write_json(root_path / "findings.json", findings_json)
+
+    summary = [
+        f"# {'Review' if review_mode else 'Run'} Summary ({resolved_task_id})",
+        "",
+        f"- Decision: {decision}",
+        f"- Terminal state: {terminal_state.value}",
+        f"- Division strategy: {division_strategy or 'none'}",
+        f"- Providers: {', '.join(provider_order)}",
+        f"- Findings total: {len(merged_findings)}",
+        f"- Parse success count: {parse_success_count}",
+        f"- Parse failure count: {parse_failure_count}",
+        f"- Schema valid finding count: {schema_valid_count}",
+        f"- Dropped finding count: {dropped_findings_count}",
+        f"- Allow paths: {', '.join(normalized_allow_paths)}",
+        f"- Enforcement mode: {request.policy.enforcement_mode}",
+        f"- Strict contract: {request.policy.enforce_findings_contract}",
+        "",
+        "## Severity Counts",
+        f"- critical: {counts['critical']}",
+        f"- high: {counts['high']}",
+        f"- medium: {counts['medium']}",
+        f"- low: {counts['low']}",
+        "",
+        "## Consensus Counts",
+        f"- confirmed: {consensus_counts['confirmed']}",
+        f"- needs-verification: {consensus_counts['needs-verification']}",
+        f"- unverified: {consensus_counts['unverified']}",
+        "",
+        "## Provider Results",
+    ]
+    for provider in provider_order:
+        details = provider_results.get(provider, {})
+        success = bool(details.get("success"))
+        parse_reason = str(details.get("parse_reason", ""))
+        cancel_reason = str(details.get("cancel_reason", ""))
+        assigned_scope_summary = _assigned_scope_summary(details.get("assigned_scope"))
+        summary.append(
+            f"- {provider}: success={success}, final_error={details.get('final_error')}, parse_reason={parse_reason or '-'}, cancel_reason={cancel_reason or '-'}, assigned_scope={assigned_scope_summary or '-'}"
+        )
+        output_text = str(details.get("output_text", ""))
+        if output_text:
+            summary.append("  output:")
+            for raw_line in output_text.splitlines():
+                summary.append(f"    {raw_line}")
+    if synthesis is not None:
+        summary.append("")
+        summary.append("## Synthesis")
+        summary.append(f"- provider: {synthesis.get('provider')}")
+        summary.append(f"- success: {synthesis.get('success')}")
+        summary.append(f"- reason: {synthesis.get('reason')}")
+        text = str(synthesis.get("text", ""))
+        if text:
+            summary.append("  output:")
+            for raw_line in text.splitlines():
+                summary.append(f"    {raw_line}")
+    if write_artifacts and root_path:
+        _write_text(root_path / "summary.md", "\n".join(summary))
+
+    decision_lines = [f"# {'Review' if review_mode else 'Run'} Decision ({resolved_task_id})", ""]
+    decision_lines.append(f"- decision: {decision}")
+    decision_lines.append(f"- terminal_state: {terminal_state.value}")
+    if review_mode:
+        decision_lines.append(
+            f"- rule_trace: critical={counts['critical']}, high={counts['high']}, findings={len(merged_findings)}"
+        )
+    else:
+        success_count = sum(1 for value in required_provider_success.values() if value)
+        decision_lines.append(
+            f"- run_trace: providers={len(required_provider_success)}, success={success_count}, failed={len(required_provider_success) - success_count}"
+        )
+    if write_artifacts and root_path:
+        _write_text(root_path / "decision.md", "\n".join(decision_lines))
+
+    run_payload = {
+        "task_id": resolved_task_id,
+        "mode": "review" if review_mode else "run",
+        "division_strategy": division_strategy,
+        "terminal_state": terminal_state.value,
+        "decision": decision,
+        "effective_cwd": str(Path(request.repo_root).resolve(strict=False)),
+        "allow_paths": normalized_allow_paths,
+        "allow_paths_hash": _stable_payload_hash(normalized_allow_paths),
+        "target_paths": normalized_targets,
+        "provider_scopes": {
+            provider: details.get("assigned_scope")
+            for provider, details in provider_results.items()
+            if details.get("assigned_scope") is not None
+        },
+        "enforcement_mode": request.policy.enforcement_mode,
+        "enforce_findings_contract": request.policy.enforce_findings_contract,
+        "provider_permissions": request.policy.provider_permissions,
+        "permissions_hash": _stable_payload_hash(request.policy.provider_permissions),
+        "provider_results": provider_results,
+        "findings_count": len(merged_findings),
+        "parse_success_count": parse_success_count,
+        "parse_failure_count": parse_failure_count,
+        "schema_valid_count": schema_valid_count,
+        "dropped_findings_count": dropped_findings_count,
+    }
+    if token_usage_summary is not None:
+        run_payload["token_usage_summary"] = token_usage_summary
+    run_payload["consensus_summary"] = {
+        "provider_count": len(active_provider_order),
+        "level_counts": consensus_counts,
+    }
+    if debate_round is not None:
+        run_payload["debate_round"] = debate_round
+    if synthesis is not None:
+        run_payload["synthesis"] = synthesis
+    if write_artifacts and root_path:
+        _write_json(root_path / "run.json", run_payload)
+
+    _emit_event(request, {
+        "type": "consensus",
+        "task_id": resolved_task_id,
+        "provider_count": len(active_provider_order),
+        "level_counts": consensus_counts,
+        "findings": findings_json,
+        "division_strategy": division_strategy,
+    })
+
+    result_event: Dict[str, object] = {
+        "type": "result",
+        "task_id": resolved_task_id,
+        "decision": decision,
+        "terminal_state": terminal_state.value,
+        "division_strategy": division_strategy,
+        "findings_count": len(merged_findings),
+        "findings": findings_json,
+        "provider_results": {
+            provider: {
+                "success": details.get("success"),
+                "findings_count": details.get("findings_count", 0),
+                "wall_clock_seconds": details.get("wall_clock_seconds", 0),
+                "assigned_scope": details.get("assigned_scope"),
+            }
+            for provider, details in provider_results.items()
+        },
+    }
+    if token_usage_summary is not None:
+        result_event["token_usage_summary"] = token_usage_summary
+    if debate_round is not None:
+        result_event["debate_round"] = debate_round
+    if synthesis is not None:
+        result_event["synthesis"] = synthesis
+    _emit_event(request, result_event)
+
+    return _CollectedResults(
+        provider_results=provider_results,
+        merged_findings=findings_json,
+        parse_success_count=parse_success_count,
+        parse_failure_count=parse_failure_count,
+        schema_valid_count=schema_valid_count,
+        dropped_findings_count=dropped_findings_count,
+        token_usage_summary=token_usage_summary,
+        debate_round=debate_round,
+        consensus_counts=consensus_counts,
+        counts=counts,
+        decision=decision,
+        synthesis=synthesis,
+        active_provider_order=active_provider_order,
+        terminal_state=terminal_state,
+    )
+
+
 def run_review(
     request: ReviewRequest,
     adapters: Optional[Mapping[str, ProviderAdapter]] = None,
@@ -1551,95 +2250,46 @@ def run_review(
             request.policy.allow_paths or ["."],
         )
         division_strategy = str(getattr(request.policy, "divide", "") or "").strip().lower() or None
+        diff_file_set, effective_prompt, normalized_targets, diff_no_op_result = _prepare_diff_mode(
+            request,
+            review_mode,
+            task_id,
+            normalized_targets,
+            division_strategy,
+        )
+        if diff_no_op_result is not None:
+            _emit_event(request, {
+                "type": "run_started",
+                "task_id": task_id,
+                "providers": list(request.providers),
+                "review_mode": review_mode,
+                "division_strategy": division_strategy,
+            })
+            _emit_event(request, {
+                "type": "result",
+                "task_id": task_id,
+                "decision": "PASS",
+                "terminal_state": "COMPLETED",
+                "division_strategy": division_strategy,
+                "findings_count": 0,
+                "findings": [],
+                "provider_results": {},
+            })
+            return diff_no_op_result
 
-        # ── Diff mode: compute scope and augment prompt ──
-        _diff_file_set: Optional[set] = None
-        _diff_prompt_prefix = ""
-        if request.diff_mode:
-            from .diff_utils import detect_main_branch, diff_files, diff_content
-
-            _diff_base = request.diff_base
-            if request.diff_mode == "branch" and not _diff_base:
-                _diff_base = detect_main_branch(request.repo_root)
-            changed = diff_files(request.repo_root, request.diff_mode, _diff_base)
-
-            # Intersect with user-provided target_paths if set
-            user_target = request.target_paths or ["."]
-            if user_target != ["."]:
-                user_dirs = set(user_target)
-                changed = [
-                    f for f in changed
-                    if any(f == d or f.startswith(d.rstrip("/") + "/") for d in user_dirs)
-                ]
-
-            if not changed:
-                if request.stream_callback is None:
-                    import sys as _sys
-                    print(
-                        "No changes detected for the specified diff mode. Nothing to review.",
-                        file=_sys.stderr,
-                    )
-                _no_op_result = ReviewResult(
-                    task_id=task_id,
-                    artifact_root=None,
-                    decision="PASS",
-                    terminal_state="COMPLETED",
-                    provider_results={},
-                    findings_count=0,
-                    parse_success_count=0,
-                    parse_failure_count=0,
-                    schema_valid_count=0,
-                    dropped_findings_count=0,
-                    findings=[],
-                    division_strategy=division_strategy,
-                )
-                # Emit stream events even for empty diff
-                _emit_event(request, {
-                    "type": "run_started",
-                    "task_id": task_id,
-                    "providers": list(request.providers),
-                    "review_mode": review_mode,
-                    "division_strategy": division_strategy,
-                })
-                _emit_event(request, {
-                    "type": "result",
-                    "task_id": task_id,
-                    "decision": "PASS",
-                    "terminal_state": "COMPLETED",
-                    "division_strategy": division_strategy,
-                    "findings_count": 0,
-                    "findings": [],
-                    "provider_results": {},
-                })
-                return _no_op_result
-
-            _diff_file_set = set(changed)
-            normalized_targets = changed
-
-            _diff_text = diff_content(request.repo_root, request.diff_mode, _diff_base)
-            if _diff_text:
-                _diff_prompt_prefix = (
-                    f"{_diff_text}\n\n"
-                    "Review the changes above and any code directly affected by them.\n"
-                    "Do not report issues in unchanged code unless they are directly "
-                    "caused or exposed by the changes.\n\n"
-                    "---\n"
-                )
-
-        _effective_prompt = _diff_prompt_prefix + request.prompt if _diff_prompt_prefix else request.prompt
-        prompt_body = _effective_prompt
+        prompt_body = effective_prompt
         full_prompt = (
-            _build_prompt(_effective_prompt, normalized_targets)
+            _build_prompt(effective_prompt, normalized_targets)
             if review_mode
-            else _build_run_prompt(_effective_prompt, normalized_targets, normalized_allow_paths)
+            else _build_run_prompt(effective_prompt, normalized_targets, normalized_allow_paths)
         )
 
         # ── Memory hook: pre_run ──
-        _run_hooks = None
+        run_hooks = None
         if request.memory_enabled:
-            _run_hooks = _load_memory_hooks(request)
-            injected = _run_hooks.invoke_pre_run(
-                prompt=_effective_prompt,
+            run_hooks = _load_memory_hooks(request)
+            injected = run_hooks.invoke_pre_run(
+                prompt=effective_prompt,
                 repo_root=request.repo_root,
                 providers=list(request.providers),
             )
@@ -1668,550 +2318,85 @@ def run_review(
             "review_mode": review_mode,
             "division_strategy": division_strategy,
         })
-
-        provider_target_paths: Dict[str, List[str]] = {provider: list(normalized_targets) for provider in provider_order}
-        provider_prompts: Dict[str, str] = {provider: full_prompt for provider in provider_order}
-        provider_assigned_scopes: Dict[str, Dict[str, object]] = {}
-        provider_perspectives: Dict[str, str] = {
-            provider: str(request.policy.perspectives.get(provider, ""))
-            for provider in provider_order
-        }
-        skipped_outcomes: Dict[str, _ProviderExecutionOutcome] = {}
-
-        if division_strategy == "files":
-            discovered_files = _discover_review_files(request.repo_root, normalized_targets)
-            if not discovered_files:
-                _no_files_result = ReviewResult(
-                    task_id=task_id,
-                    artifact_root=None,
-                    decision="PASS",
-                    terminal_state="COMPLETED",
-                    provider_results={},
-                    findings_count=0,
-                    parse_success_count=0,
-                    parse_failure_count=0,
-                    schema_valid_count=0,
-                    dropped_findings_count=0,
-                    findings=[],
-                    division_strategy=division_strategy,
-                )
-                _emit_event(request, {
-                    "type": "result",
-                    "task_id": task_id,
-                    "decision": "PASS",
-                    "terminal_state": "COMPLETED",
-                    "findings_count": 0,
-                    "findings": [],
-                    "provider_results": {},
-                    "division_strategy": division_strategy,
-                })
-                return _no_files_result
-            file_assignments = _distribute_files_round_robin(provider_order, discovered_files)
-            for provider in provider_order:
-                assigned_files = list(file_assignments.get(provider, []))
-                provider_target_paths[provider] = assigned_files
-                provider_assigned_scopes[provider] = {
-                    "mode": "files",
-                    "paths": assigned_files,
-                    "path_count": len(assigned_files),
-                }
-                if assigned_files:
-                    provider_prompts[provider] = (
-                        _build_prompt(prompt_body, assigned_files)
-                        if review_mode
-                        else _build_run_prompt(prompt_body, assigned_files, normalized_allow_paths)
-                    )
-                else:
-                    skipped_outcomes[provider] = _skipped_provider_outcome(
-                        request,
-                        provider,
-                        provider_assigned_scopes[provider],
-                    )
-        elif division_strategy == "dimensions":
-            dimension_assignments = _assign_division_dimensions(provider_order)
-            for provider in provider_order:
-                assigned = dict(dimension_assignments.get(provider, {}))
-                assigned["paths"] = list(normalized_targets)
-                provider_assigned_scopes[provider] = assigned
-                if not provider_perspectives.get(provider):
-                    provider_perspectives[provider] = str(assigned.get("perspective", ""))
-
-        if request.policy.max_provider_parallelism <= 0:
-            max_workers = max(1, len(provider_order))
-        else:
-            max_workers = max(1, min(len(provider_order), request.policy.max_provider_parallelism))
-        outcomes: Dict[str, _ProviderExecutionOutcome] = dict(skipped_outcomes)
-        runnable_providers = [provider for provider in provider_order if provider not in skipped_outcomes]
-
-        # Chain mode: sequential execution where each provider gets prior outputs as context
-        if request.policy.chain and len(runnable_providers) > 1:
-            chain_prompt = full_prompt
-            for idx, provider in enumerate(runnable_providers):
-                outcomes[provider] = _run_provider(
-                    request,
-                    runtime,
-                    adapter_map,
-                    resolved_task_id,
-                    runtime_artifact_base,
-                    write_artifacts,
-                    chain_prompt,
-                    provider_target_paths.get(provider, normalized_targets),
-                    normalized_allow_paths,
-                    review_mode,
-                    provider,
-                    provider_assigned_scopes.get(provider),
-                    provider_perspectives.get(provider),
-                )
-                # Append this provider's output as context for the next provider
-                if idx < len(runnable_providers) - 1:
-                    pr = outcomes[provider].provider_result
-                    output_text = str(pr.get("final_text", "")) or str(pr.get("output_text", ""))
-                    if output_text.strip():
-                        chain_prompt = (
-                            "{}\n\n"
-                            "---\n"
-                            "## Prior Analysis by {}\n"
-                            "{}\n"
-                            "---\n\n"
-                            "Review the above analysis critically. "
-                            "Confirm valid findings, challenge questionable ones, "
-                            "and add any issues that were missed."
-                        ).format(chain_prompt, provider, output_text.strip())
-        elif max_workers <= 1:
-            for provider in runnable_providers:
-                outcomes[provider] = _run_provider(
-                    request,
-                    runtime,
-                    adapter_map,
-                    resolved_task_id,
-                    runtime_artifact_base,
-                    write_artifacts,
-                    provider_prompts.get(provider, full_prompt),
-                    provider_target_paths.get(provider, normalized_targets),
-                    normalized_allow_paths,
-                    review_mode,
-                    provider,
-                    provider_assigned_scopes.get(provider),
-                    provider_perspectives.get(provider),
-                )
-        else:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        _run_provider,
-                        request,
-                        runtime,
-                        adapter_map,
-                        resolved_task_id,
-                        runtime_artifact_base,
-                        write_artifacts,
-                        provider_prompts.get(provider, full_prompt),
-                        provider_target_paths.get(provider, normalized_targets),
-                        normalized_allow_paths,
-                        review_mode,
-                        provider,
-                        provider_assigned_scopes.get(provider),
-                        provider_perspectives.get(provider),
-                    ): provider
-                    for provider in runnable_providers
-                }
-                # Compute a generous outer timeout: hard timeout (or stall timeout * 2) + buffer
-                _hard = request.policy.review_hard_timeout_seconds
-                _stall = request.policy.stall_timeout_seconds
-                _outer_timeout = (_hard if _hard > 0 else _stall * 2) + 60
-                try:
-                    for future in as_completed(futures, timeout=_outer_timeout):
-                        provider = futures[future]
-                        try:
-                            outcomes[provider] = future.result()
-                        except Exception as exc:  # pragma: no cover - protective guard
-                            if write_artifacts:
-                                _ensure_provider_artifacts(runtime_artifact_base, resolved_task_id, provider)
-                            outcomes[provider] = _ProviderExecutionOutcome(
-                                provider=provider,
-                                success=False,
-                                parse_ok=False,
-                                schema_valid_count=0,
-                                dropped_count=0,
-                                findings=[],
-                                provider_result={"success": False, "reason": "internal_error", "error": str(exc)},
-                            )
-                except TimeoutError:
-                    for future, provider in futures.items():
-                        if provider not in outcomes:
-                            future.cancel()
-                            outcomes[provider] = _ProviderExecutionOutcome(
-                                provider=provider,
-                                success=False,
-                                parse_ok=False,
-                                schema_valid_count=0,
-                                dropped_count=0,
-                                findings=[],
-                                provider_result={"success": False, "reason": "executor_timeout"},
-                            )
-
-        provider_results: Dict[str, Dict[str, object]] = {}
-        required_provider_success: Dict[str, bool] = {}
-        aggregated_findings: List[NormalizedFinding] = []
-        parse_success_count = 0
-        parse_failure_count = 0
-        schema_valid_count = 0
-        dropped_findings_count = 0
-
-        for provider in provider_order:
-            outcome = outcomes[provider]
-            provider_results[provider] = outcome.provider_result
-            is_skipped = bool(outcome.provider_result.get("skipped"))
-            if not is_skipped:
-                required_provider_success[provider] = outcome.success
-            aggregated_findings.extend(outcome.findings)
-            if review_mode:
-                if not is_skipped:
-                    if outcome.parse_ok:
-                        parse_success_count += 1
-                    else:
-                        parse_failure_count += 1
-                    schema_valid_count += outcome.schema_valid_count
-                    dropped_findings_count += outcome.dropped_count
-
-        token_usage_summary = _aggregate_token_usage_summary(provider_results) if request.include_token_usage else None
-
-        active_provider_order = [provider for provider in provider_order if provider in required_provider_success]
-        terminal_state = runtime.evaluate_terminal_state(required_provider_success)
-        aggregated_findings.sort(key=lambda item: (item.provider, item.finding_id, item.fingerprint))
-        merged_findings = _merge_findings_across_providers(
-            aggregated_findings,
-            total_providers_ran=len(active_provider_order),
-        )
-        merged_findings = _tag_diff_scope(merged_findings, _diff_file_set)
-        debate_round: Optional[Dict[str, object]] = None
-        if review_mode and request.policy.debate and len(active_provider_order) > 1:
-            debate_round = _run_debate_round(
-                request,
-                runtime,
-                adapter_map,
-                resolved_task_id,
-                merged_findings,
-                active_provider_order,
-                normalized_targets,
-                normalized_allow_paths,
-            )
-            if debate_round.get("enabled", True):
-                merged_findings = _apply_debate_results(
-                    merged_findings,
-                    debate_round,
-                    total_providers_ran=len(active_provider_order),
-                )
-            else:
-                debate_round = None
-        merged_findings = _attach_source_scopes(merged_findings, provider_results)
-        consensus_counts = _consensus_counts(merged_findings)
-
-        counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-        for finding in merged_findings:
-            severity = str(finding.get("severity", "")).lower()
-            if severity in counts:
-                counts[severity] = counts.get(severity, 0) + 1
-
-        if review_mode and counts.get("critical", 0) > 0:
-            decision = "FAIL"
-        elif review_mode and counts.get("high", 0) >= request.policy.high_escalation_threshold:
-            decision = "ESCALATE"
-        elif review_mode and request.policy.enforce_findings_contract and len(merged_findings) == 0:
-            decision = "INCONCLUSIVE"
-        elif review_mode and terminal_state == TaskState.FAILED:
-            decision = "FAIL"
-        elif review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
-            decision = "PARTIAL"
-        elif not review_mode and terminal_state == TaskState.FAILED:
-            decision = "FAIL"
-        elif not review_mode and terminal_state == TaskState.PARTIAL_SUCCESS:
-            decision = "PARTIAL"
-        else:
-            decision = "PASS"
-
-        findings_json = merged_findings
-
-        # ── Memory hook: post_run ──
-        if _run_hooks is not None:
-            _run_hooks.invoke_post_run(
-                findings=findings_json,
-                provider_results=provider_results,
-                repo_root=request.repo_root,
-                prompt=request.prompt,
-                providers=list(request.providers),
-            )
-
-        synthesis: Optional[Dict[str, object]] = None
-        if request.synthesize:
-            consensus_text = _format_consensus_summary_markdown(
-                merged_findings,
-                total_providers_ran=len(active_provider_order),
-            )
-            selected_synthesis_provider = _resolve_synthesis_provider(active_provider_order, request.synthesis_provider)
-            if selected_synthesis_provider is None:
-                synthesis = {
-                    "provider": request.synthesis_provider,
-                    "success": False,
-                    "reason": (
-                        "requested_provider_not_selected"
-                        if request.synthesis_provider
-                        else "no_provider_available"
-                    ),
-                    "text": consensus_text,
-                }
-            else:
-                _emit_event(request, {
-                    "type": "synthesis_started",
-                    "provider": selected_synthesis_provider,
-                })
-                synthesis_prompt = _build_synthesis_prompt(
-                    review_mode,
-                    decision,
-                    terminal_state.value,
-                    provider_results,
-                    merged_findings,
-                )
-                with tempfile.TemporaryDirectory(prefix="mco-synthesis-") as synthesis_artifact_base:
-                    synthesis_request = ReviewRequest(
-                        repo_root=request.repo_root,
-                        prompt=synthesis_prompt,
-                        providers=[selected_synthesis_provider],  # type: ignore[list-item]
-                        artifact_base=synthesis_artifact_base,
-                        policy=request.policy,
-                        task_id=request.task_id,
-                        target_paths=request.target_paths,
-                        include_token_usage=request.include_token_usage,
-                        synthesize=False,
-                        synthesis_provider=None,
-                    )
-                    synthesis_outcome = _run_provider(
-                        synthesis_request,
-                        runtime,
-                        adapter_map,
-                        resolved_task_id,
-                        synthesis_artifact_base,
-                        False,
-                        synthesis_prompt,
-                        normalized_targets,
-                        normalized_allow_paths,
-                        False,
-                        selected_synthesis_provider,
-                    )
-                synthesis_provider_result = synthesis_outcome.provider_result
-                synthesis_text = str(synthesis_provider_result.get("final_text", "")) or str(
-                    synthesis_provider_result.get("output_text", "")
-                )
-                narrative_success = bool(synthesis_provider_result.get("success")) and bool(synthesis_text.strip())
-                synthesis_success = narrative_success
-                has_consensus_fallback = not narrative_success
-                failure_reason = synthesis_provider_result.get("final_error")
-                if failure_reason is None:
-                    failure_reason = synthesis_provider_result.get("response_reason")
-                if failure_reason is None:
-                    failure_reason = synthesis_provider_result.get("reason")
-                synthesis_reason = "ok" if narrative_success else (
-                    str(failure_reason) if failure_reason not in (None, "") else "synthesis_failed"
-                )
-                _emit_event(request, {
-                    "type": "synthesis_finished",
-                    "success": narrative_success,
-                })
-                combined_text = consensus_text
-                if narrative_success and synthesis_text.strip():
-                    combined_text = (
-                        f"{consensus_text}\n\n## Agent Narrative\n{synthesis_text.strip()}"
-                    )
-                synthesis = {
-                    "provider": selected_synthesis_provider,
-                    "success": synthesis_success,
-                    "reason": synthesis_reason,
-                    "text": combined_text,
-                    "consensus_text": consensus_text,
-                    "has_consensus_fallback": has_consensus_fallback,
-                    "attempts": synthesis_provider_result.get("attempts"),
-                    "final_error": synthesis_provider_result.get("final_error"),
-                    "wall_clock_seconds": synthesis_provider_result.get("wall_clock_seconds"),
-                    "response_ok": synthesis_provider_result.get("response_ok"),
-                    "response_reason": synthesis_provider_result.get("response_reason"),
-                    "narrative": {
-                        "provider": selected_synthesis_provider,
-                        "success": narrative_success,
-                        "reason": synthesis_reason,
-                        "text": synthesis_text,
-                    },
-                }
-                if request.include_token_usage:
-                    synthesis["token_usage"] = synthesis_provider_result.get("token_usage")
-                    synthesis["token_usage_completeness"] = synthesis_provider_result.get(
-                        "token_usage_completeness",
-                    )
-
-        if review_mode and write_artifacts and root_path:
-            _write_json(root_path / "findings.json", findings_json)
-
-        summary = [
-            f"# {'Review' if review_mode else 'Run'} Summary ({resolved_task_id})",
-            "",
-            f"- Decision: {decision}",
-            f"- Terminal state: {terminal_state.value}",
-            f"- Division strategy: {division_strategy or 'none'}",
-            f"- Providers: {', '.join(provider_order)}",
-            f"- Findings total: {len(merged_findings)}",
-            f"- Parse success count: {parse_success_count}",
-            f"- Parse failure count: {parse_failure_count}",
-            f"- Schema valid finding count: {schema_valid_count}",
-            f"- Dropped finding count: {dropped_findings_count}",
-            f"- Allow paths: {', '.join(normalized_allow_paths)}",
-            f"- Enforcement mode: {request.policy.enforcement_mode}",
-            f"- Strict contract: {request.policy.enforce_findings_contract}",
-            "",
-            "## Severity Counts",
-            f"- critical: {counts['critical']}",
-            f"- high: {counts['high']}",
-            f"- medium: {counts['medium']}",
-            f"- low: {counts['low']}",
-            "",
-            "## Consensus Counts",
-            f"- confirmed: {consensus_counts['confirmed']}",
-            f"- needs-verification: {consensus_counts['needs-verification']}",
-            f"- unverified: {consensus_counts['unverified']}",
-            "",
-            "## Provider Results",
-        ]
-        for provider in provider_order:
-            details = provider_results.get(provider, {})
-            success = bool(details.get("success"))
-            parse_reason = str(details.get("parse_reason", ""))
-            cancel_reason = str(details.get("cancel_reason", ""))
-            assigned_scope_summary = _assigned_scope_summary(details.get("assigned_scope"))
-            summary.append(
-                f"- {provider}: success={success}, final_error={details.get('final_error')}, parse_reason={parse_reason or '-'}, cancel_reason={cancel_reason or '-'}, assigned_scope={assigned_scope_summary or '-'}"
-            )
-            output_text = str(details.get("output_text", ""))
-            if output_text:
-                summary.append("  output:")
-                for raw_line in output_text.splitlines():
-                    summary.append(f"    {raw_line}")
-        if synthesis is not None:
-            summary.append("")
-            summary.append("## Synthesis")
-            summary.append(f"- provider: {synthesis.get('provider')}")
-            summary.append(f"- success: {synthesis.get('success')}")
-            summary.append(f"- reason: {synthesis.get('reason')}")
-            text = str(synthesis.get("text", ""))
-            if text:
-                summary.append("  output:")
-                for raw_line in text.splitlines():
-                    summary.append(f"    {raw_line}")
-        if write_artifacts and root_path:
-            _write_text(root_path / "summary.md", "\n".join(summary))
-
-        decision_lines = [f"# {'Review' if review_mode else 'Run'} Decision ({resolved_task_id})", ""]
-        decision_lines.append(f"- decision: {decision}")
-        decision_lines.append(f"- terminal_state: {terminal_state.value}")
-        if review_mode:
-            decision_lines.append(
-                f"- rule_trace: critical={counts['critical']}, high={counts['high']}, findings={len(merged_findings)}"
-            )
-        else:
-            success_count = sum(1 for value in required_provider_success.values() if value)
-            decision_lines.append(
-                f"- run_trace: providers={len(required_provider_success)}, success={success_count}, failed={len(required_provider_success) - success_count}"
-            )
-        if write_artifacts and root_path:
-            _write_text(root_path / "decision.md", "\n".join(decision_lines))
-
-        run_payload = {
-            "task_id": resolved_task_id,
-            "mode": "review" if review_mode else "run",
-            "division_strategy": division_strategy,
-            "terminal_state": terminal_state.value,
-            "decision": decision,
-            "effective_cwd": str(Path(request.repo_root).resolve(strict=False)),
-            "allow_paths": normalized_allow_paths,
-            "allow_paths_hash": _stable_payload_hash(normalized_allow_paths),
-            "target_paths": normalized_targets,
-            "provider_scopes": {
-                provider: details.get("assigned_scope")
-                for provider, details in provider_results.items()
-                if details.get("assigned_scope") is not None
-            },
-            "enforcement_mode": request.policy.enforcement_mode,
-            "enforce_findings_contract": request.policy.enforce_findings_contract,
-            "provider_permissions": request.policy.provider_permissions,
-            "permissions_hash": _stable_payload_hash(request.policy.provider_permissions),
-            "provider_results": provider_results,
-            "findings_count": len(merged_findings),
-            "parse_success_count": parse_success_count,
-            "parse_failure_count": parse_failure_count,
-            "schema_valid_count": schema_valid_count,
-            "dropped_findings_count": dropped_findings_count,
-        }
-        if token_usage_summary is not None:
-            run_payload["token_usage_summary"] = token_usage_summary
-        run_payload["consensus_summary"] = {
-            "provider_count": len(active_provider_order),
-            "level_counts": consensus_counts,
-        }
-        if debate_round is not None:
-            run_payload["debate_round"] = debate_round
-        if synthesis is not None:
-            run_payload["synthesis"] = synthesis
-        if write_artifacts and root_path:
-            _write_json(root_path / "run.json", run_payload)
-
-        _emit_event(
+        division = _prepare_division(
             request,
-            {
-                "type": "consensus",
-                "task_id": resolved_task_id,
-                "provider_count": len(active_provider_order),
-                "level_counts": consensus_counts,
-                "findings": findings_json,
+            review_mode,
+            task_id,
+            provider_order,
+            normalized_targets,
+            normalized_allow_paths,
+            division_strategy,
+            full_prompt,
+            prompt_body,
+        )
+        if division.no_op_result is not None:
+            _emit_event(request, {
+                "type": "result",
+                "task_id": task_id,
+                "decision": "PASS",
+                "terminal_state": "COMPLETED",
+                "findings_count": 0,
+                "findings": [],
+                "provider_results": {},
                 "division_strategy": division_strategy,
-            },
+            })
+            return division.no_op_result
+
+        runnable_providers = [provider for provider in provider_order if provider not in division.skipped_outcomes]
+        outcomes = _execute_providers(
+            request,
+            runtime,
+            adapter_map,
+            resolved_task_id,
+            runtime_artifact_base,
+            write_artifacts,
+            review_mode,
+            provider_order,
+            runnable_providers,
+            division.provider_prompts,
+            division.provider_target_paths,
+            normalized_targets,
+            normalized_allow_paths,
+            division.provider_assigned_scopes,
+            division.provider_perspectives,
+            division.skipped_outcomes,
         )
 
-        # ── Stream: result event ──
-        _result_event: Dict[str, object] = {
-            "type": "result",
-            "task_id": resolved_task_id,
-            "decision": decision,
-            "terminal_state": terminal_state.value,
-            "division_strategy": division_strategy,
-            "findings_count": len(merged_findings),
-            "findings": findings_json,
-            "provider_results": {
-                p: {"success": pr.get("success"), "findings_count": pr.get("findings_count", 0),
-                     "wall_clock_seconds": pr.get("wall_clock_seconds", 0),
-                     "assigned_scope": pr.get("assigned_scope")}
-                for p, pr in provider_results.items()
-            },
-        }
-        if token_usage_summary is not None:
-            _result_event["token_usage_summary"] = token_usage_summary
-        if debate_round is not None:
-            _result_event["debate_round"] = debate_round
-        if synthesis is not None:
-            _result_event["synthesis"] = synthesis
-        _emit_event(request, _result_event)
+        collected = _collect_results(
+            request,
+            runtime,
+            adapter_map,
+            resolved_task_id,
+            artifact_root,
+            root_path,
+            runtime_artifact_base,
+            review_mode,
+            write_artifacts,
+            division_strategy,
+            diff_file_set,
+            prompt_body,
+            provider_order,
+            normalized_targets,
+            normalized_allow_paths,
+            outcomes,
+            run_hooks,
+        )
 
         return ReviewResult(
             task_id=resolved_task_id,
             artifact_root=artifact_root,
-            decision=decision,
-            terminal_state=terminal_state.value,
-            provider_results=provider_results,
-            findings_count=len(merged_findings),
-            parse_success_count=parse_success_count,
-            parse_failure_count=parse_failure_count,
-            schema_valid_count=schema_valid_count,
-            dropped_findings_count=dropped_findings_count,
-            findings=findings_json,
-            token_usage_summary=token_usage_summary,
-            synthesis=synthesis,
-            debate_round=debate_round,
+            decision=collected.decision,
+            terminal_state=collected.terminal_state.value,
+            provider_results=collected.provider_results,
+            findings_count=len(collected.merged_findings),
+            parse_success_count=collected.parse_success_count,
+            parse_failure_count=collected.parse_failure_count,
+            schema_valid_count=collected.schema_valid_count,
+            dropped_findings_count=collected.dropped_findings_count,
+            findings=collected.merged_findings,
+            token_usage_summary=collected.token_usage_summary,
+            synthesis=collected.synthesis,
+            debate_round=collected.debate_round,
             division_strategy=division_strategy,
         )
     finally:

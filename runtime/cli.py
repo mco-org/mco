@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Callable, Dict, List, Mapping, Optional
 
 from .adapters import adapter_registry
 from .config import ReviewConfig, ReviewPolicy, load_agent_registrations
@@ -31,6 +31,26 @@ class _HelpFormatter(argparse.RawTextHelpFormatter):
         if default not in (None, "", False, argparse.SUPPRESS) and "%(default)" not in help_text:
             help_text += " (default: %(default)s)"
         return help_text
+
+
+class _StreamSafeParser(argparse.ArgumentParser):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._stream_error_handler: Optional[Callable[[str], None]] = None
+
+    def set_stream_error_handler(self, handler: Optional[Callable[[str], None]]) -> None:
+        self._stream_error_handler = handler
+        for action in self._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for subparser in action.choices.values():
+                    if isinstance(subparser, _StreamSafeParser):
+                        subparser.set_stream_error_handler(handler)
+
+    def error(self, message: str) -> None:
+        if self._stream_error_handler is not None:
+            self._stream_error_handler(message)
+            raise SystemExit(2)
+        super().error(message)
 
 
 TOP_LEVEL_DESCRIPTION = (
@@ -588,7 +608,11 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     scope.add_argument("--repo", default=".", help="Repository root path")
     prompt_group = scope.add_mutually_exclusive_group()
     prompt_group.add_argument("--prompt", default="", help="Task prompt (inline)")
-    prompt_group.add_argument("--file", default="", help="Read prompt from file path, or '-' for stdin")
+    prompt_group.add_argument(
+        "--file",
+        default="",
+        help="Read prompt from file path, or '-' for stdin. Overridden by --prompt if both specified.",
+    )
     scope.add_argument(
         "--providers",
         default=argparse.SUPPRESS,
@@ -626,7 +650,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--stall-timeout",
         type=int,
         default=argparse.SUPPRESS,
-        help="Cancel a provider when output progress is idle for N seconds",
+        help=f"Per-provider stall timeout in seconds (default: {DEFAULT_POLICY.stall_timeout_seconds})",
     )
     timeouts.add_argument(
         "--poll-interval",
@@ -638,7 +662,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--review-hard-timeout",
         type=int,
         default=argparse.SUPPRESS,
-        help="Review-mode hard deadline in seconds (0 disables)",
+        help="Global hard deadline for entire review run, distinct from per-provider stall timeout (0 disables)",
     )
 
     output = parser.add_argument_group("Output")
@@ -770,7 +794,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _StreamSafeParser(
         prog="mco",
         description=TOP_LEVEL_DESCRIPTION,
         epilog=TOP_LEVEL_EPILOG,
@@ -1392,20 +1416,11 @@ def main(argv: List[str] | None = None) -> int:
     _wants_stream = "--stream" in _raw_argv and any(mode in _raw_argv for mode in ("jsonl", "live"))
     _parse_error_msg = ""
     if _wants_stream:
-        # Override parser.error to capture the message without writing to stderr
-        _original_error = parser.error
-
-        def _silent_error(message: str) -> None:
+        def _capture_parse_error(message: str) -> None:
             nonlocal _parse_error_msg
             _parse_error_msg = message
-            raise SystemExit(2)
-
-        parser.error = _silent_error  # type: ignore[assignment]
-        # Also suppress subparser errors
-        for action in parser._subparsers._actions:
-            if hasattr(action, "_parser_class"):
-                for sub in getattr(action, "choices", {}).values():
-                    sub.error = _silent_error  # type: ignore[assignment]
+        if isinstance(parser, _StreamSafeParser):
+            parser.set_stream_error_handler(_capture_parse_error)
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
