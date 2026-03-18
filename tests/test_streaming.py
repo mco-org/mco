@@ -210,6 +210,23 @@ class TestProviderEarlyExitEvents(unittest.TestCase):
 class TestArgparseErrorsEmitEvents(unittest.TestCase):
     """Fix 1: argparse errors with --stream should emit JSONL error, not just stderr."""
 
+    def test_stream_safe_parser_suppresses_stderr_when_handler_installed(self) -> None:
+        from runtime.cli import _StreamSafeParser, build_parser
+
+        parser = build_parser()
+        self.assertIsInstance(parser, _StreamSafeParser)
+        parse_errors = []
+        parser.set_stream_error_handler(parse_errors.append)
+
+        stderr_buf = io.StringIO()
+        with contextlib.redirect_stderr(stderr_buf), self.assertRaises(SystemExit) as exc:
+            parser.parse_args(["review", "--repo", ".", "--prompt", "x", "--stream", "jsonl", "--format", "bad"])
+
+        self.assertEqual(exc.exception.code, 2)
+        self.assertEqual(stderr_buf.getvalue().strip(), "")
+        self.assertTrue(parse_errors)
+        self.assertIn("invalid choice", parse_errors[0])
+
     def test_missing_prompt_emits_jsonl_error_no_stderr(self) -> None:
         from runtime.cli import main
         from unittest.mock import patch, MagicMock

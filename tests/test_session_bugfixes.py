@@ -4,18 +4,21 @@ resume provider validation, and result retrieval."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from runtime.session.state import SessionState, save_state, load_state, load_history
 from runtime.session.daemon import run_daemon, _socket_path
 from runtime.session.client import send_prompt_nowait, get_result
 from runtime.session.manager import resume_session
+from runtime.contracts import TaskRunRef, TaskStatus
 
 
 def _send_raw(sock_path: str, request: dict, timeout: float = 10.0) -> dict:
@@ -240,3 +243,80 @@ class TestBroaderExceptionHandling(unittest.TestCase):
 
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
+
+    @patch("runtime.session.daemon.logging.warning")
+    def test_run_single_attempt_logs_cancel_error_on_cancel_event(self, mock_warning) -> None:
+        from runtime.session.daemon import _run_single_attempt
+
+        class _Adapter:
+            def run(self, task_input):
+                artifact_root = Path(task_input.metadata["artifact_root"]) / task_input.task_id
+                raw_dir = artifact_root / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                return TaskRunRef(
+                    task_id=task_input.task_id,
+                    provider="claude",
+                    run_id="r1",
+                    artifact_path=str(artifact_root),
+                    started_at="now",
+                )
+
+            def cancel(self, ref):
+                raise RuntimeError("cancel boom")
+
+            def poll(self, ref):
+                return TaskStatus(
+                    task_id=ref.task_id,
+                    provider=ref.provider,
+                    run_id=ref.run_id,
+                    attempt_state="STARTED",
+                    completed=False,
+                    heartbeat_at="now",
+                    output_path=None,
+                )
+
+        task_input = type("Task", (), {"task_id": "task-1", "metadata": {"artifact_root": tempfile.mkdtemp()}})
+        cancel_event = threading.Event()
+        cancel_event.set()
+        result = _run_single_attempt(_Adapter(), task_input, "claude", cancel_event)
+        self.assertEqual(result["error_kind"], "cancelled")
+        mock_warning.assert_called_once()
+        self.assertIn("cancel boom", mock_warning.call_args.args[0])
+
+    @patch("runtime.session.daemon._STALL_TIMEOUT_SECONDS", 0)
+    @patch("runtime.session.daemon.logging.warning")
+    def test_run_single_attempt_logs_cancel_error_on_timeout(self, mock_warning) -> None:
+        from runtime.session.daemon import _run_single_attempt
+
+        class _Adapter:
+            def run(self, task_input):
+                artifact_root = Path(task_input.metadata["artifact_root"]) / task_input.task_id
+                raw_dir = artifact_root / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                return TaskRunRef(
+                    task_id=task_input.task_id,
+                    provider="claude",
+                    run_id="r1",
+                    artifact_path=str(artifact_root),
+                    started_at="now",
+                )
+
+            def cancel(self, ref):
+                raise RuntimeError("timeout cancel boom")
+
+            def poll(self, ref):
+                return TaskStatus(
+                    task_id=ref.task_id,
+                    provider=ref.provider,
+                    run_id=ref.run_id,
+                    attempt_state="STARTED",
+                    completed=False,
+                    heartbeat_at="now",
+                    output_path=None,
+                )
+
+        task_input = type("Task", (), {"task_id": "task-1", "metadata": {"artifact_root": tempfile.mkdtemp()}})
+        result = _run_single_attempt(_Adapter(), task_input, "claude", cancel_event=None)
+        self.assertEqual(result["error_kind"], "retryable_timeout")
+        mock_warning.assert_called_once()
+        self.assertIn("timeout cancel boom", mock_warning.call_args.args[0])

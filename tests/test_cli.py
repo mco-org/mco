@@ -10,6 +10,7 @@ from runtime.cli import (
     _parse_provider_permissions_json,
     _parse_provider_timeouts,
     _parse_providers,
+    _StreamSafeParser,
     build_parser,
     _resolve_config,
 )
@@ -186,6 +187,7 @@ class CliTests(unittest.TestCase):
 
     def test_review_help_contains_groups_examples_and_exit_codes(self) -> None:
         parser = build_parser()
+        self.assertIsInstance(parser, _StreamSafeParser)
         with self.assertRaises(SystemExit):
             with contextlib.redirect_stdout(io.StringIO()) as output:
                 parser.parse_args(["review", "-h"])
@@ -202,6 +204,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("INCONCLUSIVE", help_text)
         # Config-overridable flags use argparse.SUPPRESS, so default isn't shown
         self.assertIn("--stall-timeout", help_text)
+        self.assertIn("per-provider", help_text.lower())
+        self.assertIn("overridden", help_text.lower())
+        self.assertIn("global", help_text.lower())
 
     @patch("runtime.cli._check_agent")
     def test_agent_check_rejects_empty_name(self, mock_check) -> None:

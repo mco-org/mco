@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import signal
@@ -99,8 +100,8 @@ def _run_single_attempt(
         if cancel_event and cancel_event.is_set():
             try:
                 adapter.cancel(run_ref)  # type: ignore[union-attr]
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.warning(f"Failed to cancel provider {provider}: {exc}")
             raw_stdout, raw_stderr = _read_output(run_ref.artifact_path, provider)
             return {
                 "success": False,
@@ -118,8 +119,8 @@ def _run_single_attempt(
         if time.time() - started > _STALL_TIMEOUT_SECONDS:
             try:
                 adapter.cancel(run_ref)  # type: ignore[union-attr]
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.warning(f"Failed to cancel provider {provider}: {exc}")
             # Preserve partial output on timeout
             raw_stdout, raw_stderr = _read_output(run_ref.artifact_path, provider)
             return {

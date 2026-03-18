@@ -7,7 +7,7 @@ import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from runtime.adapters.parsing import normalize_findings_from_text
 from runtime.config import ReviewPolicy
@@ -18,7 +18,11 @@ from runtime.review_engine import (
     _apply_debate_results,
     _build_debate_prompt,
     _consensus_level,
+    _execute_providers,
     _parse_debate_votes,
+    _prepare_diff_mode,
+    _prepare_division,
+    _collect_results,
     _run_debate_round,
     run_review,
 )
@@ -162,6 +166,12 @@ class ProgressTimedFakeAdapter(TimedFakeAdapter):
         return status
 
 
+class CancelFailingTimedFakeAdapter(TimedFakeAdapter):
+    def cancel(self, ref: TaskRunRef) -> None:
+        super().cancel(ref)
+        raise RuntimeError("cancel exploded")
+
+
 class PermissionAwareFakeAdapter(FakeAdapter):
     def __init__(self, provider: str, raw_stdout: str, supported_keys: list[str]) -> None:
         super().__init__(provider, raw_stdout)
@@ -291,6 +301,159 @@ class ConsensusAlgorithmTests(unittest.TestCase):
             normalized_allow_paths=["."],
         )
         self.assertEqual(result, {"enabled": False, "reason": "no_findings"})
+
+    def test_prepare_diff_mode_without_diff_returns_original_prompt(self) -> None:
+        req = ReviewRequest(
+            repo_root=".",
+            prompt="Review",
+            providers=["claude"],
+            artifact_base="/tmp/art",
+            policy=ReviewPolicy(timeout_seconds=3, max_retries=0),
+        )
+        diff_file_set, augmented_prompt, normalized_targets, no_op_result = _prepare_diff_mode(
+            req,
+            review_mode=True,
+            task_id="task-1",
+            normalized_targets=["runtime"],
+            division_strategy=None,
+        )
+        self.assertIsNone(diff_file_set)
+        self.assertEqual(augmented_prompt, "Review")
+        self.assertEqual(normalized_targets, ["runtime"])
+        self.assertIsNone(no_op_result)
+
+    def test_prepare_division_files_assigns_and_skips_empty_slices(self) -> None:
+        req = ReviewRequest(
+            repo_root=".",
+            prompt="Review",
+            providers=["claude", "codex"],
+            artifact_base="/tmp/art",
+            policy=ReviewPolicy(timeout_seconds=3, max_retries=0, divide="files"),
+        )
+        with patch("runtime.review_engine._discover_review_files", return_value=[("a.py", 20)]):
+            prepared = _prepare_division(
+                req,
+                review_mode=True,
+                task_id="task-1",
+                provider_order=["claude", "codex"],
+                normalized_targets=["."],
+                normalized_allow_paths=["."],
+                division_strategy="files",
+                full_prompt="Review\n\nScope: .",
+                prompt_body="Review",
+            )
+        self.assertEqual(prepared.provider_target_paths["claude"], ["a.py"])
+        self.assertEqual(prepared.provider_target_paths["codex"], [])
+        self.assertIn("codex", prepared.skipped_outcomes)
+
+    def test_execute_providers_returns_skipped_and_runnable_outcomes(self) -> None:
+        req = ReviewRequest(
+            repo_root=".",
+            prompt="Review",
+            providers=["claude", "codex"],
+            artifact_base="/tmp/art",
+            policy=ReviewPolicy(timeout_seconds=3, max_retries=0, max_provider_parallelism=1),
+        )
+        adapter = FakeAdapter("claude", '{"findings":[]}')
+        prepared = _prepare_division(
+            req,
+            review_mode=True,
+            task_id="task-1",
+            provider_order=["claude", "codex"],
+            normalized_targets=["runtime"],
+            normalized_allow_paths=["."],
+            division_strategy="files",
+            full_prompt="Review\n\nScope: runtime",
+            prompt_body="Review",
+        )
+        prepared.skipped_outcomes["codex"] = prepared.skipped_outcomes.get(
+            "codex",
+            MagicMock(
+                provider="codex",
+                success=False,
+                parse_ok=False,
+                schema_valid_count=0,
+                dropped_count=0,
+                findings=[],
+                provider_result={"success": False, "skipped": True, "reason": "no_files_assigned"},
+            ),
+        )
+        outcomes = _execute_providers(
+            req,
+            runtime=MagicMock(),
+            adapter_map={"claude": adapter},
+            resolved_task_id="task-1",
+            runtime_artifact_base="/tmp/art",
+            write_artifacts=False,
+            review_mode=True,
+            provider_order=["claude", "codex"],
+            runnable_providers=["claude"],
+            provider_prompts={"claude": "Review\n\nScope: runtime"},
+            provider_target_paths={"claude": ["runtime"], "codex": []},
+            normalized_targets=["runtime"],
+            normalized_allow_paths=["."],
+            provider_assigned_scopes={},
+            provider_perspectives={"claude": "", "codex": ""},
+            skipped_outcomes=prepared.skipped_outcomes,
+        )
+        self.assertIn("claude", outcomes)
+        self.assertIn("codex", outcomes)
+
+    def test_collect_results_skips_debate_when_disabled_result_returned(self) -> None:
+        req = ReviewRequest(
+            repo_root=".",
+            prompt="Review",
+            providers=["claude", "codex"],
+            artifact_base="/tmp/art",
+            policy=ReviewPolicy(timeout_seconds=3, max_retries=0, debate=True, require_non_empty_findings=True),
+        )
+        finding = normalize_findings_from_text(
+            '{"findings":[{"finding_id":"f1","severity":"high","category":"bug","title":"Issue","evidence":{"file":"a.py","line":1,"snippet":"x"},"recommendation":"fix","confidence":0.7,"fingerprint":"fp1"}]}',
+            NormalizeContext(task_id="task-1", provider="claude", repo_root=".", raw_ref="raw"),
+            "claude",
+        )
+        outcomes = {
+            "claude": MagicMock(
+                provider="claude",
+                success=True,
+                parse_ok=True,
+                schema_valid_count=1,
+                dropped_count=0,
+                findings=finding,
+                provider_result={"success": True, "findings_count": 1},
+            ),
+            "codex": MagicMock(
+                provider="codex",
+                success=True,
+                parse_ok=True,
+                schema_valid_count=0,
+                dropped_count=0,
+                findings=[],
+                provider_result={"success": True, "findings_count": 0},
+            ),
+        }
+        with patch("runtime.review_engine._run_debate_round", return_value={"enabled": False, "reason": "no_findings"}):
+            collected = _collect_results(
+                req,
+                runtime=MagicMock(),
+                adapter_map={},
+                resolved_task_id="task-1",
+                artifact_root=None,
+                root_path=None,
+                runtime_artifact_base="/tmp/art",
+                review_mode=True,
+                write_artifacts=False,
+                division_strategy=None,
+                diff_file_set=None,
+                prompt_body="Review",
+                provider_order=["claude", "codex"],
+                normalized_targets=["."],
+                normalized_allow_paths=["."],
+                outcomes=outcomes,
+                run_hooks=None,
+            )
+        self.assertEqual(collected.debate_round, None)
+        self.assertEqual(collected.consensus_counts["unverified"], 1)
 
 
 class ReviewEngineTests(unittest.TestCase):
@@ -925,6 +1088,38 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(provider_result.get("final_error"), "retryable_timeout")
             self.assertEqual(provider_result.get("cancel_reason"), "hard_deadline_exceeded")
             self.assertGreaterEqual(progressive.cancel_calls, 1)
+
+    def test_cancel_failure_emits_provider_error_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            events: list[dict] = []
+            adapter = CancelFailingTimedFakeAdapter(
+                "claude",
+                '{"findings":[]}',
+                complete_after_seconds=5.0,
+            )
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="review",
+                providers=["claude"],
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(
+                    timeout_seconds=1,
+                    stall_timeout_seconds=1,
+                    review_hard_timeout_seconds=1,
+                    poll_interval_seconds=0.1,
+                    max_retries=0,
+                    require_non_empty_findings=True,
+                ),
+                stream_callback=events.append,
+            )
+            result = run_review(req, adapters={"claude": adapter}, review_mode=True)
+            self.assertEqual(result.provider_results["claude"].get("final_error"), "retryable_timeout")
+            cancel_failed = [
+                event for event in events
+                if event["type"] == "provider_error" and event.get("error_kind") == "cancel_failed"
+            ]
+            self.assertEqual(len(cancel_failed), 1)
+            self.assertIn("cancel exploded", cancel_failed[0]["message"])
 
     def test_provider_timeout_override_allows_slow_provider_to_succeed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -299,9 +299,15 @@ def load_agent_registrations(
             _warn(f"ignored invalid agents payload in '{path}'")
             continue
         normalized = []
+        seen_names = set()
         for item in agents_value:
             agent = _normalize_agent_registration(item)
             if agent is not None:
+                name = str(agent.get("name", "")).strip()
+                if name in seen_names:
+                    _warn(f"duplicate agent registration '{name}' in '{path}' ignored; keeping first entry")
+                    continue
+                seen_names.add(name)
                 normalized.append(agent)
         if normalized or "agents" in payload:
             return normalized
