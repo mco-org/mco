@@ -193,6 +193,28 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | List custom agents | `mco agent list` | Show built-in + configured custom agents |
 | Check one custom agent | `mco agent check my-ollama` | Validate one configured agent or Ollama model wrapper |
 
+Note: `--debate` and `--divide` are mutually exclusive. Use one workflow at a time.
+
+Debate example:
+
+```bash
+mco review \
+  --repo . \
+  --prompt "Review this PR and challenge weak findings before final ranking." \
+  --providers claude,codex,gemini \
+  --debate
+```
+
+Divide example:
+
+```bash
+mco review \
+  --repo . \
+  --prompt "Review this PR for correctness and performance issues." \
+  --providers claude,codex,gemini \
+  --divide dimensions
+```
+
 ## Quick Start
 
 Install via npm (Python 3 required on PATH):
@@ -420,11 +442,11 @@ Run `mco review --help` for the full flag list.
 
 ## Custom Agents
 
-MCO can load custom agents from:
+Config files are loaded in priority order:
 
-- `.mco/agents.yaml` in the repo root
-- `.mcorc.yaml` in the repo root
-- `~/.mco/agents.yaml` globally
+1. `.mco/agents.yaml` (project-specific)
+2. `.mcorc.yaml` (project root)
+3. `~/.mco/agents.yaml` (global)
 
 Inspect what MCO sees:
 
