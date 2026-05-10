@@ -258,6 +258,16 @@ class JsonRpcTransport:
             except OSError:
                 pass
             try:
+                if self._process.stdout:
+                    self._process.stdout.close()
+            except (OSError, ValueError):
+                pass
+            try:
+                if self._process.stderr:
+                    self._process.stderr.close()
+            except (OSError, ValueError):
+                pass
+            try:
                 self._process.terminate()
                 self._process.wait(timeout=5)
             except (subprocess.TimeoutExpired, OSError):

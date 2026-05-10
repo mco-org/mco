@@ -145,6 +145,74 @@ class TestJsonRpcTransport(unittest.TestCase):
         items = self.transport.drain_notifications()
         self.assertGreaterEqual(len(items), 1)
 
+    def test_close_no_resource_warning(self) -> None:
+        """close() must close stdout/stderr pipes — no ResourceWarning on GC."""
+        import gc
+        import warnings
+
+        transport = JsonRpcTransport()
+        transport.start(
+            command=[sys.executable, "-c", "import time; time.sleep(5)"],
+            cwd=self.tmp,
+        )
+        # Grab pid so we can confirm process existed
+        self.assertIsNotNone(transport.pid)
+        transport.close()
+
+        # Force GC and check for ResourceWarning about unclosed file/pipe
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            del transport
+            gc.collect()
+
+        resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
+        self.assertEqual(
+            resource_warnings, [],
+            f"Expected no ResourceWarning, got: {[str(w.message) for w in resource_warnings]}",
+        )
+
+    def test_close_no_resource_warning_with_stderr_pipe(self) -> None:
+        """close() must close stderr pipe when stderr=subprocess.PIPE."""
+        import gc
+        import warnings
+
+        transport = JsonRpcTransport()
+        transport.start(
+            command=[sys.executable, "-c", "import time; time.sleep(5)"],
+            cwd=self.tmp,
+            # Force stderr to be a PIPE (not DEVNULL)
+        )
+        self.assertIsNotNone(transport.pid)
+
+        # Manually set stderr to a PIPE for testing
+        # (start() uses DEVNULL by default, so we need stderr_path to get a pipe)
+        transport.close()
+
+        # Now test with explicit stderr pipe
+        transport2 = JsonRpcTransport()
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(5)"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        transport2._process = proc
+        transport2._running = True
+        transport2.close()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            del transport2
+            del proc
+            gc.collect()
+
+        resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
+        self.assertEqual(
+            resource_warnings, [],
+            f"Expected no ResourceWarning with stderr pipe, got: {[str(w.message) for w in resource_warnings]}",
+        )
+
 
 class TestTransportEdgeCases(unittest.TestCase):
     def test_start_twice_raises(self) -> None:
