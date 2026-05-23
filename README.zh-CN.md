@@ -1,3 +1,14 @@
+> ### 🐝 后续：Hive
+>
+> MCO 的"一条 prompt 调度多个 agent"的思路，现在在
+> **[Hive](https://hivehq.dev)** 里走得更远——浏览器里的多 agent
+> 协作工作台，带稳定 agent 身份、共享任务图、一键重启全队。
+>
+> 想找多 CLI 协作工具，**从 [Hive](https://hivehq.dev) 开始**
+> （`npm i -g @tt-a1i/hive`）。MCO 当前用户仍可继续使用。
+
+---
+
 <h1 align="center">MCO</h1>
 
 <p align="center">

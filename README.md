@@ -1,3 +1,16 @@
+> ### 🐝 Next chapter: Hive
+>
+> MCO's "one prompt, many agents" idea now lives — and goes further — in
+> **[Hive](https://hivehq.dev)**, a browser-based multi-agent workbench
+> with persistent agent identity, a shared task graph, and one-click
+> team restart.
+>
+> Looking for multi-CLI orchestration today? **Start with
+> [Hive](https://hivehq.dev)** (`npm i -g @tt-a1i/hive`). MCO remains
+> available for existing users.
+
+---
+
 <h1 align="center">MCO</h1>
 
 <p align="center">
