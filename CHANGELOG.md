@@ -7,6 +7,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-27
+### Added
+- Added explicit opt-in Hermes and Pi provider adapters.
+- Added Pi JSONL output parsing and Hermes/Pi adapter contract coverage.
+
+### Changed
+- Kept the default provider set at the audited five built-ins while allowing Hermes/Pi through explicit provider selection.
+- Made Pi review execution use a read-only tool allowlist (`read,grep,find,ls`) so it can inspect code without enabling shell, edit, or write tools.
+- Aligned MCP doctor's default provider set with CLI doctor.
+
+### Fixed
+- Fixed Codex structured-output schema compatibility with current OpenAI strict schema requirements.
+- Hardened artifact `task_id` and session name validation against traversal, separator, control-character, and single-dot path pollution.
+- Restored Claude/Codex default permission contracts (`plan` and `workspace-write`).
+- Fixed ACP failure reporting to use an existing `ErrorKind`.
+- Prevented passive memory confirmation from marking findings fixed when provider results are failed or untrustworthy.
+- Updated runtime `__version__` to match package metadata.
+
 ## [0.9.1] - 2026-03-18
 ### Changed
 - Refactored `run_review()` into 4 phase functions for maintainability.

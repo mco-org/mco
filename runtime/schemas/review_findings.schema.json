@@ -11,7 +11,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": true,
+        "additionalProperties": false,
         "required": [
           "finding_id",
           "severity",
@@ -50,9 +50,11 @@
           },
           "evidence": {
             "type": "object",
-            "additionalProperties": true,
+            "additionalProperties": false,
             "required": [
               "file",
+              "line",
+              "symbol",
               "snippet"
             ],
             "properties": {
@@ -60,16 +62,10 @@
                 "type": "string"
               },
               "line": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+                "type": "integer"
               },
               "symbol": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "string"
               },
               "snippet": {
                 "type": "string"

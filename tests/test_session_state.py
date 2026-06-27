@@ -15,6 +15,7 @@ from runtime.session.state import (
     list_sessions,
     build_history_prompt,
     session_dir,
+    validate_session_name,
     _auto_name,
 )
 
@@ -98,3 +99,50 @@ class TestBuildHistoryPrompt(unittest.TestCase):
         self.assertIn("Assistant: Found 3 issues", result)
         self.assertIn("Current Request", result)
         self.assertIn("now check tests", result)
+
+
+class TestValidateSessionName(unittest.TestCase):
+    def test_rejects_absolute_path(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_session_name("/etc/hack")
+
+    def test_rejects_dot_dot(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_session_name("../escape")
+
+    def test_rejects_path_separator(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_session_name("session/evil")
+
+    def test_rejects_empty(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_session_name("")
+
+    def test_rejects_control_chars(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_session_name("name\x00bad")
+
+    def test_rejects_backslash(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_session_name("name\\bad")
+
+    def test_rejects_whitespace_only(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_session_name("   ")
+
+    def test_rejects_single_dot(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_session_name(".")
+
+    def test_accepts_valid(self) -> None:
+        validate_session_name("my-session")
+        validate_session_name("claude-abc123")
+        validate_session_name("codex.2024")
+
+    def test_session_dir_validates_name(self) -> None:
+        with self.assertRaises(ValueError):
+            session_dir("/tmp", "../bad")
+
+    def test_session_dir_allows_valid_name(self) -> None:
+        d = session_dir("/tmp", "good-name")
+        self.assertEqual(d.name, "good-name")

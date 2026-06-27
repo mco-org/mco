@@ -7,8 +7,10 @@ from .claude import ClaudeAdapter
 from .codex import CodexAdapter
 from .custom import CommandShimAdapter
 from .gemini import GeminiAdapter
+from .hermes import HermesAdapter
 from .ollama import OllamaAdapter
 from .opencode import OpenCodeAdapter
+from .pi import PiAdapter
 from .qwen import QwenAdapter
 
 
@@ -110,7 +112,9 @@ def adapter_registry(
             "claude": ClaudeAdapter,
             "codex": CodexAdapter,
             "gemini": GeminiAdapter,
+            "hermes": HermesAdapter,
             "opencode": OpenCodeAdapter,
+            "pi": PiAdapter,
             "qwen": QwenAdapter,
         }
         for pid, adapter_cls in shim_fallbacks.items():
@@ -123,7 +127,9 @@ def adapter_registry(
         "claude": ClaudeAdapter(),
         "codex": CodexAdapter(),
         "gemini": GeminiAdapter(),
+        "hermes": HermesAdapter(),
         "opencode": OpenCodeAdapter(),
+        "pi": PiAdapter(),
         "qwen": QwenAdapter(),
     }
     for agent in configured:
@@ -152,8 +158,10 @@ __all__ = [
     "CodexAdapter",
     "CommandShimAdapter",
     "GeminiAdapter",
+    "HermesAdapter",
     "OllamaAdapter",
     "OpenCodeAdapter",
+    "PiAdapter",
     "QwenAdapter",
     "adapter_registry",
 ]

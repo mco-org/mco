@@ -263,7 +263,7 @@ class AcpAdapter:
         self._runs.pop(ref.run_id, None)
 
         attempt_state = "SUCCEEDED" if handle.success else "FAILED"
-        error_kind = None if handle.success else ErrorKind.NON_RETRYABLE_PROCESS_FAILURE
+        error_kind = None if handle.success else ErrorKind.NORMALIZATION_ERROR
 
         return TaskStatus(
             task_id=ref.task_id,

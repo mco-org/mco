@@ -6,12 +6,12 @@ from typing import Any, Dict, List, Literal, Optional, Protocol, Sequence, runti
 from .types import ErrorKind
 
 
-ProviderId = Literal["claude", "codex", "gemini", "opencode", "qwen"]
+ProviderId = Literal["claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi"]
 CapabilityTier = Literal["C0", "C1", "C2", "C3", "C4", "C5", "C6"]
 TaskAttemptState = Literal["PENDING", "STARTED", "SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"]
 ConsensusLevel = Literal["confirmed", "needs-verification", "unverified"]
 
-PROVIDER_IDS: Sequence[ProviderId] = ("claude", "codex", "gemini", "opencode", "qwen")
+PROVIDER_IDS: Sequence[ProviderId] = ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi")
 CAPABILITY_TIERS: Sequence[CapabilityTier] = ("C0", "C1", "C2", "C3", "C4", "C5", "C6")
 
 

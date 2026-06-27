@@ -80,12 +80,37 @@ class TestSyncDoctor(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "invalid_providers")
 
     @patch("runtime.cli._doctor_provider_presence")
-    def test_empty_providers_checks_all(self, mock_presence) -> None:
+    def test_default_providers_are_builtin_five(self, mock_presence) -> None:
+        """Default doctor (no providers arg) checks exactly the 5 built-in providers."""
         mock_presence.return_value = {}
         result = _sync_doctor(None)
         self.assertTrue(result["ok"])
         called_providers = mock_presence.call_args[0][0]
-        self.assertTrue(len(called_providers) >= 5)
+        self.assertEqual(
+            called_providers,
+            ["claude", "codex", "gemini", "opencode", "qwen"],
+            "Default doctor must check only the 5 built-in providers, not hermes/pi",
+        )
+
+    @patch("runtime.cli._doctor_provider_presence")
+    def test_explicit_hermes_pi_allowed(self, mock_presence) -> None:
+        """Explicit providers='hermes,pi' is still accepted."""
+        mock_presence.return_value = {
+            "hermes": MagicMock(
+                provider="hermes", detected=True, auth_ok=True,
+                version="1.0", binary_path="/usr/bin/hermes",
+            ),
+            "pi": MagicMock(
+                provider="pi", detected=True, auth_ok=True,
+                version="2.0", binary_path="/usr/bin/pi",
+            ),
+        }
+        result = _sync_doctor("hermes,pi")
+        self.assertTrue(result["ok"])
+        providers = result["data"]["providers"]
+        self.assertEqual(len(providers), 2)
+        names = [p["name"] for p in providers]
+        self.assertEqual(names, ["hermes", "pi"])
 
 
 class TestSyncReview(unittest.TestCase):

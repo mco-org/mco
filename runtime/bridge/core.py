@@ -488,33 +488,43 @@ def _post_run_impl(
         poll_until_searchable(client, critical_high_request_ids, timeout_s=30, interval_s=3)
 
     # --- Passive confirmation ---
-    # Build per-commit changed-files cache (not a union — each finding
-    # should only see changes since *its own* last_seen_commit)
-    commits_in_history = {
-        f.get("last_seen_commit", "")
-        for f in existing_by_hash.values()
-        if f.get("last_seen_commit")
-    }
-    changed_files_by_commit: Dict[str, set] = {}
-    for c in commits_in_history:
-        if c and c != "unknown":
-            changed_files_by_commit[c] = _changed_files_since(repo_root, c)
+    # Only run passive confirmation when at least one provider succeeded
+    # (produced parse-able output). If all providers failed, the current
+    # run is not a trustworthy signal and we must not infer fixes.
+    any_provider_ok = any(
+        bool(details.get("success")) and details.get("parse_ok") is not False
+        for details in provider_results.values()
+    ) if provider_results else False
+    if any_provider_ok:
+        # Build per-commit changed-files cache (not a union — each finding
+        # should only see changes since *its own* last_seen_commit)
+        commits_in_history = {
+            f.get("last_seen_commit", "")
+            for f in existing_by_hash.values()
+            if f.get("last_seen_commit")
+        }
+        changed_files_by_commit: Dict[str, set] = {}
+        for c in commits_in_history:
+            if c and c != "unknown":
+                changed_files_by_commit[c] = _changed_files_since(repo_root, c)
 
-    from .passive_confirm import check_passive_fixes
-    passive_updates = check_passive_fixes(
-        existing_findings=list(existing_by_hash.values()),
-        current_hashes=current_hashes,
-        current_commit=commit,
-        changed_files_by_commit=changed_files_by_commit,
-    )
-    for updated in passive_updates:
-        content = EverMemosClient.serialize_finding(updated)
-        client.remember(space=findings_space, content=content)
+        from .passive_confirm import check_passive_fixes
+        passive_updates = check_passive_fixes(
+            existing_findings=list(existing_by_hash.values()),
+            current_hashes=current_hashes,
+            current_commit=commit,
+            changed_files_by_commit=changed_files_by_commit,
+        )
+        for updated in passive_updates:
+            content = EverMemosClient.serialize_finding(updated)
+            client.remember(space=findings_space, content=content)
 
-    if passive_updates:
-        fixed_count = sum(1 for u in passive_updates if u.get("status") == "fixed")
-        candidate_count = len(passive_updates) - fixed_count
-        print(f"[mco-bridge] Passive confirmation: {fixed_count} fixed, {candidate_count} candidates", file=sys.stderr)
+        if passive_updates:
+            fixed_count = sum(1 for u in passive_updates if u.get("status") == "fixed")
+            candidate_count = len(passive_updates) - fixed_count
+            print(f"[mco-bridge] Passive confirmation: {fixed_count} fixed, {candidate_count} candidates", file=sys.stderr)
+    else:
+        print("[mco-bridge] Skipping passive confirmation: no providers produced trustworthy parse results", file=sys.stderr)
 
     # --- Forget rejected findings ---
     from .forget_cleaner import clean_rejected_findings

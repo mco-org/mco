@@ -56,8 +56,31 @@ def sessions_root(repo_root: str = ".") -> Path:
     return Path(repo_root) / _SESSIONS_ROOT
 
 
+def validate_session_name(name: str) -> None:
+    """Validate session name as a safe filesystem path segment.
+
+    Raises ValueError if name is empty, contains path separators,
+    absolute-path markers, .. traversal, "." (current-dir), or control characters.
+    """
+    if not name or not name.strip():
+        raise ValueError("session name must not be empty")
+    if name == ".":
+        raise ValueError("session name must not be a single dot (current directory)")
+    if "\x00" in name:
+        raise ValueError("session name contains null byte")
+    if any(ord(ch) < 0x20 for ch in name):
+        raise ValueError("session name contains control characters")
+    if name.startswith("/") or name.startswith("\\"):
+        raise ValueError("session name must not be an absolute path")
+    if ".." in name.replace("\\", "/").split("/"):
+        raise ValueError("session name contains path traversal")
+    if "/" in name or "\\" in name:
+        raise ValueError("session name must not contain path separators")
+
+
 def session_dir(repo_root: str, name: str) -> Path:
     """Return the directory for a specific session."""
+    validate_session_name(name)
     return sessions_root(repo_root) / name
 
 

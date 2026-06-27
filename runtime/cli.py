@@ -19,7 +19,7 @@ from .formatters import (
 )
 from .review_engine import ReviewRequest, run_review
 
-SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "opencode", "qwen")
+SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "hermes", "opencode", "pi", "qwen")
 DEFAULT_CONFIG = ReviewConfig()
 DEFAULT_POLICY = DEFAULT_CONFIG.policy
 
@@ -812,7 +812,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument(
         "--providers",
         default=",".join(DEFAULT_CONFIG.providers),
-        help="Comma-separated providers. Supported: claude,codex,gemini,opencode,qwen",
+        help="Comma-separated providers. Supported: claude,codex,gemini,hermes,opencode,pi,qwen",
     )
     doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
 
@@ -955,7 +955,7 @@ def build_parser() -> argparse.ArgumentParser:
     session_sub = session_cmd.add_subparsers(dest="session_action", required=True)
 
     sess_start = session_sub.add_parser("start", help="Start a new session", formatter_class=_HelpFormatter)
-    sess_start.add_argument("--provider", required=True, help="Agent provider (e.g. claude, codex, gemini)")
+    sess_start.add_argument("--provider", required=True, help="Agent provider (e.g. claude, codex, gemini, hermes, pi)")
     sess_start.add_argument("--name", default="", help="Session name (auto-generated if omitted)")
     sess_start.add_argument("--repo", default=".", help="Repository root path")
 

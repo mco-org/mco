@@ -151,5 +151,126 @@ class TestBridgePostRunPersistence(unittest.TestCase):
         self.assertEqual(merged["first_seen"], "2026-03-01T00:00:00Z")
 
 
+class TestPassiveConfirmSkipOnAllFailure(unittest.TestCase):
+    """Passive confirmation must not infer fixes when all providers fail."""
+
+    def _make_historical_finding(self, finding_hash="sha256:old", status="open",
+                                  file="src/app.py", candidate=False):
+        """Build a finding that passive_confirm would mark fixed on 2nd absence."""
+        return {
+            "finding_hash": finding_hash,
+            "status": status,
+            "file": file,
+            "last_seen_commit": "abc111",
+            "passive_fix_candidate": candidate,
+            "category": "bug",
+            "severity": "high",
+            "title": "Old bug",
+            "occurrence_count": 2,
+            "detected_by": ["claude"],
+        }
+
+    def test_post_run_skips_passive_confirm_when_all_providers_fail(self) -> None:
+        """When no provider succeeds, passive confirmation is skipped entirely."""
+        from runtime.bridge.core import _post_run_impl, BridgeContext
+
+        ctx = BridgeContext()
+        ctx.space_slug = "test-repo"
+        ctx.client = MagicMock()
+        ctx.client.list_spaces.return_value = ["coding:test-repo--findings"]
+        # Seed a historical finding that would be marked fixed by passive_confirm
+        historical = self._make_historical_finding(
+            finding_hash="sha256:old", file="src/app.py", candidate=True,
+        )
+        ctx.client.fetch_history.return_value = [
+            {"id": "mem-1", "content": MagicMock()},
+        ]
+        # Make EverMemosClient.is_finding_entry return True, and deserialize
+        # return the historical finding
+        with patch("runtime.bridge.core.EverMemosClient.is_finding_entry", return_value=True):
+            with patch("runtime.bridge.core.EverMemosClient.deserialize_finding", return_value=dict(historical)):
+                with patch("runtime.bridge.core._current_commit", return_value="abc222"):
+                    with patch("runtime.bridge.core._changed_files_since", return_value={"src/app.py"}):
+                        _post_run_impl(
+                            ctx,
+                            findings=[],
+                            provider_results={
+                                "claude": {"success": False, "parse_ok": False},
+                                "codex": {"success": False, "parse_ok": False},
+                            },
+                            repo_root="/tmp",
+                            prompt="review",
+                            providers=["claude", "codex"],
+                        )
+
+        # Verify no "fixed" status was written to memory
+        remember_calls = [
+            c for c in ctx.client.remember.call_args_list
+            if "fixed" in str(c)
+        ]
+        self.assertEqual(len(remember_calls), 0,
+                         "No findings should be marked fixed when all providers fail")
+
+    def test_old_implementation_would_have_marked_fixed(self) -> None:
+        """Prove that the old implementation (without guard) would mark fixed.
+
+        This test calls check_passive_fixes directly with the same inputs
+        that would be used post_run when the guard is absent.
+        """
+        from runtime.bridge.passive_confirm import check_passive_fixes
+
+        historical = self._make_historical_finding(
+            finding_hash="sha256:old", file="src/app.py", candidate=True,
+        )
+        # Simulate: historical finding exists, current run has no findings,
+        # file changed since last seen commit.
+        updates = check_passive_fixes(
+            existing_findings=[historical],
+            current_hashes=set(),  # absent from current run
+            current_commit="abc222",
+            changed_files={"src/app.py"},
+        )
+        self.assertEqual(len(updates), 1,
+                         "Old implementation would produce an update")
+        self.assertEqual(updates[0]["status"], "fixed",
+                         "Old implementation would mark the finding as fixed")
+
+    def test_post_run_skips_when_parse_untrustworthy(self) -> None:
+        """Provider succeeded (exit_code=0) but parse_ok=False — skip passive confirm."""
+        from runtime.bridge.core import _post_run_impl, BridgeContext
+
+        ctx = BridgeContext()
+        ctx.space_slug = "test-repo"
+        ctx.client = MagicMock()
+        ctx.client.list_spaces.return_value = ["coding:test-repo--findings"]
+        historical = self._make_historical_finding(
+            finding_hash="sha256:old", file="src/app.py", candidate=True,
+        )
+        ctx.client.fetch_history.return_value = [
+            {"id": "mem-1", "content": MagicMock()},
+        ]
+        with patch("runtime.bridge.core.EverMemosClient.is_finding_entry", return_value=True):
+            with patch("runtime.bridge.core.EverMemosClient.deserialize_finding", return_value=dict(historical)):
+                with patch("runtime.bridge.core._current_commit", return_value="abc222"):
+                    with patch("runtime.bridge.core._changed_files_since", return_value={"src/app.py"}):
+                        _post_run_impl(
+                            ctx,
+                            findings=[],
+                            provider_results={
+                                "claude": {"success": True, "parse_ok": False},
+                            },
+                            repo_root="/tmp",
+                            prompt="review",
+                            providers=["claude"],
+                        )
+
+        remember_calls = [
+            c for c in ctx.client.remember.call_args_list
+            if "fixed" in str(c)
+        ]
+        self.assertEqual(len(remember_calls), 0,
+                         "No findings should be marked fixed when parse is untrustworthy")
+
+
 if __name__ == "__main__":
     unittest.main()

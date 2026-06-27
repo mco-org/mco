@@ -50,6 +50,7 @@ def _validate_repo(repo: str, require_git: bool = False) -> Optional[Dict[str, A
 def _sync_doctor(providers_csv: Optional[str]) -> Dict[str, Any]:
     """Check provider installation and auth status."""
     from .cli import _doctor_provider_presence, SUPPORTED_PROVIDERS
+    from .config import ReviewConfig
 
     if providers_csv:
         providers = [p.strip() for p in providers_csv.split(",") if p.strip()]
@@ -58,7 +59,8 @@ def _sync_doctor(providers_csv: Optional[str]) -> Dict[str, Any]:
             return _err("invalid_providers", "No valid providers in: {}".format(providers_csv))
         providers = valid
     else:
-        providers = list(SUPPORTED_PROVIDERS)
+        # Use the same safe default as CLI doctor (ReviewConfig built-in 5).
+        providers = list(ReviewConfig().providers)
 
     presence_map = _doctor_provider_presence(providers)
 

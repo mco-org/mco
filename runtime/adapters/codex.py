@@ -30,7 +30,7 @@ class CodexAdapter(ShimAdapterBase):
         return ["sandbox"]
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
-        sandbox = "danger-full-access"
+        sandbox = "workspace-write"
         raw_permissions = input_task.metadata.get("provider_permissions")
         if isinstance(raw_permissions, dict):
             value = raw_permissions.get("sandbox")
@@ -60,7 +60,7 @@ class CodexAdapter(ShimAdapterBase):
             "-C",
             "<repo_root>",
             "--sandbox",
-            "danger-full-access",
+            "workspace-write",
             "--json",
             "--output-schema",
             "<schema-path>",

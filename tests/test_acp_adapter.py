@@ -126,6 +126,34 @@ class TestAcpAdapter(unittest.TestCase):
         self.assertTrue(status.completed)
         self.assertEqual(status.attempt_state, "EXPIRED")
 
+    def test_poll_failure_uses_valid_error_kind(self) -> None:
+        """When ACP poll sees a failed run, error_kind must be a valid ErrorKind member."""
+        from runtime.types import ErrorKind
+        task = TaskInput(
+            task_id="test-acp-fail",
+            prompt="fail",
+            repo_root=self.tmp,
+            target_paths=["."],
+            timeout_seconds=5,
+            metadata={"artifact_root": self.tmp},
+        )
+        ref = self.adapter.run(task)
+        # Wait for prompt thread to complete, then force failure
+        handle = self.adapter._runs.get(ref.run_id)
+        if handle and handle.prompt_thread:
+            handle.prompt_thread.join(timeout=5)
+        if handle:
+            handle.success = False
+            handle.error_message = "test failure"
+            handle.completed = True
+        # Poll should return a valid error_kind
+        status = self.adapter.poll(ref)
+        self.assertTrue(status.completed)
+        self.assertEqual(status.attempt_state, "FAILED")
+        self.assertIsNotNone(status.error_kind)
+        # Verify it's a valid ErrorKind member
+        self.assertIn(status.error_kind, list(ErrorKind))
+
 
 class TestAcpAdapterDetectMissingBinary(unittest.TestCase):
     def test_detect_missing_binary(self) -> None:
