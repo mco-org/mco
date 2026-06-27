@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-06-27
+### Fixed
+- Fixed streamed `final_text` extraction for Pi/Codex-style JSONL output so text deltas are concatenated across tool events without including tool payloads or duplicate `text_end` content.
+
 ## [0.10.4] - 2026-06-27
 ### Added
 - Added per-provider model selection with `--provider-models-json`, including `model` support for Codex and `provider` + `model` support for Hermes and Pi.
