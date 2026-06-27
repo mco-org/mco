@@ -1498,7 +1498,7 @@ def main(argv: List[str] | None = None) -> int:
             _asyncio.run(run_server())
         except ImportError:
             print(
-                "mco serve requires the mcp package. Install with: pip install mco[memory]",
+                "mco serve requires the mcp package. Install with: python3 -m pip install mcp",
                 file=sys.stderr,
             )
             return 2

@@ -40,7 +40,7 @@ class TestMemoryErrorUX(unittest.TestCase):
                 os.environ["EVERMEMOS_API_KEY"] = env_backup
 
     def test_memory_without_mcp_sdk_shows_install_hint(self):
-        """Missing MCP SDK should mention pip install mco[memory]."""
+        """Missing MCP SDK should mention installing the mcp package."""
         from runtime.bridge.evermemos_client import EverMemosClient
         client = EverMemosClient(api_key="fake-key")
 
@@ -56,7 +56,7 @@ class TestMemoryErrorUX(unittest.TestCase):
         with patch("builtins.__import__", side_effect=mock_import):
             with self.assertRaises(ImportError) as ctx:
                 client._ensure_mcp_sdk()
-            self.assertIn("pip install mco[memory]", str(ctx.exception))
+            self.assertIn("python3 -m pip install mcp", str(ctx.exception))
 
     def test_uvx_not_found_surfaces_file_not_found(self):
         """If uvx binary is missing, _call_tool_sync should raise with context."""

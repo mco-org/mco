@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-27
+### Changed
+- Updated README and README.zh-CN to document Hermes/Pi opt-in support, safe default providers, and Pi's read-only tool allowlist.
+- Removed PyPI install guidance for MCO; npm is the packaged install channel.
+- Removed the PyPI publishing workflow; npm is the release channel for packaged installs.
+- Updated missing-MCP-SDK guidance to install the Python `mcp` package directly.
+
 ## [0.10.0] - 2026-06-27
 ### Added
 - Added explicit opt-in Hermes and Pi provider adapters.

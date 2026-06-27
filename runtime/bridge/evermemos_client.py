@@ -39,7 +39,7 @@ class EverMemosClient:
             import mcp  # noqa: F401
         except ImportError:
             raise ImportError(
-                "MCP SDK not installed. Install with: pip install mco[memory]\n"
+                "MCP SDK not installed. Install with: python3 -m pip install mcp\n"
                 "The mcp package is required for --memory support."
             ) from None
 

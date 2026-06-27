@@ -29,7 +29,7 @@
 
 <p align="center"><strong>MCO — Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.</strong></p>
 
-<p align="center"><strong>MCO equips your primary agent with an agent team: dispatch Claude, Codex, Gemini, OpenCode, and Qwen in parallel to execute tasks, review outputs, and synthesize consensus.</strong></p>
+<p align="center"><strong>MCO equips your primary agent with an agent team: dispatch Claude, Codex, Gemini, OpenCode, and Qwen in parallel by default, with Hermes and Pi available as explicit opt-in providers.</strong></p>
 
 <p align="center">English | <a href="./README.zh-CN.md">简体中文</a></p>
 
@@ -40,7 +40,8 @@
     <td align="center"><a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=96" alt="Codex CLI" width="48" /></a></td>
     <td align="center"><a href="https://github.com/sst/opencode"><img src="https://raw.githubusercontent.com/sst/opencode/master/packages/console/app/src/asset/brand/opencode-logo-light-square.svg" alt="OpenCode" width="48" /></a></td>
     <td align="center"><a href="https://github.com/QwenLM/qwen-code"><img src="https://github.com/QwenLM.png?size=96" alt="Qwen Code" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/open-claw/open-claw"><img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f99e.svg" alt="OpenClaw" width="48" /></a></td>
+    <td align="center"><strong>Hermes</strong></td>
+    <td align="center"><strong>Pi</strong></td>
   </tr>
   <tr>
     <td align="center"><strong>Claude Code</strong></td>
@@ -48,7 +49,8 @@
     <td align="center"><strong>Codex CLI</strong></td>
     <td align="center"><strong>OpenCode</strong></td>
     <td align="center"><strong>Qwen Code</strong></td>
-    <td align="center"><strong>OpenClaw 🦞</strong></td>
+    <td align="center"><strong>Hermes</strong></td>
+    <td align="center"><strong>Pi</strong></td>
   </tr>
   <tr>
     <td align="center"><code>claude</code></td>
@@ -56,7 +58,8 @@
     <td align="center"><code>codex</code></td>
     <td align="center"><code>opencode</code></td>
     <td align="center"><code>qwen</code></td>
-    <td align="center"><code>openclaw</code></td>
+    <td align="center"><code>hermes</code></td>
+    <td align="center"><code>pi</code></td>
   </tr>
 </table>
 
@@ -64,7 +67,7 @@
 >
 > Work like a Tech Lead: assign one task to multiple agents, run in parallel, and compare outcomes before acting.
 >
-> One command. Five agents working at once.
+> One command. Five default agents working at once.
 
 ### Works with OpenClaw
 
@@ -72,7 +75,7 @@ Running [OpenClaw](https://github.com/open-claw/open-claw) on your machine? It c
 
 > "Use mco to run a security review on this repo with Claude, Codex, and Gemini. Synthesize the results."
 
-OpenClaw reads `mco -h`, learns the CLI, and orchestrates the entire workflow autonomously. Your local machine becomes a multi-agent review team — OpenClaw is the manager, MCO is the dispatcher, and Claude/Codex/Gemini/OpenCode/Qwen are the team members.
+OpenClaw reads `mco -h`, learns the CLI, and orchestrates the entire workflow autonomously. Your local machine becomes a multi-agent review team — OpenClaw is the manager, MCO is the dispatcher, and Claude/Codex/Gemini/OpenCode/Qwen are the default team members. Hermes and Pi can be selected explicitly when installed.
 
 This works the same way from **Claude Code, Cursor, Trae, Copilot, Windsurf**, or any agent that can run shell commands.
 
@@ -127,7 +130,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Debate mode** — `--debate` adds a second challenge round where agents critique the merged findings before final ranking
 - **Divide mode** — `--divide files|dimensions` splits review work by file slices or review dimensions while preserving the existing merge + consensus pipeline
 - **CI/CD integration** — `--format sarif` for GitHub Code Scanning, `--format markdown-pr` for PR comments
-- **Environment health check** — `mco doctor` probes binary presence, version, and auth status for all providers
+- **Environment health check** — `mco doctor` probes binary presence, version, and auth status for the default provider set, or any explicitly selected providers
 - **Token usage tracking** — `--include-token-usage` for best-effort per-agent and aggregate token consumption
 - **Progress-driven timeouts** — agents run freely until completion; cancel only when output goes idle
 - **Stateful sessions** — `mco session` for persistent multi-turn conversations with prompt queue and cancellation
@@ -147,6 +150,13 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **ACP bidirectional handlers** — agents can read/write files and run terminal commands through MCO
 - **Extensible adapter contract** — uniform interface for any CLI agent, not limited to built-in providers
 - **Machine-readable output** — JSON, SARIF, or Markdown output for downstream automation
+
+## What's New in v0.10
+
+- **Hermes and Pi adapters** — `hermes` and `pi` are supported through explicit `--providers hermes,pi` selection.
+- **Safe default provider set** — default runs remain on the audited five providers: `claude,codex,gemini,opencode,qwen`.
+- **Read-only Pi review mode** — Pi runs with `read,grep,find,ls` enabled so it can inspect code without shell, edit, or write tools.
+- **Codex structured output compatibility** — review schema is compatible with current OpenAI strict structured output requirements.
 
 ## What's New in v0.9
 
@@ -168,6 +178,23 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 | Gemini CLI | `gemini` | Supported |
 | OpenCode | `opencode` | Supported |
 | Qwen Code | `qwen` | Supported |
+
+These five providers are the default set for `mco run`, `mco review`, and `mco doctor`.
+
+## Explicit Opt-in Providers
+
+| Provider | CLI | Status | Default permission model |
+|----------|-----|--------|--------------------------|
+| Hermes | `hermes` | Explicit opt-in | Uses Hermes oneshot mode; not included in defaults |
+| Pi | `pi` | Explicit opt-in | Read-only tools only: `read,grep,find,ls` |
+
+Use them by naming them explicitly:
+
+```bash
+mco review --providers claude,codex,pi --prompt "Review this repository for bugs."
+```
+
+Pi can read repository files through its read-only tool allowlist. It does not enable `bash`, `edit`, `write`, or `--approve` by default.
 
 The adapter architecture is extensible — adding a new agent CLI requires implementing three hooks: auth check, command builder, and output normalizer.
 
@@ -230,13 +257,13 @@ mco review \
 
 ## Quick Start
 
-Install via npm (Python 3 required on PATH):
+Install via npm (Python 3.10+ required on PATH):
 
 ```bash
 npm i -g @tt-a1i/mco
 ```
 
-Or install from source:
+Or install from source for local development:
 
 ```bash
 git clone https://github.com/mco-org/mco.git
@@ -377,7 +404,7 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--providers` | `claude,codex` | Comma-separated provider list |
+| `--providers` | `claude,codex,gemini,opencode,qwen` | Comma-separated provider list |
 | `--stall-timeout` | `900` | Cancel when no output progress for this duration (seconds) |
 | `--review-hard-timeout` | `1800` | Hard deadline for review mode; `0` disables |
 | `--max-provider-parallelism` | `0` | `0` = full parallelism across selected providers |
@@ -571,8 +598,8 @@ MCO integrates with [evermemos-mcp](https://pypi.org/project/evermemos-mcp/) to 
 Fully opt-in — without `--memory`, MCO behaves exactly as before.
 
 ```bash
-# Install the optional dependency
-pip install mco[memory]
+# Install the optional Python dependency
+python3 -m pip install mcp
 
 # Run with memory enabled
 mco review \
@@ -631,8 +658,10 @@ Requires `EVERMEMOS_API_KEY` environment variable. See `mco review --help` for `
 
 MCO can run as an MCP server, allowing AI agents and MCP-compatible clients to call MCO tools programmatically over stdio.
 
+The npm package includes MCO itself. MCP server mode also needs the Python MCP SDK:
+
 ```bash
-pip install mco[memory]  # includes mcp dependency
+python3 -m pip install mcp
 ```
 
 Configure in your MCP client:

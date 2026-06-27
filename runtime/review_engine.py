@@ -336,7 +336,7 @@ def _load_memory_hooks(request: "ReviewRequest") -> "RunHooks":
         register_hooks(hooks, request)
     except ImportError as exc:
         msg = (
-            "[mco] --memory requires the bridge module. Install with: pip install mco[memory]\n"
+            "[mco] --memory requires the bridge module. Install with: python3 -m pip install mcp\n"
             "       Import error: {}".format(exc)
         )
         if request.stream_callback is not None:
