@@ -7,6 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-06-28
+### Added
+- Added per-provider context policy with `--provider-context-json`, including explicit skills/context/plugin controls where supported.
+- Added provider result audit fields for requested, applied, unknown, dropped, and incompatible context policy keys.
+- Added run artifact `provider_context` and `context_hash` fields for stable policy auditing.
+
+### Changed
+- Kept provider context opt-in: existing provider commands are unchanged when no context policy is configured.
+- Kept Pi review execution fail-closed with read-only tools and extensions disabled.
+- Mapped OpenCode plugin isolation to `plugins:false` instead of conflating plugins with context files.
+
 ## [0.10.5] - 2026-06-27
 ### Fixed
 - Fixed streamed `final_text` extraction for Pi/Codex-style JSONL output so text deltas are concatenated across tool events without including tool payloads or duplicate `text_end` content.
