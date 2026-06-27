@@ -26,6 +26,9 @@ class HermesAdapter(ShimAdapterBase):
     def _auth_check_command(self, binary: str) -> List[str]:
         return [binary, "status"]
 
+    def supported_model_keys(self) -> List[str]:
+        return ["model", "provider"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         # Hermes oneshot mode auto-bypasses approval prompts by design.
         # This adapter is explicit opt-in and intentionally not part of
@@ -34,11 +37,7 @@ class HermesAdapter(ShimAdapterBase):
         #   metadata["yolo"] = True       -> adds --yolo
         #   metadata["accept_hooks"] = True -> adds --accept-hooks
         #   metadata["ignore_rules"] = True -> adds --ignore-rules
-        cmd = [
-            "hermes",
-            "-z",
-            input_task.prompt,
-        ]
+        cmd = ["hermes"]
         if input_task.metadata.get("yolo") is True:
             cmd.append("--yolo")
         if input_task.metadata.get("accept_hooks") is True:
@@ -51,6 +50,7 @@ class HermesAdapter(ShimAdapterBase):
         provider = input_task.metadata.get("provider")
         if isinstance(provider, str) and provider.strip():
             cmd.extend(["--provider", provider.strip()])
+        cmd.extend(["-z", input_task.prompt])
         return cmd
 
     def _build_command_for_record(self) -> List[str]:

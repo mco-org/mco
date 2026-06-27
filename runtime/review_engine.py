@@ -871,6 +871,19 @@ def _supported_permission_keys(adapter: ProviderAdapter) -> Set[str]:
     return {str(item).strip() for item in keys if str(item).strip()}
 
 
+def _supported_model_keys(adapter: ProviderAdapter) -> Set[str]:
+    fn = getattr(adapter, "supported_model_keys", None)
+    if not callable(fn):
+        return set()
+    try:
+        keys = fn()
+    except (TypeError, AttributeError):
+        return set()
+    if not isinstance(keys, list):
+        return set()
+    return {str(item).strip() for item in keys if str(item).strip()}
+
+
 def _provider_stall_timeout_seconds(policy: ReviewPolicy, provider: str) -> int:
     timeout = policy.provider_timeouts.get(provider, policy.stall_timeout_seconds)
     try:
@@ -1587,6 +1600,47 @@ def _run_provider(
             },
         )
 
+    requested_model_config = request.policy.provider_models.get(provider, {})
+    requested_model_config = requested_model_config if isinstance(requested_model_config, dict) else {}
+    supported_model_keys = _supported_model_keys(adapter)
+    unknown_model_keys = sorted(
+        key for key in requested_model_config.keys() if str(key).strip() and key not in supported_model_keys
+    )
+    effective_model_config = {
+        str(key): str(value)
+        for key, value in requested_model_config.items()
+        if str(key).strip() in supported_model_keys and str(value).strip()
+    }
+    if unknown_model_keys and request.policy.enforcement_mode == "strict":
+        _emit_event(request, {
+            "type": "provider_error", "provider": provider,
+            "error_kind": "model_selection_failed",
+            "message": "Unknown model keys: {}".format(unknown_model_keys),
+        })
+        _emit_event(request, {
+            "type": "provider_finished", "provider": provider,
+            "success": False, "findings_count": 0, "wall_clock_seconds": 0,
+            "findings": [], "final_error": "model_selection_failed",
+        })
+        _ensure_if_persisting()
+        return _ProviderExecutionOutcome(
+            provider=provider,
+            success=False,
+            parse_ok=False,
+            schema_valid_count=0,
+            dropped_count=0,
+            findings=[],
+            provider_result={
+                "success": False,
+                "reason": "model_selection_failed",
+                "enforcement_mode": request.policy.enforcement_mode,
+                "requested_model": dict(requested_model_config),
+                "applied_model": {},
+                "supported_model_keys": sorted(supported_model_keys),
+                "unknown_model_keys": unknown_model_keys,
+            },
+        )
+
     provider_stall_timeout = _provider_stall_timeout_seconds(request.policy, provider)
     poll_interval_seconds = _poll_interval_seconds(request.policy)
     review_hard_timeout_seconds = request.policy.review_hard_timeout_seconds if review_mode else 0
@@ -1609,6 +1663,7 @@ def _run_provider(
             }
             if review_mode and provider == "codex" and REVIEW_FINDINGS_SCHEMA_PATH.exists():
                 metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
+            metadata.update(effective_model_config)
             input_task = TaskInput(
                 task_id=resolved_task_id,
                 prompt=provider_prompt,
@@ -1814,6 +1869,9 @@ def _run_provider(
         "applied_permissions": effective_permissions,
         "unknown_permission_keys": unknown_permission_keys,
         "enforcement_mode": request.policy.enforcement_mode,
+        "requested_model": dict(requested_model_config) if requested_model_config else None,
+        "applied_model": dict(effective_model_config) if effective_model_config else None,
+        "unknown_model_keys": unknown_model_keys,
         "assigned_scope": dict(assigned_scope) if isinstance(assigned_scope, dict) else None,
     }
     if request.include_token_usage:
@@ -2148,6 +2206,8 @@ def _collect_results(
         "enforce_findings_contract": request.policy.enforce_findings_contract,
         "provider_permissions": request.policy.provider_permissions,
         "permissions_hash": _stable_payload_hash(request.policy.provider_permissions),
+        "provider_models": request.policy.provider_models,
+        "models_hash": _stable_payload_hash(request.policy.provider_models),
         "provider_results": provider_results,
         "findings_count": len(merged_findings),
         "parse_success_count": parse_success_count,
