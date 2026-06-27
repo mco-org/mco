@@ -664,6 +664,179 @@ def _merge_provider_models(
     return merged
 
 
+# Allowed context policy keys per the provider-context schema.
+# Keys NOT in this set are still accepted by the parser (they may be
+# provider-specific), but they are validated against each adapter's
+# supported_context_keys() at execution time.
+_BASE_CONTEXT_KEYS = {"skills", "context_files", "extensions"}
+# Forbidden: keys that belong to other policy surfaces and must not
+# leak into provider_context.
+_FORBIDDEN_CONTEXT_KEYS = {"tools", "yolo", "accept_hooks", "ignore_rules", "permission_mode", "sandbox"}
+
+
+def _normalize_context_value(value: object, *, provider: str, key: str) -> Any:
+    """Normalize a single context policy value.
+
+    skills: "disabled" | "ambient" | list of strings
+    context_files: bool
+    extensions: bool
+    """
+    if key == "context_files" or key == "extensions":
+        if not isinstance(value, bool):
+            raise ValueError(
+                "--provider-context-json key '{}' for provider '{}' must be a boolean".format(key, provider)
+            )
+        return value
+    if key == "skills":
+        if isinstance(value, bool):
+            raise ValueError(
+                "--provider-context-json key 'skills' for provider '{}' must be 'disabled', 'ambient', or a list of skill names, not a boolean".format(provider)
+            )
+        if isinstance(value, str):
+            text = value.strip()
+            if text in ("disabled", "ambient"):
+                return text
+            raise ValueError(
+                "--provider-context-json key 'skills' for provider '{}' must be 'disabled' or 'ambient', got '{}'".format(provider, text)
+            )
+        if isinstance(value, list):
+            normalized: List[str] = []
+            for item in value:
+                if not isinstance(item, str):
+                    raise ValueError(
+                        "--provider-context-json skill names for provider '{}' must be strings".format(provider)
+                    )
+                item_text = item.strip()
+                if not item_text:
+                    raise ValueError(
+                        "--provider-context-json skill names for provider '{}' must not be empty".format(provider)
+                    )
+                if "\x00" in item_text or any(ord(ch) < 32 for ch in item_text):
+                    raise ValueError(
+                        "--provider-context-json skill name for provider '{}' contains control characters".format(provider)
+                    )
+                if item_text.startswith("-"):
+                    raise ValueError(
+                        "--provider-context-json skill name for provider '{}' must not start with '-'".format(provider)
+                    )
+                normalized.append(item_text)
+            return normalized
+        raise ValueError(
+            "--provider-context-json key 'skills' for provider '{}' must be 'disabled', 'ambient', or a list of strings".format(provider)
+        )
+    raise ValueError(
+        "--provider-context-json unsupported key '{}' for provider '{}'".format(key, provider)
+    )
+
+
+def _parse_provider_context_json(raw: str) -> Dict[str, Dict[str, Any]]:
+    """Parse --provider-context-json into a normalized provider context dict."""
+    if not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("--provider-context-json must be valid JSON") from None
+    if not isinstance(payload, dict):
+        raise ValueError("--provider-context-json root must be an object")
+    result: Dict[str, Dict[str, Any]] = {}
+    for provider, config in payload.items():
+        provider_name = str(provider).strip()
+        if not provider_name:
+            raise ValueError("--provider-context-json contains empty provider name")
+        if "\x00" in provider_name or any(ord(ch) < 32 for ch in provider_name):
+            raise ValueError("--provider-context-json provider name contains control characters")
+        if not isinstance(config, dict):
+            raise ValueError(
+                "--provider-context-json value for provider '{}' must be an object".format(provider_name)
+            )
+        normalized: Dict[str, Any] = {}
+        for key, value in config.items():
+            key_name = str(key).strip()
+            if key_name in _FORBIDDEN_CONTEXT_KEYS:
+                raise ValueError(
+                    "--provider-context-json key '{}' for provider '{}' is forbidden (belongs to a different policy surface)".format(
+                        key_name, provider_name
+                    )
+                )
+            if key_name in _BASE_CONTEXT_KEYS:
+                normalized[key_name] = _normalize_context_value(value, provider=provider_name, key=key_name)
+            else:
+                # Provider-specific key: validate key name, then accept as-is
+                if not key_name:
+                    raise ValueError(
+                        "--provider-context-json contains empty key for provider '{}'".format(provider_name)
+                    )
+                if "\x00" in key_name or any(ord(ch) < 32 for ch in key_name):
+                    raise ValueError(
+                        "--provider-context-json key '{}' for provider '{}' contains control characters".format(
+                            key_name, provider_name
+                        )
+                    )
+                if key_name.startswith("-"):
+                    raise ValueError(
+                        "--provider-context-json key '{}' for provider '{}' must not start with '-'".format(
+                            key_name, provider_name
+                        )
+                    )
+                if isinstance(value, str):
+                    text = value.strip()
+                    if "\x00" in text or any(ord(ch) < 32 for ch in text):
+                        raise ValueError(
+                            "--provider-context-json key '{}' for provider '{}' contains control characters".format(
+                                key_name, provider_name
+                            )
+                        )
+                    normalized[key_name] = text
+                elif isinstance(value, bool):
+                    normalized[key_name] = value
+                elif isinstance(value, list):
+                    clean: List[str] = []
+                    for item in value:
+                        if not isinstance(item, str):
+                            raise ValueError(
+                                "--provider-context-json key '{}' for provider '{}' list values must be strings".format(
+                                    key_name, provider_name
+                                )
+                            )
+                        item_text = item.strip()
+                        if not item_text:
+                            raise ValueError(
+                                "--provider-context-json key '{}' for provider '{}' list values must not be empty".format(
+                                    key_name, provider_name
+                                )
+                            )
+                        if "\x00" in item_text or any(ord(ch) < 32 for ch in item_text):
+                            raise ValueError(
+                                "--provider-context-json key '{}' for provider '{}' contains control characters".format(
+                                    key_name, provider_name
+                                )
+                            )
+                        clean.append(item_text)
+                    normalized[key_name] = clean
+                else:
+                    raise ValueError(
+                        "--provider-context-json key '{}' for provider '{}' must be a string, boolean, or list of strings".format(
+                            key_name, provider_name
+                        )
+                    )
+        result[provider_name] = normalized
+    return result
+
+
+def _merge_provider_context(
+    base: Dict[str, Dict[str, Any]],
+    override: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Deep-merge override context into base context."""
+    merged: Dict[str, Dict[str, Any]] = {provider: dict(values) for provider, values in base.items()}
+    for provider, config in override.items():
+        current = merged.get(provider, {})
+        current.update(config)
+        merged[provider] = current
+    return merged
+
+
 def _merge_provider_permissions(
     base: Dict[str, Dict[str, str]],
     override: Dict[str, Dict[str, str]],
@@ -807,6 +980,11 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--provider-models-json",
         default="",
         help="Per-provider model mapping JSON, e.g. '{\"codex\":\"gpt-5.5\",\"pi\":{\"provider\":\"seal\",\"model\":\"deepseek-v4-pro\"}}'",
+    )
+    access.add_argument(
+        "--provider-context-json",
+        default="",
+        help="Per-provider context policy JSON, e.g. '{\"pi\":{\"skills\":\"disabled\",\"context_files\":false}}'",
     )
     access.add_argument(
         "--perspectives-json",
@@ -1156,6 +1334,18 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         _parse_provider_models_json(provider_models_json),
     )
 
+    # provider_context: merge config file base, then CLI JSON on top
+    base_context = dict(cfg.policy.provider_context)
+    if fc_policy.get("provider_context") and isinstance(fc_policy["provider_context"], dict):
+        base_context = _merge_provider_context(base_context, _parse_provider_context_json(json.dumps(fc_policy["provider_context"])))
+    provider_context_json = getattr(args, "provider_context_json", "")
+    if not isinstance(provider_context_json, str):
+        provider_context_json = ""
+    provider_context = _merge_provider_context(
+        base_context,
+        _parse_provider_context_json(provider_context_json),
+    )
+
     max_provider_parallelism = getattr(args, "max_provider_parallelism", None)
     if max_provider_parallelism is None:
         max_provider_parallelism = fc_policy.get("max_provider_parallelism", cfg.policy.max_provider_parallelism)
@@ -1213,6 +1403,7 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         enforcement_mode=enforcement_mode,
         perspectives=perspectives,
         provider_models=provider_models,
+        provider_context=provider_context,
         chain=getattr(args, "chain", False) or fc_policy.get("chain", False),
         debate=getattr(args, "debate", False) or fc_policy.get("debate", False),
         divide=divide,

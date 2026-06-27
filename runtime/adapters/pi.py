@@ -30,21 +30,43 @@ class PiAdapter(ShimAdapterBase):
     def supported_model_keys(self) -> List[str]:
         return ["model", "provider"]
 
+    def supported_context_keys(self) -> List[str]:
+        return ["skills", "context_files"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         # Strict read-only tool allowlist: read files, search content,
         # find by name, list directories.  No bash / edit / write.
-        # No metadata opt-in for elevated permissions — this adapter
-        # is intentionally locked to read-only for review safety.
+        # The tool allowlist is locked — context policy cannot widen it.
+        ctx = input_task.metadata.get("provider_context", {})
+        if not isinstance(ctx, dict):
+            ctx = {}
         cmd = [
             "pi",
             "-p",
             "--mode", "json",
             "--no-session",
-            "--no-context-files",
-            "--no-skills",
-            "--no-extensions",
-            "--tools", "read,grep,find,ls",
         ]
+        # Context files: disabled by default (preserves existing behavior)
+        if ctx.get("context_files") is True:
+            pass  # omit --no-context-files, let Pi use its defaults
+        else:
+            cmd.append("--no-context-files")
+        # Skills: disabled by default, can be "ambient" or explicit list
+        skills = ctx.get("skills")
+        if isinstance(skills, list) and skills:
+            # Explicit skill preload: pass each skill name.
+            # Omit --no-skills because it might suppress explicit --skill.
+            for skill_name in skills:
+                cmd.extend(["--skill", str(skill_name)])
+        elif skills == "ambient":
+            pass  # omit --no-skills, let Pi discover ambient skills
+        else:
+            cmd.append("--no-skills")
+        # Extensions: always disabled. The extensions key is not supported
+        # by Pi's supported_context_keys — the review_engine will reject it
+        # in strict mode or drop it in best_effort.
+        cmd.append("--no-extensions")
+        cmd.extend(["--tools", "read,grep,find,ls"])
         model = input_task.metadata.get("model")
         if isinstance(model, str) and model.strip():
             cmd.extend(["--model", model.strip()])

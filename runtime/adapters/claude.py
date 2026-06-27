@@ -29,6 +29,9 @@ class ClaudeAdapter(ShimAdapterBase):
     def supported_permission_keys(self) -> List[str]:
         return ["permission_mode"]
 
+    def supported_context_keys(self) -> List[str]:
+        return ["context_files"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         permission_mode = "plan"
         raw_permissions = input_task.metadata.get("provider_permissions")
@@ -36,15 +39,23 @@ class ClaudeAdapter(ShimAdapterBase):
             value = raw_permissions.get("permission_mode")
             if isinstance(value, str) and value.strip():
                 permission_mode = value.strip()
-        return [
+        cmd = [
             "claude",
             "-p",
             "--permission-mode",
             permission_mode,
             "--output-format",
             "text",
-            input_task.prompt,
         ]
+        # Context policy is opt-in: only apply when provider_context key is present.
+        if "provider_context" in input_task.metadata:
+            ctx = input_task.metadata.get("provider_context", {})
+            if not isinstance(ctx, dict):
+                ctx = {}
+            if ctx.get("context_files") is not True:
+                cmd.extend(["--safe-mode", "--disable-slash-commands"])
+        cmd.append(input_task.prompt)
+        return cmd
 
     def _build_command_for_record(self) -> List[str]:
         return ["claude", "-p", "--permission-mode", "plan", "--output-format", "text", "<prompt>"]
