@@ -135,6 +135,14 @@ def _select_best_text_candidate(candidates: List[str]) -> str:
     return candidates[best_index]
 
 
+def _is_tool_payload_type(payload_type: str) -> bool:
+    return (
+        "toolcall" in payload_type
+        or payload_type.startswith("tool_execution")
+        or payload_type in {"tool", "tool_result", "tool_output"}
+    )
+
+
 def _text_delta_from_event(payload: Dict[str, Any]) -> Tuple[bool, str]:
     """Return a user-visible streaming text chunk from event-stream payloads."""
     event = payload
@@ -151,9 +159,7 @@ def _text_delta_from_event(payload: Dict[str, Any]) -> Tuple[bool, str]:
         return False, ""
 
     text_event_types = {
-        "text_start",
         "text_delta",
-        "text_end",
         "output_text_delta",
         "response.output_text.delta",
     }
@@ -168,33 +174,35 @@ def _text_delta_from_event(payload: Dict[str, Any]) -> Tuple[bool, str]:
 
 
 def _extract_streamed_text_candidate(payloads: List[Any]) -> str:
-    groups: List[str] = []
-    current: List[str] = []
+    chunks: List[str] = []
 
     for payload in payloads:
         if not isinstance(payload, dict):
-            if current:
-                groups.append("".join(current))
-                current = []
             continue
 
         is_text_event, chunk = _text_delta_from_event(payload)
         if is_text_event:
-            current.append(chunk)
+            chunks.append(chunk)
+
+    return "".join(chunks).strip()
+
+
+def _extract_jsonl_streamed_text(text: str) -> str:
+    chunks: List[str] = []
+    for line in text.splitlines():
+        candidate = line.strip()
+        if not candidate or not candidate.startswith("{"):
             continue
-
-        if current:
-            groups.append("".join(current))
-            current = []
-
-    if current:
-        groups.append("".join(current))
-
-    for group in reversed(groups):
-        text = group.strip()
-        if text:
-            return text
-    return ""
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        is_text_event, chunk = _text_delta_from_event(payload)
+        if is_text_event:
+            chunks.append(chunk)
+    return "".join(chunks).strip()
 
 
 def _collect_final_text_candidates(
@@ -207,10 +215,12 @@ def _collect_final_text_candidates(
     if len(candidates) >= limit:
         return
     if isinstance(payload, dict):
-        if payload.get("role") == "user":
+        if payload.get("role") in ("user", "tool"):
             return
         payload_type = payload.get("type")
         normalized_type = payload_type.lower() if isinstance(payload_type, str) else ""
+        if _is_tool_payload_type(normalized_type):
+            return
         if isinstance(payload_type, str):
             payload_type = normalized_type
             if payload_type == "text" and isinstance(payload.get("text"), str):
@@ -260,6 +270,10 @@ def extract_final_text_from_output(text: str) -> str:
     if not raw:
         return ""
 
+    jsonl_streamed_text = _extract_jsonl_streamed_text(text)
+    if jsonl_streamed_text:
+        return jsonl_streamed_text
+
     payloads = extract_json_payloads(text)
     if not payloads:
         return raw
@@ -268,7 +282,7 @@ def extract_final_text_from_output(text: str) -> str:
     seen: Set[str] = set()
     streamed_text = _extract_streamed_text_candidate(payloads)
     if streamed_text:
-        _append_text_candidate(candidates, seen, streamed_text)
+        return streamed_text
     for payload in payloads:
         _collect_final_text_candidates(payload, candidates, seen)
 

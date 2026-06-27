@@ -57,6 +57,52 @@ class ParsingContractTests(unittest.TestCase):
         )
         self.assertEqual(extract_final_text_from_output(text), "alpha  beta")
 
+    def test_extract_final_text_ignores_text_end_duplicate(self) -> None:
+        text = (
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_start"}}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Full answer."}}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_end","text":"Full answer."}}\n'
+            '{"type":"agent_end"}'
+        )
+        self.assertEqual(extract_final_text_from_output(text), "Full answer.")
+
+    def test_extract_final_text_concatenates_text_deltas_across_tool_events(self) -> None:
+        text = (
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"First section."}}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start"}}\n'
+            '{"type":"tool_execution_start"}\n'
+            '{"type":"tool_execution_end"}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":" Second section."}}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start"}}\n'
+            '{"type":"tool_execution_end"}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":" Final section."}}\n'
+            '{"type":"agent_end"}'
+        )
+        self.assertEqual(
+            extract_final_text_from_output(text),
+            "First section. Second section. Final section.",
+        )
+
+    def test_extract_final_text_prefers_complete_stream_over_later_partial_candidates(self) -> None:
+        first = (
+            "First section has enough detail to look like a complete answer, "
+            "including architecture notes, evidence paths, and clear conclusions. "
+        )
+        second = (
+            "Second section is also long enough to receive the maximum text score, "
+            "but it is only the tail of the streamed answer."
+        )
+        text = (
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta",'
+            f'"delta":"{first}"}}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start"}}\n'
+            '{"type":"tool_execution_end"}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta",'
+            f'"delta":"{second}"}}\n'
+            '{"type":"agent_end"}'
+        )
+        self.assertEqual(extract_final_text_from_output(text), first + second)
+
     def test_extract_final_text_from_qwen_like_array_stream(self) -> None:
         text = (
             '[{"type":"assistant","message":{"content":[{"type":"text","text":"step-1"}]}},'
