@@ -35,6 +35,7 @@ class ReviewPolicy:
     allow_paths: List[str] = field(default_factory=lambda: ["."])
     provider_permissions: Dict[str, Dict[str, str]] = field(default_factory=dict)
     provider_models: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    provider_context: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     enforcement_mode: str = "strict"
     perspectives: Dict[str, str] = field(default_factory=dict)
     chain: bool = False

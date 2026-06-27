@@ -32,6 +32,9 @@ class CodexAdapter(ShimAdapterBase):
     def supported_model_keys(self) -> List[str]:
         return ["model"]
 
+    def supported_context_keys(self) -> List[str]:
+        return ["context_files"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         sandbox = "workspace-write"
         raw_permissions = input_task.metadata.get("provider_permissions")
@@ -49,6 +52,13 @@ class CodexAdapter(ShimAdapterBase):
             sandbox,
             "--json",
         ]
+        # Context policy is opt-in: only apply when provider_context key is present.
+        if "provider_context" in input_task.metadata:
+            ctx = input_task.metadata.get("provider_context", {})
+            if not isinstance(ctx, dict):
+                ctx = {}
+            if ctx.get("context_files") is not True:
+                cmd.extend(["--ignore-user-config", "--ignore-rules"])
         output_schema_path = input_task.metadata.get("output_schema_path")
         if isinstance(output_schema_path, str) and output_schema_path.strip():
             cmd.extend(["--output-schema", output_schema_path.strip()])

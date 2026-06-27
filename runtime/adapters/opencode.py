@@ -26,8 +26,20 @@ class OpenCodeAdapter(ShimAdapterBase):
     def _auth_check_command(self, binary: str) -> List[str]:
         return [binary, "auth", "list"]
 
+    def supported_context_keys(self) -> List[str]:
+        return ["plugins"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
-        return ["opencode", "run", input_task.prompt, "--format", "json", "--dir", input_task.repo_root]
+        cmd = ["opencode", "run"]
+        # Context policy is opt-in: only apply when provider_context key is present.
+        if "provider_context" in input_task.metadata:
+            ctx = input_task.metadata.get("provider_context", {})
+            if not isinstance(ctx, dict):
+                ctx = {}
+            if "plugins" in ctx and ctx.get("plugins") is not True:
+                cmd.append("--pure")
+        cmd.extend([input_task.prompt, "--format", "json", "--dir", input_task.repo_root])
+        return cmd
 
     def _build_command_for_record(self) -> List[str]:
         return ["opencode", "run", "<prompt>", "--format", "json", "--dir", "<repo_root>"]

@@ -884,6 +884,19 @@ def _supported_model_keys(adapter: ProviderAdapter) -> Set[str]:
     return {str(item).strip() for item in keys if str(item).strip()}
 
 
+def _supported_context_keys(adapter: ProviderAdapter) -> Set[str]:
+    fn = getattr(adapter, "supported_context_keys", None)
+    if not callable(fn):
+        return set()
+    try:
+        keys = fn()
+    except (TypeError, AttributeError):
+        return set()
+    if not isinstance(keys, list):
+        return set()
+    return {str(item).strip() for item in keys if str(item).strip()}
+
+
 def _provider_stall_timeout_seconds(policy: ReviewPolicy, provider: str) -> int:
     timeout = policy.provider_timeouts.get(provider, policy.stall_timeout_seconds)
     try:
@@ -1641,6 +1654,106 @@ def _run_provider(
             },
         )
 
+    # ── Provider context policy validation ──
+    requested_context = request.policy.provider_context.get(provider, {})
+    requested_context = requested_context if isinstance(requested_context, dict) else {}
+    supported_context_keys = _supported_context_keys(adapter)
+    unknown_context_keys = sorted(
+        key for key in requested_context.keys() if key not in supported_context_keys
+    )
+    # Build effective context: keep only supported keys
+    effective_context = {
+        str(key): value
+        for key, value in requested_context.items()
+        if key in supported_context_keys
+    }
+    # Detect incompatible combinations (provider-specific)
+    incompatible_context_keys: List[str] = []
+    dropped_context_keys = list(unknown_context_keys)  # start with unknown as dropped
+    if provider == "hermes":
+        # Hermes: skills + context_files=false is incompatible because
+        # --safe-mode suppresses preloaded skills.
+        skills_val = effective_context.get("skills")
+        has_skills = (
+            skills_val == "ambient"
+            or (isinstance(skills_val, list) and len(skills_val) > 0)
+        )
+        if has_skills and effective_context.get("context_files") is False:
+            incompatible_context_keys.append("skills")
+            incompatible_context_keys.append("context_files")
+            if request.policy.enforcement_mode == "strict":
+                _emit_event(request, {
+                    "type": "provider_error", "provider": provider,
+                    "error_kind": "context_policy_enforcement_failed",
+                    "message": (
+                        "Incompatible context combination for Hermes: "
+                        "skills={} + context_files=false is unsupported "
+                        "(--safe-mode suppresses preloaded skills)".format(skills_val)
+                    ),
+                })
+                _emit_event(request, {
+                    "type": "provider_finished", "provider": provider,
+                    "success": False, "findings_count": 0, "wall_clock_seconds": 0,
+                    "findings": [], "final_error": "context_policy_enforcement_failed",
+                })
+                _ensure_if_persisting()
+                return _ProviderExecutionOutcome(
+                    provider=provider,
+                    success=False,
+                    parse_ok=False,
+                    schema_valid_count=0,
+                    dropped_count=0,
+                    findings=[],
+                    provider_result={
+                        "success": False,
+                        "reason": "context_policy_enforcement_failed",
+                        "enforcement_mode": request.policy.enforcement_mode,
+                        "requested_context": dict(requested_context),
+                        "applied_context": {},
+                        "supported_context_keys": sorted(supported_context_keys),
+                        "unknown_context_keys": unknown_context_keys,
+                        "incompatible_context_keys": incompatible_context_keys,
+                        "dropped_context_keys": dropped_context_keys,
+                    },
+                )
+            else:
+                # best_effort: drop the incompatible combination, record it
+                effective_context.pop("skills", None)
+                effective_context.pop("context_files", None)
+                dropped_context_keys.extend(incompatible_context_keys)
+                dropped_context_keys = sorted(set(dropped_context_keys))
+    if unknown_context_keys and request.policy.enforcement_mode == "strict":
+        _emit_event(request, {
+            "type": "provider_error", "provider": provider,
+            "error_kind": "context_policy_enforcement_failed",
+            "message": "Unknown context keys: {}".format(unknown_context_keys),
+        })
+        _emit_event(request, {
+            "type": "provider_finished", "provider": provider,
+            "success": False, "findings_count": 0, "wall_clock_seconds": 0,
+            "findings": [], "final_error": "context_policy_enforcement_failed",
+        })
+        _ensure_if_persisting()
+        return _ProviderExecutionOutcome(
+            provider=provider,
+            success=False,
+            parse_ok=False,
+            schema_valid_count=0,
+            dropped_count=0,
+            findings=[],
+            provider_result={
+                "success": False,
+                "reason": "context_policy_enforcement_failed",
+                "enforcement_mode": request.policy.enforcement_mode,
+                "requested_context": dict(requested_context),
+                "applied_context": {},
+                "supported_context_keys": sorted(supported_context_keys),
+                "unknown_context_keys": unknown_context_keys,
+                "incompatible_context_keys": incompatible_context_keys,
+                "dropped_context_keys": dropped_context_keys,
+            },
+        )
+
     provider_stall_timeout = _provider_stall_timeout_seconds(request.policy, provider)
     poll_interval_seconds = _poll_interval_seconds(request.policy)
     review_hard_timeout_seconds = request.policy.review_hard_timeout_seconds if review_mode else 0
@@ -1664,6 +1777,11 @@ def _run_provider(
             if review_mode and provider == "codex" and REVIEW_FINDINGS_SCHEMA_PATH.exists():
                 metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
             metadata.update(effective_model_config)
+            # Inject provider context as a namespace (not flat keys) so
+            # adapters read from metadata["provider_context"] and never
+            # collide with model/permission/artifact keys.
+            if effective_context:
+                metadata["provider_context"] = dict(effective_context)
             input_task = TaskInput(
                 task_id=resolved_task_id,
                 prompt=provider_prompt,
@@ -1872,6 +1990,12 @@ def _run_provider(
         "requested_model": dict(requested_model_config) if requested_model_config else None,
         "applied_model": dict(effective_model_config) if effective_model_config else None,
         "unknown_model_keys": unknown_model_keys,
+        "requested_context": dict(requested_context) if requested_context else None,
+        "applied_context": dict(effective_context) if effective_context else None,
+        "unknown_context_keys": unknown_context_keys,
+        "supported_context_keys": sorted(supported_context_keys),
+        "incompatible_context_keys": incompatible_context_keys,
+        "dropped_context_keys": dropped_context_keys,
         "assigned_scope": dict(assigned_scope) if isinstance(assigned_scope, dict) else None,
     }
     if request.include_token_usage:
@@ -2208,6 +2332,8 @@ def _collect_results(
         "permissions_hash": _stable_payload_hash(request.policy.provider_permissions),
         "provider_models": request.policy.provider_models,
         "models_hash": _stable_payload_hash(request.policy.provider_models),
+        "provider_context": request.policy.provider_context,
+        "context_hash": _stable_payload_hash(request.policy.provider_context),
         "provider_results": provider_results,
         "findings_count": len(merged_findings),
         "parse_success_count": parse_success_count,
