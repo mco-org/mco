@@ -14,6 +14,9 @@
     "test": "node -e \"console.log('No JS tests. Use Python test suite.')\""
   },
   "files": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CHANGELOG.md",
     "bin/mco.js",
     "mco",
     "runtime/**/*.py",

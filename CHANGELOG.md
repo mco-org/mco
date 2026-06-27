@@ -12,6 +12,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added per-provider model selection with `--provider-models-json`, including `model` support for Codex and `provider` + `model` support for Hermes and Pi.
 - Added `mco agent models` to discover local model choices for Codex, Pi, and Hermes where available.
 - Added provider result metadata for requested, applied, and ignored model-selection keys.
+- Added `CLAUDE.md` and `AGENTS.md` with repository-level LLM coding rules.
 
 ### Changed
 - Kept provider model selection fail-closed in strict mode and best-effort in `best_effort` mode.
