@@ -27,8 +27,10 @@ class HermesAdapter(ShimAdapterBase):
         return [binary, "status"]
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
-        # Safe default: no auto-approval flags.  Callers that need
-        # non-interactive execution must opt in via metadata keys:
+        # Hermes oneshot mode auto-bypasses approval prompts by design.
+        # This adapter is explicit opt-in and intentionally not part of
+        # the default provider set.  Extra elevated flags must still be
+        # requested explicitly via metadata keys:
         #   metadata["yolo"] = True       -> adds --yolo
         #   metadata["accept_hooks"] = True -> adds --accept-hooks
         #   metadata["ignore_rules"] = True -> adds --ignore-rules

@@ -5,7 +5,15 @@ import unittest
 from dataclasses import fields
 from pathlib import Path
 
-from runtime.adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, QwenAdapter
+from runtime.adapters import (
+    ClaudeAdapter,
+    CodexAdapter,
+    GeminiAdapter,
+    HermesAdapter,
+    OpenCodeAdapter,
+    PiAdapter,
+    QwenAdapter,
+)
 from runtime.artifacts import ARTIFACT_LAYOUT_VERSION, ROOT_DIRS, ROOT_FILES, expected_paths, validate_task_id
 from runtime.contracts import CAPABILITY_TIERS, PROVIDER_IDS, ProviderAdapter
 from runtime.types import RUN_RESULT_FIELDS, RUN_RESULT_SCHEMA_VERSION, RunResult
@@ -41,6 +49,8 @@ class ContractFreezeTests(unittest.TestCase):
         self.assertEqual(GeminiAdapter().supported_permission_keys(), [])
         self.assertEqual(OpenCodeAdapter().supported_permission_keys(), [])
         self.assertEqual(QwenAdapter().supported_permission_keys(), [])
+        self.assertEqual(HermesAdapter().supported_permission_keys(), [])
+        self.assertEqual(PiAdapter().supported_permission_keys(), [])
 
     def test_validate_task_id_rejects_absolute_path(self) -> None:
         with self.assertRaises(ValueError):

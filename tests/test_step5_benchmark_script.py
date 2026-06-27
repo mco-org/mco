@@ -48,7 +48,7 @@ class Step5BenchmarkScriptTests(unittest.TestCase):
                     artifact_root = os.path.join(repo_root, "reports", "review", task_id)
                     pathlib.Path(os.path.join(artifact_root, "providers")).mkdir(parents=True, exist_ok=True)
 
-                    providers = ["claude", "codex", "gemini", "opencode", "qwen"]
+                    providers = ["claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi"]
                     if parallelism == 1:
                         provider_results = {
                             "claude": {"parse_ok": True, "findings_count": 1},
@@ -56,16 +56,18 @@ class Step5BenchmarkScriptTests(unittest.TestCase):
                             "gemini": {"parse_ok": True, "findings_count": 1},
                             "opencode": {"parse_ok": True, "findings_count": 1},
                             "qwen": {"parse_ok": True, "findings_count": 0},
+                            "hermes": {"parse_ok": True, "findings_count": 1},
+                            "pi": {"parse_ok": True, "findings_count": 1},
                         }
                         payload = {
                             "task_id": task_id,
                             "artifact_root": artifact_root,
                             "decision": "PASS",
                             "terminal_state": "COMPLETED",
-                            "findings_count": 4,
-                            "parse_success_count": 5,
+                            "findings_count": 6,
+                            "parse_success_count": 7,
                             "parse_failure_count": 0,
-                            "schema_valid_count": 4,
+                            "schema_valid_count": 6,
                             "dropped_findings_count": 0,
                         }
                     else:
@@ -75,10 +77,10 @@ class Step5BenchmarkScriptTests(unittest.TestCase):
                             "artifact_root": artifact_root,
                             "decision": "PASS",
                             "terminal_state": "COMPLETED",
-                            "findings_count": 5,
-                            "parse_success_count": 5,
+                            "findings_count": 7,
+                            "parse_success_count": 7,
                             "parse_failure_count": 0,
-                            "schema_valid_count": 5,
+                            "schema_valid_count": 7,
                             "dropped_findings_count": 0,
                         }
 
@@ -116,16 +118,16 @@ class Step5BenchmarkScriptTests(unittest.TestCase):
             serial = summary["serial"]
             parallel = summary["parallel"]
 
-            self.assertEqual(serial["parse_success_count"], 5)
-            self.assertEqual(serial["effective_findings_count"], 4)
-            self.assertEqual(serial["providers_total"], 5)
+            self.assertEqual(serial["parse_success_count"], 7)
+            self.assertEqual(serial["effective_findings_count"], 6)
+            self.assertEqual(serial["providers_total"], 7)
             self.assertEqual(serial["zero_finding_provider_count"], 1)
             self.assertEqual(serial["command_exit_code"], 0)
             self.assertAlmostEqual(float(serial["parse_success_rate"]), 1.0)
 
-            self.assertEqual(parallel["parse_success_count"], 5)
-            self.assertEqual(parallel["effective_findings_count"], 5)
-            self.assertEqual(parallel["providers_total"], 5)
+            self.assertEqual(parallel["parse_success_count"], 7)
+            self.assertEqual(parallel["effective_findings_count"], 7)
+            self.assertEqual(parallel["providers_total"], 7)
             self.assertEqual(parallel["zero_finding_provider_count"], 0)
             self.assertEqual(parallel["command_exit_code"], 0)
             self.assertAlmostEqual(float(parallel["parse_success_rate"]), 1.0)

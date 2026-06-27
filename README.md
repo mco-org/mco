@@ -23,7 +23,7 @@
   <a href="https://github.com/mco-org/mco/stargazers"><img src="https://img.shields.io/github/stars/mco-org/mco?style=flat-square&color=f59e0b" alt="GitHub stars" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/Providers-5%20built--in-7c3aed?style=flat-square" alt="5 built-in providers" />
+  <img src="https://img.shields.io/badge/Providers-7%20supported-7c3aed?style=flat-square" alt="7 supported providers" />
   <a href="https://pypi.org/project/evermemos-mcp/"><img src="https://img.shields.io/badge/evermemos--mcp-memory%20powered-6366f1?style=flat-square" alt="evermemos-mcp" /></a>
 </p>
 
@@ -185,7 +185,7 @@ These five providers are the default set for `mco run`, `mco review`, and `mco d
 
 | Provider | CLI | Status | Default permission model |
 |----------|-----|--------|--------------------------|
-| Hermes | `hermes` | Explicit opt-in | Uses Hermes oneshot mode; not included in defaults |
+| Hermes | `hermes` | Explicit opt-in | Elevated oneshot mode: approvals are auto-bypassed by Hermes; not included in defaults |
 | Pi | `pi` | Explicit opt-in | Read-only tools only: `read,grep,find,ls` |
 
 Use them by naming them explicitly:
@@ -194,7 +194,7 @@ Use them by naming them explicitly:
 mco review --providers claude,codex,pi --prompt "Review this repository for bugs."
 ```
 
-Pi can read repository files through its read-only tool allowlist. It does not enable `bash`, `edit`, `write`, or `--approve` by default.
+Pi can read repository files through its read-only tool allowlist. It does not enable `bash`, `edit`, `write`, or `--approve` by default. Hermes is available for explicit selection, but Hermes `--oneshot` is not a read-only mode; use it only when you accept Hermes' own approval-bypass semantics.
 
 The adapter architecture is extensible — adding a new agent CLI requires implementing three hooks: auth check, command builder, and output normalizer.
 

@@ -41,6 +41,22 @@ class ParsingContractTests(unittest.TestCase):
         )
         self.assertEqual(extract_final_text_from_output(text), "Final concise answer.")
 
+    def test_extract_final_text_concatenates_text_delta_stream(self) -> None:
+        text = (
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":" World"}}\n'
+            '{"type":"agent_end"}'
+        )
+        self.assertEqual(extract_final_text_from_output(text), "Hello World")
+
+    def test_extract_final_text_preserves_text_delta_spacing(self) -> None:
+        text = (
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"alpha"}}\n'
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"  beta"}}\n'
+            '{"type":"agent_end"}'
+        )
+        self.assertEqual(extract_final_text_from_output(text), "alpha  beta")
+
     def test_extract_final_text_from_qwen_like_array_stream(self) -> None:
         text = (
             '[{"type":"assistant","message":{"content":[{"type":"text","text":"step-1"}]}},'

@@ -671,6 +671,27 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(details.get("response_ok"), True)
             self.assertEqual(details.get("response_reason"), "extracted_final_text")
 
+    def test_run_mode_concatenates_multi_part_text_delta_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw = (
+                '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hello"}}\n'
+                '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":" World"}}\n'
+                '{"type":"agent_end"}'
+            )
+            adapter = FakeAdapter("pi", raw)
+            req = ReviewRequest(
+                repo_root=tmpdir,
+                prompt="summarize",
+                providers=["pi"],  # type: ignore[list-item]
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(timeout_seconds=3, max_retries=0, require_non_empty_findings=False),
+            )
+            result = run_review(req, adapters={"pi": adapter}, review_mode=False)
+            details = result.provider_results["pi"]
+            self.assertEqual(details.get("final_text"), "Hello World")
+            self.assertEqual(details.get("response_ok"), True)
+            self.assertEqual(details.get("response_reason"), "extracted_final_text")
+
     def test_run_mode_token_usage_is_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             raw = (

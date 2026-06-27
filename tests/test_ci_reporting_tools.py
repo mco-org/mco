@@ -19,26 +19,26 @@ class CiReportingToolsTests(unittest.TestCase):
             output_path = tmp / "report.md"
             payload = {
                 "generated_at": "2026-02-26T07:21:48Z",
-                "providers": "claude,codex,gemini,opencode,qwen",
+                "providers": "claude,codex,gemini,opencode,qwen,hermes,pi",
                 "serial": {
                     "task_id": "serial",
                     "wall_time_seconds": 166,
-                    "parse_success_count": 5,
+                    "parse_success_count": 7,
                     "parse_failure_count": 0,
-                    "providers_total": 5,
+                    "providers_total": 7,
                     "parse_success_rate": 1,
-                    "effective_findings_count": 4,
+                    "effective_findings_count": 6,
                     "zero_finding_provider_count": 1,
                     "command_exit_code": 0,
                 },
                 "parallel": {
                     "task_id": "parallel",
                     "wall_time_seconds": 79,
-                    "parse_success_count": 5,
+                    "parse_success_count": 7,
                     "parse_failure_count": 0,
-                    "providers_total": 5,
+                    "providers_total": 7,
                     "parse_success_rate": 1,
-                    "effective_findings_count": 5,
+                    "effective_findings_count": 7,
                     "zero_finding_provider_count": 0,
                     "command_exit_code": 0,
                 },
@@ -62,8 +62,8 @@ class CiReportingToolsTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, msg=f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")
             report = output_path.read_text(encoding="utf-8")
-            self.assertIn("effective findings: `4`", report)
-            self.assertIn("parse success rate: `5/5 (100.0%)`", report)
+            self.assertIn("effective findings: `6`", report)
+            self.assertIn("parse success rate: `7/7 (100.0%)`", report)
             self.assertIn("Metrics note: note", report)
 
     def test_collect_ci_artifacts_merges_workflows(self) -> None:

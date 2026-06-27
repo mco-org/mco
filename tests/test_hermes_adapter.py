@@ -11,8 +11,8 @@ class TestHermesAdapterBuildCommand(unittest.TestCase):
     def setUp(self) -> None:
         self.adapter = HermesAdapter()
 
-    def test_build_command_safe_default(self) -> None:
-        """Default command must NOT include dangerous auto-approval flags."""
+    def test_build_command_explicit_provider_does_not_add_extra_elevated_flags(self) -> None:
+        """Hermes -z is elevated; adapter must not add more bypass flags by default."""
         task = TaskInput(
             task_id="test-1",
             prompt="Review for bugs",

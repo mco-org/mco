@@ -135,6 +135,68 @@ def _select_best_text_candidate(candidates: List[str]) -> str:
     return candidates[best_index]
 
 
+def _text_delta_from_event(payload: Dict[str, Any]) -> Tuple[bool, str]:
+    """Return a user-visible streaming text chunk from event-stream payloads."""
+    event = payload
+    assistant_event = payload.get("assistantMessageEvent")
+    if isinstance(assistant_event, dict):
+        event = assistant_event
+
+    payload_type = event.get("type")
+    if not isinstance(payload_type, str):
+        return False, ""
+
+    normalized_type = payload_type.lower()
+    if "thinking" in normalized_type:
+        return False, ""
+
+    text_event_types = {
+        "text_start",
+        "text_delta",
+        "text_end",
+        "output_text_delta",
+        "response.output_text.delta",
+    }
+    if normalized_type not in text_event_types and not normalized_type.endswith(".text_delta"):
+        return False, ""
+
+    for key in ("delta", "text", "content"):
+        value = event.get(key)
+        if isinstance(value, str):
+            return True, value
+    return True, ""
+
+
+def _extract_streamed_text_candidate(payloads: List[Any]) -> str:
+    groups: List[str] = []
+    current: List[str] = []
+
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            if current:
+                groups.append("".join(current))
+                current = []
+            continue
+
+        is_text_event, chunk = _text_delta_from_event(payload)
+        if is_text_event:
+            current.append(chunk)
+            continue
+
+        if current:
+            groups.append("".join(current))
+            current = []
+
+    if current:
+        groups.append("".join(current))
+
+    for group in reversed(groups):
+        text = group.strip()
+        if text:
+            return text
+    return ""
+
+
 def _collect_final_text_candidates(
     payload: Any,
     candidates: List[str],
@@ -204,6 +266,9 @@ def extract_final_text_from_output(text: str) -> str:
 
     candidates: List[str] = []
     seen: Set[str] = set()
+    streamed_text = _extract_streamed_text_candidate(payloads)
+    if streamed_text:
+        _append_text_candidate(candidates, seen, streamed_text)
     for payload in payloads:
         _collect_final_text_candidates(payload, candidates, seen)
 

@@ -213,6 +213,19 @@ class AdapterContractTests(unittest.TestCase):
             )
             self.assertEqual(len(findings), 1)
 
+    def test_opencode_adapter_command_sets_repo_dir(self) -> None:
+        adapter = OpenCodeAdapter()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task = TaskInput(
+                task_id="task-opencode-dir",
+                prompt="review",
+                repo_root=tmpdir,
+                target_paths=["."],
+            )
+            cmd = adapter._build_command(task)  # type: ignore[attr-defined]
+            self.assertIn("--dir", cmd)
+            self.assertEqual(cmd[cmd.index("--dir") + 1], tmpdir)
+
     def test_qwen_adapter_run_poll_normalize(self) -> None:
         adapter = QwenAdapter()
         with tempfile.TemporaryDirectory() as tmpdir:

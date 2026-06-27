@@ -7,7 +7,7 @@ DATE_STR="$(date +%F)"
 OUT_DIR="$ROOT_DIR/reports/adapter-contract/$DATE_STR"
 mkdir -p "$OUT_DIR"
 TEMPLATE_PATH="$ROOT_DIR/docs/templates/step5-benchmark-report.md.tpl"
-PROVIDERS="${1:-claude,codex,gemini,opencode,qwen}"
+PROVIDERS="${1:-claude,codex,gemini,opencode,qwen,hermes,pi}"
 
 PROMPT="Smoke benchmark for parallel review. No tools. Return exactly one low-severity maintainability finding in strict JSON contract."
 RUN_TAG="$(date +%Y%m%d%H%M%S)"

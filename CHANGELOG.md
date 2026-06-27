@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-06-27
+### Changed
+- Clarified provider docs and CLI help: five audited providers remain the default set, while seven providers are supported through explicit selection.
+- Expanded manual capability probes and step5 benchmark scripts to include Hermes and Pi.
+- Documented Hermes as an explicit elevated provider because Hermes oneshot mode auto-bypasses approvals.
+
+### Fixed
+- Fixed run-mode final text extraction for multi-part JSONL `text_delta` streams by concatenating chunks in event order while preserving spacing.
+- Fixed OpenCode review execution to pass `--dir <repo_root>` so it reads the selected repository instead of the caller's current directory.
+
 ## [0.10.2] - 2026-06-27
 ### Fixed
 - Fixed run-mode final text extraction for Pi JSONL streams so thinking events and user prompts are not returned as the final answer.

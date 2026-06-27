@@ -27,12 +27,11 @@ class OpenCodeAdapter(ShimAdapterBase):
         return [binary, "auth", "list"]
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
-        return ["opencode", "run", input_task.prompt, "--format", "json"]
+        return ["opencode", "run", input_task.prompt, "--format", "json", "--dir", input_task.repo_root]
 
     def _build_command_for_record(self) -> List[str]:
-        return ["opencode", "run", "<prompt>", "--format", "json"]
+        return ["opencode", "run", "<prompt>", "--format", "json", "--dir", "<repo_root>"]
 
     def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
         text = raw if isinstance(raw, str) else ""
         return normalize_findings_from_text(text, ctx, "opencode")
-
