@@ -93,6 +93,9 @@ class ShimAdapterBase:
     def supported_permission_keys(self) -> List[str]:
         return []
 
+    def supported_model_keys(self) -> List[str]:
+        return []
+
     def run(self, input_task: TaskInput) -> TaskRunRef:
         command_override = input_task.metadata.get("command_override")
         cmd = command_override if isinstance(command_override, list) else self._build_command(input_task)

@@ -592,6 +592,78 @@ def _parse_provider_permissions_json(raw: str) -> Dict[str, Dict[str, str]]:
     return result
 
 
+def _normalize_model_config_text(value: object, *, provider: str, key: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(
+            "--provider-models-json value for provider '{}' key '{}' must be a string".format(provider, key)
+        )
+    text = value.strip()
+    if not text:
+        raise ValueError(
+            "--provider-models-json value for provider '{}' key '{}' must not be empty".format(provider, key)
+        )
+    if "\x00" in text or any(ord(char) < 32 for char in text):
+        raise ValueError(
+            "--provider-models-json value for provider '{}' key '{}' contains control characters".format(
+                provider, key
+            )
+        )
+    return text
+
+
+def _parse_provider_models_json(raw: str) -> Dict[str, Dict[str, str]]:
+    if not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("--provider-models-json must be valid JSON") from None
+    if not isinstance(payload, dict):
+        raise ValueError("--provider-models-json root must be an object")
+    result: Dict[str, Dict[str, str]] = {}
+    for provider, config in payload.items():
+        provider_name = str(provider).strip()
+        if not provider_name:
+            raise ValueError("--provider-models-json contains empty provider name")
+        if "\x00" in provider_name or any(ord(char) < 32 for char in provider_name):
+            raise ValueError("--provider-models-json provider name contains control characters")
+        normalized: Dict[str, str] = {}
+        if isinstance(config, str):
+            normalized["model"] = _normalize_model_config_text(config, provider=provider_name, key="model")
+        elif isinstance(config, dict):
+            for key, value in config.items():
+                key_name = str(key).strip()
+                if key_name not in ("model", "provider"):
+                    raise ValueError(
+                        "--provider-models-json only supports 'model' and 'provider' keys; got '{}' for provider '{}'".format(
+                            key_name, provider_name
+                        )
+                    )
+                if value is None:
+                    continue
+                normalized[key_name] = _normalize_model_config_text(value, provider=provider_name, key=key_name)
+        else:
+            raise ValueError(
+                "--provider-models-json values must be strings or objects, got {} for provider '{}'".format(
+                    type(config).__name__, provider_name
+                )
+            )
+        result[provider_name] = normalized
+    return result
+
+
+def _merge_provider_models(
+    base: Dict[str, Dict[str, str]],
+    override: Dict[str, Dict[str, str]],
+) -> Dict[str, Dict[str, str]]:
+    merged: Dict[str, Dict[str, str]] = {provider: dict(values) for provider, values in base.items()}
+    for provider, config in override.items():
+        current = merged.get(provider, {})
+        current.update(config)
+        merged[provider] = current
+    return merged
+
+
 def _merge_provider_permissions(
     base: Dict[str, Dict[str, str]],
     override: Dict[str, Dict[str, str]],
@@ -732,6 +804,11 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Provider permission mapping JSON, e.g. '{\"codex\":{\"sandbox\":\"workspace-write\"}}'",
     )
     access.add_argument(
+        "--provider-models-json",
+        default="",
+        help="Per-provider model mapping JSON, e.g. '{\"codex\":\"gpt-5.5\",\"pi\":{\"provider\":\"seal\",\"model\":\"deepseek-v4-pro\"}}'",
+    )
+    access.add_argument(
         "--perspectives-json",
         default="",
         help="Per-provider review perspective JSON, e.g. '{\"claude\":\"Focus on security issues\",\"codex\":\"Focus on performance\"}'",
@@ -852,6 +929,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help='Temporary custom ACP agent: --agent mybot "mybot --acp"',
     )
+
+    agent_models = agent_sub.add_parser("models", help="List provider model choices", formatter_class=_HelpFormatter)
+    agent_models.add_argument(
+        "--providers",
+        default="codex,hermes,pi",
+        help="Comma-separated providers to inspect. Supported discovery: codex,hermes,pi",
+    )
+    agent_models.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
 
     run = subparsers.add_parser(
         "run",
@@ -1022,7 +1107,8 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     fc = file_config or {}
     fc_policy = fc.get("policy", {}) if isinstance(fc.get("policy"), dict) else {}
 
-    providers = _parse_providers(args.providers) if args.providers else list(cfg.providers)
+    raw_providers = getattr(args, "providers", "")
+    providers = _parse_providers(raw_providers) if raw_providers else list(cfg.providers)
 
     # artifact_base: CLI > config file > hardcoded default
     artifact_base = args.artifact_base if args.artifact_base != cfg.artifact_base else fc.get("artifact_base", cfg.artifact_base)
@@ -1056,7 +1142,18 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
             base_permissions[k] = dict(base_permissions.get(k, {}), **v) if isinstance(v, dict) else v
     provider_permissions = _merge_provider_permissions(
         base_permissions,
-        _parse_provider_permissions_json(args.provider_permissions_json),
+        _parse_provider_permissions_json(getattr(args, "provider_permissions_json", "")),
+    )
+
+    base_models = dict(cfg.policy.provider_models)
+    if fc_policy.get("provider_models") and isinstance(fc_policy["provider_models"], dict):
+        base_models = _merge_provider_models(base_models, _parse_provider_models_json(json.dumps(fc_policy["provider_models"])))
+    provider_models_json = getattr(args, "provider_models_json", "")
+    if not isinstance(provider_models_json, str):
+        provider_models_json = ""
+    provider_models = _merge_provider_models(
+        base_models,
+        _parse_provider_models_json(provider_models_json),
     )
 
     max_provider_parallelism = getattr(args, "max_provider_parallelism", None)
@@ -1115,6 +1212,7 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         provider_permissions=provider_permissions,
         enforcement_mode=enforcement_mode,
         perspectives=perspectives,
+        provider_models=provider_models,
         chain=getattr(args, "chain", False) or fc_policy.get("chain", False),
         debate=getattr(args, "debate", False) or fc_policy.get("debate", False),
         divide=divide,
@@ -1483,6 +1581,30 @@ def main(argv: List[str] | None = None) -> int:
                         **payload
                     )
                 )
+            return 0
+
+        if args.agent_action == "models":
+            from .models import discover_models
+
+            providers_str = getattr(args, "providers", "codex,hermes,pi")
+            providers = [p.strip() for p in providers_str.split(",") if p.strip()]
+            results: Dict[str, object] = {}
+            for provider in providers:
+                result = discover_models(provider)
+                results[provider] = result
+                if not getattr(args, "json", False):
+                    status = "OK" if result.get("ok") else "FAIL"
+                    error = result.get("error", "")
+                    models = result.get("models", [])
+                    count = len(models) if isinstance(models, list) else 0
+                    print(f"{provider}: {status} ({count} models){' — ' + error if error else ''}")
+                    if isinstance(models, list):
+                        for m in models[:5]:
+                            print(f"  - {m.get('id', '?')}")
+                        if len(models) > 5:
+                            print(f"  ... and {len(models) - 5} more")
+            if getattr(args, "json", False):
+                print(json.dumps(results, ensure_ascii=True))
             return 0
 
     if args.command == "findings":

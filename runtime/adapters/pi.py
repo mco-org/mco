@@ -27,6 +27,9 @@ class PiAdapter(ShimAdapterBase):
     def _auth_check_command(self, binary: str) -> List[str]:
         return [binary, "--list-models"]
 
+    def supported_model_keys(self) -> List[str]:
+        return ["model", "provider"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         # Strict read-only tool allowlist: read files, search content,
         # find by name, list directories.  No bash / edit / write.
@@ -41,7 +44,6 @@ class PiAdapter(ShimAdapterBase):
             "--no-skills",
             "--no-extensions",
             "--tools", "read,grep,find,ls",
-            input_task.prompt,
         ]
         model = input_task.metadata.get("model")
         if isinstance(model, str) and model.strip():
@@ -49,6 +51,7 @@ class PiAdapter(ShimAdapterBase):
         provider = input_task.metadata.get("provider")
         if isinstance(provider, str) and provider.strip():
             cmd.extend(["--provider", provider.strip()])
+        cmd.append(input_task.prompt)
         return cmd
 
     def _build_command_for_record(self) -> List[str]:

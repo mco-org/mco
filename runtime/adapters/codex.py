@@ -29,6 +29,9 @@ class CodexAdapter(ShimAdapterBase):
     def supported_permission_keys(self) -> List[str]:
         return ["sandbox"]
 
+    def supported_model_keys(self) -> List[str]:
+        return ["model"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         sandbox = "workspace-write"
         raw_permissions = input_task.metadata.get("provider_permissions")
@@ -49,6 +52,9 @@ class CodexAdapter(ShimAdapterBase):
         output_schema_path = input_task.metadata.get("output_schema_path")
         if isinstance(output_schema_path, str) and output_schema_path.strip():
             cmd.extend(["--output-schema", output_schema_path.strip()])
+        model = input_task.metadata.get("model")
+        if isinstance(model, str) and model.strip():
+            cmd.extend(["--model", model.strip()])
         cmd.append(input_task.prompt)
         return cmd
 

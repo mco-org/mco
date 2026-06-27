@@ -156,6 +156,8 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Hermes and Pi adapters** — `hermes` and `pi` are supported through explicit `--providers hermes,pi` selection.
 - **Safe default provider set** — default runs remain on the audited five providers: `claude,codex,gemini,opencode,qwen`.
 - **Read-only Pi review mode** — Pi runs with `read,grep,find,ls` enabled so it can inspect code without shell, edit, or write tools.
+- **Per-provider model selection** — `--provider-models-json` can pin a model per selected provider while the default remains each CLI's configured model.
+- **Model discovery** — `mco agent models --providers codex,hermes,pi --json` lists known local model choices when the underlying CLI exposes them.
 - **Codex structured output compatibility** — review schema is compatible with current OpenAI strict structured output requirements.
 
 ## What's New in v0.9
@@ -196,6 +198,21 @@ mco review --providers claude,codex,pi --prompt "Review this repository for bugs
 
 Pi can read repository files through its read-only tool allowlist. It does not enable `bash`, `edit`, `write`, or `--approve` by default. Hermes is available for explicit selection, but Hermes `--oneshot` is not a read-only mode; use it only when you accept Hermes' own approval-bypass semantics.
 
+By default MCO does not choose a model for you; it lets each provider CLI use its own configured default. To pin models for one run:
+
+```bash
+mco review \
+  --providers codex,pi \
+  --provider-models-json '{"codex":"gpt-5.4","pi":{"provider":"seal","model":"deepseek-v4-pro"}}' \
+  --prompt "Review this repository for bugs."
+```
+
+List currently discoverable model choices:
+
+```bash
+mco agent models --providers codex,hermes,pi --json
+```
+
 The adapter architecture is extensible — adding a new agent CLI requires implementing three hooks: auth check, command builder, and output normalizer.
 
 ## Use Cases
@@ -224,6 +241,8 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Prompt from file | `mco review --file prompt.md --providers claude` | Read prompt from a file instead of inline |
 | Piped prompt | `cat prompt.md \| mco run --providers claude` | Read prompt from stdin pipe |
 | Quiet output | `mco run --quiet --providers claude --prompt "..."` | Print only final text, no headers |
+| Pin provider models | `mco run --provider-models-json '{"codex":"gpt-5.4"}'` | Override selected providers' CLI default model |
+| List provider models | `mco agent models --providers codex,pi --json` | Show discoverable model choices and configured defaults |
 | Config-driven run | (uses `.mcorc.json`) | Persistent project defaults without CLI flags |
 | Idempotent session | `mco session ensure --provider claude --name dev` | Create or return existing session |
 | Async prompt | `mco session send dev "task" --no-wait` | Queue prompt and return immediately |
@@ -416,6 +435,7 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | `--synth-provider` | `claude` | Which provider runs the synthesis pass |
 | `--provider-timeouts` | unset | Per-provider stall-timeout overrides (`provider=seconds`) |
 | `--provider-permissions-json` | unset | Provider permission mapping JSON (see below) |
+| `--provider-models-json` | unset | Per-provider model mapping JSON, e.g. `'{"codex":"gpt-5.4","pi":{"provider":"seal","model":"deepseek-v4-pro"}}'` |
 | `--save-artifacts` | off | Write artifacts while keeping stdout result delivery |
 | `--task-id` | auto-generated | Stable task identifier for artifact paths |
 | `--artifact-base` | `reports/review` | Base directory for artifact output |
@@ -469,6 +489,10 @@ mco review \
     "enforcement_mode": "best_effort",
     "max_provider_parallelism": 3,
     "chain": false,
+    "provider_models": {
+      "codex": "gpt-5.4",
+      "pi": {"provider": "seal", "model": "deepseek-v4-pro"}
+    },
     "perspectives": {
       "claude": "Focus on security vulnerabilities and injection attacks",
       "codex": "Focus on performance bottlenecks and resource leaks",
