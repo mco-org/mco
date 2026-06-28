@@ -8,6 +8,7 @@ from pathlib import Path
 from runtime.adapters import (
     ClaudeAdapter,
     CodexAdapter,
+    CopilotAdapter,
     GeminiAdapter,
     HermesAdapter,
     OpenCodeAdapter,
@@ -21,7 +22,7 @@ from runtime.types import RUN_RESULT_FIELDS, RUN_RESULT_SCHEMA_VERSION, RunResul
 
 class ContractFreezeTests(unittest.TestCase):
     def test_provider_and_capability_sets_are_frozen(self) -> None:
-        self.assertEqual(tuple(PROVIDER_IDS), ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi"))
+        self.assertEqual(tuple(PROVIDER_IDS), ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot"))
         self.assertEqual(tuple(CAPABILITY_TIERS), ("C0", "C1", "C2", "C3", "C4", "C5", "C6"))
 
     def test_provider_adapter_protocol_shape(self) -> None:
@@ -51,6 +52,7 @@ class ContractFreezeTests(unittest.TestCase):
         self.assertEqual(QwenAdapter().supported_permission_keys(), [])
         self.assertEqual(HermesAdapter().supported_permission_keys(), [])
         self.assertEqual(PiAdapter().supported_permission_keys(), [])
+        self.assertEqual(CopilotAdapter().supported_permission_keys(), [])
 
     def test_validate_task_id_rejects_absolute_path(self) -> None:
         with self.assertRaises(ValueError):

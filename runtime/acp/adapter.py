@@ -42,6 +42,7 @@ _ACP_COMMANDS: Dict[str, List[str]] = {
     "claude": ["claude", "code", "--transport", "stdio"],
     "codex": ["codex", "--acp"],
     "gemini": ["gemini", "--acp"],
+    "copilot": ["copilot", "--acp"],
 }
 
 

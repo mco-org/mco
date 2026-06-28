@@ -19,7 +19,7 @@ from .formatters import (
 )
 from .review_engine import ReviewRequest, run_review
 
-SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "hermes", "opencode", "pi", "qwen")
+SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "gemini", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
 DEFAULT_CONFIG = ReviewConfig()
 DEFAULT_POLICY = DEFAULT_CONFIG.policy

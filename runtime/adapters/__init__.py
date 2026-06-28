@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
+from .copilot import CopilotAdapter
 from .custom import CommandShimAdapter
 from .gemini import GeminiAdapter
 from .hermes import HermesAdapter
@@ -116,6 +117,7 @@ def adapter_registry(
             "opencode": OpenCodeAdapter,
             "pi": PiAdapter,
             "qwen": QwenAdapter,
+            "copilot": CopilotAdapter,
         }
         for pid, adapter_cls in shim_fallbacks.items():
             if pid not in registry:
@@ -131,6 +133,7 @@ def adapter_registry(
         "opencode": OpenCodeAdapter(),
         "pi": PiAdapter(),
         "qwen": QwenAdapter(),
+        "copilot": CopilotAdapter(),
     }
     for agent in configured:
         name = str(agent.get("name", "")).strip()
@@ -157,6 +160,7 @@ __all__ = [
     "ClaudeAdapter",
     "CodexAdapter",
     "CommandShimAdapter",
+    "CopilotAdapter",
     "GeminiAdapter",
     "HermesAdapter",
     "OllamaAdapter",
