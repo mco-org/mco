@@ -51,9 +51,11 @@ class CliDoctorTests(unittest.TestCase):
         self.assertEqual(payload["provider_count"], 2)
         self.assertEqual(
             tuple(payload["providers"]["claude"].keys()),
-            ("detected", "binary_path", "version", "auth_ok", "reason", "ready"),
+            ("detected", "binary_path", "version", "auth_ok", "reason", "ready", "risk"),
         )
         self.assertEqual(payload["providers"]["claude"]["ready"], True)
+        self.assertEqual(payload["providers"]["claude"]["risk"]["level"], "read_only")
+        self.assertEqual(payload["providers"]["codex"]["risk"]["level"], "workspace_write")
         self.assertEqual(payload["providers"]["codex"]["ready"], False)
         self.assertEqual(payload["providers"]["codex"]["reason"], "auth_check_failed")
 

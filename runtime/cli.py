@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .adapters import adapter_registry
 from .config import ReviewConfig, ReviewPolicy, load_agent_registrations
-from .contracts import ProviderPresence
+from .contracts import ProviderPresence, TaskInput
 from .formatters import (
     LiveStreamRenderer,
     _consensus_badge,
@@ -17,7 +18,8 @@ from .formatters import (
     format_markdown_pr,
     format_sarif,
 )
-from .review_engine import ReviewRequest, run_review
+from .provider_risk import provider_risk
+from .review_engine import ReviewRequest, provider_policy_preview, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "gemini", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
@@ -154,7 +156,7 @@ def _load_available_agents(repo_root: str, cli_agents: Optional[Dict[str, List[s
     available: List[Dict[str, object]] = []
     seen = set()
     for provider in SUPPORTED_PROVIDERS:
-        available.append({"name": provider, "source": "builtin", "transport": "shim"})
+        available.append({"name": provider, "source": "builtin", "transport": "shim", "risk": provider_risk(provider)})
         seen.add(provider)
     for agent in load_agent_registrations(repo_root):
         name = str(agent.get("name", "")).strip()
@@ -168,6 +170,7 @@ def _load_available_agents(repo_root: str, cli_agents: Optional[Dict[str, List[s
             "model": agent.get("model"),
             "timeout": agent.get("timeout"),
             "permission_keys": agent.get("permission_keys", []),
+            "risk": provider_risk(name),
         })
         seen.add(name)
     for name, command in (cli_agents or {}).items():
@@ -178,6 +181,7 @@ def _load_available_agents(repo_root: str, cli_agents: Optional[Dict[str, List[s
             "source": "cli",
             "transport": "acp",
             "command": " ".join(command),
+            "risk": provider_risk(name),
         })
         seen.add(name)
     return available
@@ -196,6 +200,7 @@ def _check_agent(repo_root: str, name: str, cli_agents: Optional[Dict[str, List[
             "version": None,
             "transport": None,
             "reason": "unknown_agent",
+            "risk": provider_risk(name),
         }
     probe = adapter.detect()
     return {
@@ -206,6 +211,7 @@ def _check_agent(repo_root: str, name: str, cli_agents: Optional[Dict[str, List[
         "version": probe.version,
         "transport": "acp" if hasattr(adapter, "_acp_command") else "shim",
         "reason": probe.reason,
+        "risk": provider_risk(name),
     }
 
 
@@ -314,6 +320,7 @@ def _doctor_payload(providers: List[str], presence_map: Dict[str, ProviderPresen
             "auth_ok": bool(presence.auth_ok),
             "reason": presence.reason,
             "ready": ready,
+            "risk": provider_risk(provider),
         }
     return {
         "command": "doctor",
@@ -343,6 +350,138 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
         lines.append(f"  detected={bool(details.get('detected'))} auth_ok={bool(details.get('auth_ok'))}")
         lines.append(f"  binary_path={details.get('binary_path')}")
         lines.append(f"  version={details.get('version')}")
+        risk = details.get("risk", {})
+        if isinstance(risk, dict):
+            lines.append(f"  risk={risk.get('level')} ({risk.get('reason')})")
+    return "\n".join(lines)
+
+
+def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest, review_mode: bool, policy: Dict[str, object]) -> List[str]:
+    metadata: Dict[str, object] = {
+        "artifact_root": "<artifact_root>",
+        "allow_paths": req.policy.allow_paths,
+        "provider_permissions": policy.get("applied_permissions", {}),
+        "enforcement_mode": req.policy.enforcement_mode,
+    }
+    applied_model = policy.get("applied_model", {})
+    if isinstance(applied_model, dict):
+        metadata.update(applied_model)
+    applied_context = policy.get("applied_context", {})
+    if isinstance(applied_context, dict) and applied_context:
+        metadata["provider_context"] = dict(applied_context)
+    if review_mode and provider == "codex":
+        metadata["output_schema_path"] = "<review_findings_schema>"
+    build_command = getattr(adapter, "_build_command", None)
+    if callable(build_command):
+        try:
+            return list(build_command(TaskInput(
+                task_id=req.task_id or "<task_id>",
+                prompt="<prompt>",
+                repo_root=req.repo_root,
+                target_paths=req.target_paths or ["."],
+                metadata=metadata,
+            )))
+        except Exception:
+            pass
+    build_record = getattr(adapter, "_build_command_for_record", None)
+    if callable(build_record):
+        try:
+            return list(build_record())
+        except Exception:
+            return []
+    return []
+
+
+def _build_dry_run_payload(
+    args: argparse.Namespace,
+    req: ReviewRequest,
+    *,
+    providers: List[str],
+    adapters: Mapping[str, object],
+    review_mode: bool,
+    result_mode: str,
+    write_artifacts: bool,
+    transport: str,
+    diff_mode: Optional[str],
+    diff_base: str,
+    memory_space: str,
+    synthesize: bool,
+    synth_provider: str,
+) -> Dict[str, object]:
+    provider_details: Dict[str, object] = {}
+    for provider in providers:
+        adapter = adapters.get(provider)
+        if adapter is None:
+            provider_details[provider] = {
+                "risk": provider_risk(provider),
+                "policy": {"failure_reason": "adapter_not_implemented", "would_fail_strict": True},
+                "command_template": [],
+            }
+            continue
+        policy = provider_policy_preview(provider, adapter, req.policy)
+        provider_details[provider] = {
+            "risk": provider_risk(provider),
+            "policy": policy,
+            "command_template": _dry_run_command_template(provider, adapter, req, review_mode, policy),
+        }
+    return {
+        "command": args.command,
+        "dry_run": True,
+        "would_execute": False,
+        "review_mode": review_mode,
+        "repo_root": req.repo_root,
+        "providers": providers,
+        "target_paths": req.target_paths or ["."],
+        "transport": transport,
+        "result_mode": result_mode,
+        "write_artifacts": write_artifacts,
+        "artifact_base": req.artifact_base,
+        "task_id": req.task_id,
+        "prompt": {
+            "chars": len(req.prompt),
+            "sha256": hashlib.sha256(req.prompt.encode("utf-8")).hexdigest(),
+        },
+        "policy": {
+            "allow_paths": list(req.policy.allow_paths),
+            "enforcement_mode": req.policy.enforcement_mode,
+            "provider_permissions": req.policy.provider_permissions,
+            "provider_models": req.policy.provider_models,
+            "provider_context": req.policy.provider_context,
+            "perspectives": req.policy.perspectives,
+            "chain": req.policy.chain,
+            "debate": req.policy.debate,
+            "divide": req.policy.divide,
+        },
+        "providers_detail": provider_details,
+        "diff": {"mode": diff_mode, "base": diff_base or None},
+        "memory": {"enabled": bool(getattr(args, "memory", False)), "space": memory_space or None},
+        "synthesis": {"enabled": synthesize, "provider": synth_provider or None},
+    }
+
+
+def _render_dry_run_report(payload: Dict[str, object]) -> str:
+    lines = ["Dry Run", ""]
+    lines.append(f"- would_execute: {payload.get('would_execute')}")
+    lines.append(f"- command: {payload.get('command')}")
+    lines.append(f"- repo_root: {payload.get('repo_root')}")
+    lines.append(f"- providers: {', '.join(str(item) for item in payload.get('providers', []))}")
+    lines.append("")
+    lines.append("Provider Preview")
+    details = payload.get("providers_detail", {})
+    if isinstance(details, dict):
+        for provider in sorted(details.keys()):
+            item = details.get(provider, {})
+            if not isinstance(item, dict):
+                continue
+            risk = item.get("risk", {})
+            policy = item.get("policy", {})
+            risk_level = risk.get("level") if isinstance(risk, dict) else "unknown"
+            failure = policy.get("failure_reason") if isinstance(policy, dict) else ""
+            suffix = f" failure={failure}" if failure else ""
+            lines.append(f"- {provider}: risk={risk_level}{suffix}")
+            command = item.get("command_template", [])
+            if isinstance(command, list) and command:
+                lines.append("  command=" + " ".join(str(part) for part in command))
     return "\n".join(lines)
 
 
@@ -952,6 +1091,11 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--save-artifacts",
         action="store_true",
         help="Force artifact writes when result-mode is stdout",
+    )
+    output.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview resolved providers, policy, risk, and artifacts without executing agents",
     )
     output_excl = output.add_mutually_exclusive_group()
     output_excl.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
@@ -1749,11 +1893,14 @@ def main(argv: List[str] | None = None) -> int:
                 print(json.dumps(payload, ensure_ascii=True))
             else:
                 for item in payload:
+                    risk = item.get("risk", {})
+                    risk_level = risk.get("level") if isinstance(risk, dict) else ""
                     print(
-                        "{name:20s} {transport:5s} {source:7s} {detail}".format(
+                        "{name:20s} {transport:5s} {source:7s} {risk:15s} {detail}".format(
                             name=str(item.get("name", "")),
                             transport=str(item.get("transport", "")),
                             source=str(item.get("source", "")),
+                            risk=str(risk_level or ""),
                             detail=str(item.get("model") or item.get("command") or ""),
                         ).rstrip()
                     )
@@ -1985,6 +2132,30 @@ def main(argv: List[str] | None = None) -> int:
     write_artifacts = effective_result_mode in ("artifact", "both")
     transport = getattr(args, "transport", "shim")
     adapters = _doctor_adapter_registry(transport=transport, extra_agents=extra_agents, configured_agents=configured_agents) if (transport != "shim" or extra_agents or configured_agents) else None
+    if getattr(args, "dry_run", False):
+        preview_adapters = adapters or _doctor_adapter_registry()
+        payload = _build_dry_run_payload(
+            args,
+            req,
+            providers=providers,
+            adapters=preview_adapters,
+            review_mode=review_mode,
+            result_mode=effective_result_mode,
+            write_artifacts=write_artifacts,
+            transport=transport,
+            diff_mode=diff_mode,
+            diff_base=diff_base_arg,
+            memory_space=memory_space,
+            synthesize=synthesize,
+            synth_provider=synth_provider,
+        )
+        if stream_renderer is not None:
+            stream_renderer.close()
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=True))
+        else:
+            print(_render_dry_run_report(payload))
+        return 0
     try:
         result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
