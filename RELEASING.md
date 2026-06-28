@@ -73,7 +73,7 @@ node -p "require('./package.json').version"
 npm pack --dry-run
 ```
 
-Then publish:
+Then publish from a real terminal/TTY:
 
 ```bash
 npm publish --access public --auth-type=web
@@ -81,9 +81,12 @@ npm publish --access public --auth-type=web
 
 ## 4. npm web auth and 2FA
 
-Use a real TTY for npm web-auth publish prompts. In non-TTY command runners, npm
-may print `https://www.npmjs.com/auth/cli/***` with the auth id redacted, which
-is not usable.
+Use a real TTY for npm web-auth publish prompts. Do not pipe `npm publish`
+through `tee`, and do not run it through a non-interactive command runner for the
+final publish step. In non-TTY mode npm may print
+`https://www.npmjs.com/auth/cli/***` with the auth id redacted; that URL is not
+usable and cannot be recovered from the npm debug log because the log is redacted
+too.
 
 If npm reports `E401 Unauthorized`, log in first:
 
@@ -123,6 +126,19 @@ npm view @tt-a1i/mco maintainers --json
 
 In the observed failure case, `E404` followed a stale or missing npm session; a
 fresh `npm login --auth-type=web` fixed it.
+
+The working manual sequence for the v0.10.6 release was:
+
+```bash
+cd "$tmp"
+npm whoami
+npm publish --access public --auth-type=web
+```
+
+If `npm publish` asks for web auth, keep that same command running, open the
+printed `https://www.npmjs.com/auth/cli/<auth-id>` URL, complete the browser
+confirmation, and return to the terminal. Do not start a second non-TTY publish
+attempt while the first publish is waiting.
 
 ## 5. Verify the published package
 
