@@ -199,6 +199,24 @@ agents:
             available = _load_available_agents(tmp)
             self.assertNotIn("broken-agent", [item["name"] for item in available])
 
+    def test_available_agents_include_risk_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            agents_dir = Path(tmp) / ".mco"
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            (agents_dir / "agents.yaml").write_text(
+                """
+agents:
+  - name: local-bot
+    command: "local-bot --stdio"
+    transport: shim
+""".strip(),
+                encoding="utf-8",
+            )
+            available = {item["name"]: item for item in _load_available_agents(tmp)}
+            self.assertEqual(available["claude"]["risk"]["level"], "read_only")
+            self.assertEqual(available["codex"]["risk"]["level"], "workspace_write")
+            self.assertEqual(available["local-bot"]["risk"]["level"], "unknown")
+
 
 class TestAgentCliSubcommands(unittest.TestCase):
     @patch("runtime.cli._load_available_agents")
