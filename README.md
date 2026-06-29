@@ -23,13 +23,13 @@
   <a href="https://github.com/mco-org/mco/stargazers"><img src="https://img.shields.io/github/stars/mco-org/mco?style=flat-square&color=f59e0b" alt="GitHub stars" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/Providers-7%20supported-7c3aed?style=flat-square" alt="7 supported providers" />
+  <img src="https://img.shields.io/badge/Providers-8%20supported-7c3aed?style=flat-square" alt="8 supported providers" />
   <a href="https://pypi.org/project/evermemos-mcp/"><img src="https://img.shields.io/badge/evermemos--mcp-memory%20powered-6366f1?style=flat-square" alt="evermemos-mcp" /></a>
 </p>
 
 <p align="center"><strong>MCO — Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.</strong></p>
 
-<p align="center"><strong>MCO equips your primary agent with an agent team: dispatch Claude, Codex, Gemini, OpenCode, and Qwen in parallel by default, with Hermes and Pi available as explicit opt-in providers.</strong></p>
+<p align="center"><strong>MCO equips your primary agent with an agent team: dispatch Claude, Codex, Gemini, OpenCode, and Qwen in parallel by default, with Copilot, Hermes, and Pi available as explicit opt-in providers.</strong></p>
 
 <p align="center">English | <a href="./README.zh-CN.md">简体中文</a></p>
 
@@ -40,6 +40,7 @@
     <td align="center"><a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=96" alt="Codex CLI" width="48" /></a></td>
     <td align="center"><a href="https://github.com/sst/opencode"><img src="https://raw.githubusercontent.com/sst/opencode/master/packages/console/app/src/asset/brand/opencode-logo-light-square.svg" alt="OpenCode" width="48" /></a></td>
     <td align="center"><a href="https://github.com/QwenLM/qwen-code"><img src="https://github.com/QwenLM.png?size=96" alt="Qwen Code" width="48" /></a></td>
+    <td align="center"><strong>Copilot</strong></td>
     <td align="center"><strong>Hermes</strong></td>
     <td align="center"><strong>Pi</strong></td>
   </tr>
@@ -49,6 +50,7 @@
     <td align="center"><strong>Codex CLI</strong></td>
     <td align="center"><strong>OpenCode</strong></td>
     <td align="center"><strong>Qwen Code</strong></td>
+    <td align="center"><strong>Copilot CLI</strong></td>
     <td align="center"><strong>Hermes</strong></td>
     <td align="center"><strong>Pi</strong></td>
   </tr>
@@ -58,6 +60,7 @@
     <td align="center"><code>codex</code></td>
     <td align="center"><code>opencode</code></td>
     <td align="center"><code>qwen</code></td>
+    <td align="center"><code>copilot</code></td>
     <td align="center"><code>hermes</code></td>
     <td align="center"><code>pi</code></td>
   </tr>
@@ -75,7 +78,7 @@ Running [OpenClaw](https://github.com/open-claw/open-claw) on your machine? It c
 
 > "Use mco to run a security review on this repo with Claude, Codex, and Gemini. Synthesize the results."
 
-OpenClaw reads `mco -h`, learns the CLI, and orchestrates the entire workflow autonomously. Your local machine becomes a multi-agent review team — OpenClaw is the manager, MCO is the dispatcher, and Claude/Codex/Gemini/OpenCode/Qwen are the default team members. Hermes and Pi can be selected explicitly when installed.
+OpenClaw reads `mco -h`, learns the CLI, and orchestrates the entire workflow autonomously. Your local machine becomes a multi-agent review team — OpenClaw is the manager, MCO is the dispatcher, and Claude/Codex/Gemini/OpenCode/Qwen are the default team members. Copilot, Hermes, and Pi can be selected explicitly when installed.
 
 This works the same way from **Claude Code, Cursor, Trae, Copilot, Windsurf**, or any agent that can run shell commands.
 
@@ -153,7 +156,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 
 ## What's New in v0.10
 
-- **Hermes and Pi adapters** — `hermes` and `pi` are supported through explicit `--providers hermes,pi` selection.
+- **Copilot, Hermes, and Pi adapters** — `copilot`, `hermes`, and `pi` are supported through explicit `--providers copilot,hermes,pi` selection.
 - **Safe default provider set** — default runs remain on the audited five providers: `claude,codex,gemini,opencode,qwen`.
 - **Read-only Pi review mode** — Pi runs with `read,grep,find,ls` enabled so it can inspect code without shell, edit, or write tools.
 - **Per-provider model selection** — `--provider-models-json` can pin a model per selected provider while the default remains each CLI's configured model.
@@ -187,16 +190,17 @@ These five providers are the default set for `mco run`, `mco review`, and `mco d
 
 | Provider | CLI | Status | Default permission model |
 |----------|-----|--------|--------------------------|
+| GitHub Copilot CLI | `copilot` | Explicit opt-in | Non-interactive Copilot CLI run with `--allow-all-tools --no-ask-user`; not included in defaults |
 | Hermes | `hermes` | Explicit opt-in | Elevated oneshot mode: approvals are auto-bypassed by Hermes; not included in defaults |
 | Pi | `pi` | Explicit opt-in | Read-only tools only: `read,grep,find,ls` |
 
 Use them by naming them explicitly:
 
 ```bash
-mco review --providers claude,codex,pi --prompt "Review this repository for bugs."
+mco review --providers claude,codex,copilot --prompt "Review this repository for bugs."
 ```
 
-Pi can read repository files through its read-only tool allowlist. It does not enable `bash`, `edit`, `write`, or `--approve` by default. Hermes is available for explicit selection, but Hermes `--oneshot` is not a read-only mode; use it only when you accept Hermes' own approval-bypass semantics.
+Copilot and Hermes are available for explicit selection when you accept their non-interactive approval-bypass semantics. Pi can read repository files through its read-only tool allowlist. It does not enable `bash`, `edit`, `write`, or `--approve` by default.
 
 By default MCO does not choose a model for you; it lets each provider CLI use its own configured default. To pin models for one run:
 

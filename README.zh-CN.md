@@ -21,12 +21,12 @@
   <a href="https://github.com/mco-org/mco/stargazers"><img src="https://img.shields.io/github/stars/mco-org/mco?style=flat-square&color=f59e0b" alt="GitHub stars" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/Providers-7%20supported-7c3aed?style=flat-square" alt="7 supported providers" />
+  <img src="https://img.shields.io/badge/Providers-8%20supported-7c3aed?style=flat-square" alt="8 supported providers" />
 </p>
 
 <p align="center"><strong>MCO — 编排 AI 编程 Agent。任意提示词，任意 Agent，任意 IDE。</strong></p>
 
-<p align="center"><strong>MCO 为你的主 Agent 配备一支 Agent 团队：默认同时调度 Claude、Codex、Gemini、OpenCode、Qwen，并可显式选择 Hermes 和 Pi。</strong></p>
+<p align="center"><strong>MCO 为你的主 Agent 配备一支 Agent 团队：默认同时调度 Claude、Codex、Gemini、OpenCode、Qwen，并可显式选择 Copilot、Hermes 和 Pi。</strong></p>
 
 <p align="center"><a href="./README.md">English</a> | 简体中文</p>
 
@@ -37,6 +37,7 @@
     <td align="center"><a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=96" alt="Codex CLI" width="48" /></a></td>
     <td align="center"><a href="https://github.com/sst/opencode"><img src="https://raw.githubusercontent.com/sst/opencode/master/packages/console/app/src/asset/brand/opencode-logo-light-square.svg" alt="OpenCode" width="48" /></a></td>
     <td align="center"><a href="https://github.com/QwenLM/qwen-code"><img src="https://github.com/QwenLM.png?size=96" alt="Qwen Code" width="48" /></a></td>
+    <td align="center"><strong>Copilot</strong></td>
     <td align="center"><strong>Hermes</strong></td>
     <td align="center"><strong>Pi</strong></td>
   </tr>
@@ -46,6 +47,7 @@
     <td align="center"><strong>Codex CLI</strong></td>
     <td align="center"><strong>OpenCode</strong></td>
     <td align="center"><strong>Qwen Code</strong></td>
+    <td align="center"><strong>Copilot CLI</strong></td>
     <td align="center"><strong>Hermes</strong></td>
     <td align="center"><strong>Pi</strong></td>
   </tr>
@@ -55,6 +57,7 @@
     <td align="center"><code>codex</code></td>
     <td align="center"><code>opencode</code></td>
     <td align="center"><code>qwen</code></td>
+    <td align="center"><code>copilot</code></td>
     <td align="center"><code>hermes</code></td>
     <td align="center"><code>pi</code></td>
   </tr>
@@ -72,7 +75,7 @@
 
 > "用 mco 对这个仓库做安全审查，使用 Claude、Codex 和 Gemini，汇总结果。"
 
-OpenClaw 读取 `mco -h`，学会 CLI 接口，自主编排整个多 Agent 工作流。你的本地电脑变成一个多 Agent 审查团队 — OpenClaw 是管理者，MCO 是调度器，Claude/Codex/Gemini/OpenCode/Qwen 是默认团队成员。Hermes 和 Pi 安装后可以显式选择。
+OpenClaw 读取 `mco -h`，学会 CLI 接口，自主编排整个多 Agent 工作流。你的本地电脑变成一个多 Agent 审查团队 — OpenClaw 是管理者，MCO 是调度器，Claude/Codex/Gemini/OpenCode/Qwen 是默认团队成员。Copilot、Hermes 和 Pi 安装后可以显式选择。
 
 同样适用于 **Claude Code、Cursor、Trae、Copilot、Windsurf**，或任何能执行 shell 命令的 Agent。
 
@@ -133,7 +136,7 @@ MCO 设计为被任意编排方 Agent 或 AI IDE 调用 — Claude Code、Cursor
 
 ## v0.10 新增内容
 
-- **Hermes 和 Pi 适配器** — 通过显式 `--providers hermes,pi` 选择启用。
+- **Copilot、Hermes 和 Pi 适配器** — 通过显式 `--providers copilot,hermes,pi` 选择启用。
 - **安全默认 provider 集合** — 默认仍为已验证的五个 provider：`claude,codex,gemini,opencode,qwen`。
 - **Pi 只读审查模式** — Pi 默认启用 `read,grep,find,ls`，可以读代码，但不启用 shell、编辑或写文件工具。
 - **按 provider 指定模型** — `--provider-models-json` 可为本次运行固定每个 provider 的模型；未指定时继续使用各 CLI 自己的默认模型。
@@ -167,16 +170,17 @@ MCO 设计为被任意编排方 Agent 或 AI IDE 调用 — Claude Code、Cursor
 
 | Provider | CLI | 状态 | 默认权限模型 |
 |----------|-----|------|--------------|
+| GitHub Copilot CLI | `copilot` | 显式选择 | 非交互 Copilot CLI 运行，使用 `--allow-all-tools --no-ask-user`；不在默认集合中 |
 | Hermes | `hermes` | 显式选择 | 高权限 oneshot 模式：Hermes 会自动绕过审批；不在默认集合中 |
 | Pi | `pi` | 显式选择 | 只读工具：`read,grep,find,ls` |
 
 通过显式指定启用：
 
 ```bash
-mco review --providers claude,codex,pi --prompt "审查这个仓库的 bug。"
+mco review --providers claude,codex,copilot --prompt "审查这个仓库的 bug。"
 ```
 
-Pi 可以通过只读工具 allowlist 主动读取仓库文件。默认不启用 `bash`、`edit`、`write` 或 `--approve`。Hermes 可显式选择，但 Hermes `--oneshot` 不是只读模式；只有在你接受 Hermes 自身绕过审批语义时才使用它。
+Copilot 和 Hermes 可显式选择，适用于你接受其非交互审批绕过语义的场景。Pi 可以通过只读工具 allowlist 主动读取仓库文件。默认不启用 `bash`、`edit`、`write` 或 `--approve`。
 
 默认情况下，MCO 不替你选择模型，而是让每个 provider CLI 使用它自己的默认配置。需要固定某次运行的模型时：
 
