@@ -13,7 +13,9 @@ from runtime.cli import (
     _StreamSafeParser,
     build_parser,
     _resolve_config,
+    main,
 )
+from runtime import __version__
 
 
 class CliTests(unittest.TestCase):
@@ -218,6 +220,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertIn("Agent name is required.", stderr_buf.getvalue())
         mock_check.assert_not_called()
+
+    def test_version_flag(self) -> None:
+        stdout_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf):
+            exit_code = main(["--version"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stdout_buf.getvalue().strip(), "mco {}".format(__version__))
+
+    def test_version_subcommand(self) -> None:
+        stdout_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf):
+            exit_code = main(["version"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stdout_buf.getvalue().strip(), __version__)
 
 
 if __name__ == "__main__":

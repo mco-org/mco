@@ -30,6 +30,14 @@ jobs:
       - name: Run runtime gate tests
         run: ./scripts/run_runtime_gate_tests.sh
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run npm packaging smoke
+        run: ./scripts/run_npm_packaging_smoke.sh
+
       - name: Collect CI artifact index
         if: always()
         run: |

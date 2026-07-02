@@ -6,7 +6,35 @@ on:
     types: [published]
 
 jobs:
+  gate:
+    name: Pre-publish gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq ripgrep
+
+      - name: Run runtime gate tests
+        run: ./scripts/run_runtime_gate_tests.sh
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run npm packaging smoke
+        run: ./scripts/run_npm_packaging_smoke.sh
+
   publish:
+    name: Publish npm package
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,21 +48,16 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Check npm token
-        id: npm_token
+      - name: Require npm token
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "NPM_TOKEN is not configured; skipping npm publish."
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
+            echo "::error::NPM_TOKEN secret is not configured; refusing to publish."
+            exit 1
           fi
 
       - name: Publish package
-        if: ${{ steps.npm_token.outputs.has_token == 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm publish --access public
+        run: npm publish --access public

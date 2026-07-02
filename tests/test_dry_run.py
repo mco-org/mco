@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from runtime.cli import main
+from runtime.review_engine import REVIEW_FINDINGS_SCHEMA_PATH
 
 
 class DryRunTests(unittest.TestCase):
@@ -86,6 +87,52 @@ class DryRunTests(unittest.TestCase):
         self.assertIn("Dry Run", output)
         self.assertIn("would_execute: False", output)
         self.assertIn("pi: risk=read_only", output)
+
+    def test_dry_run_codex_review_includes_output_schema_when_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout_buf = io.StringIO()
+            with patch("runtime.cli.run_review") as mock_run_review:
+                with contextlib.redirect_stdout(stdout_buf):
+                    exit_code = main([
+                        "review",
+                        "--repo", tmp,
+                        "--prompt", "Review for bugs.",
+                        "--providers", "codex",
+                        "--dry-run",
+                        "--json",
+                    ])
+
+        self.assertEqual(exit_code, 0)
+        mock_run_review.assert_not_called()
+        payload = json.loads(stdout_buf.getvalue())
+        codex_command = payload["providers_detail"]["codex"]["command_template"]
+        self.assertIn("--output-schema", codex_command)
+        schema_index = codex_command.index("--output-schema") + 1
+        self.assertEqual(codex_command[schema_index], str(REVIEW_FINDINGS_SCHEMA_PATH))
+
+    def test_dry_run_empty_provider_context_reaches_command_template(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout_buf = io.StringIO()
+            with patch("runtime.cli.run_review") as mock_run_review:
+                with contextlib.redirect_stdout(stdout_buf):
+                    exit_code = main([
+                        "run",
+                        "--repo", tmp,
+                        "--prompt", "Summarize this repo.",
+                        "--providers", "claude,codex",
+                        "--provider-context-json", '{"claude":{},"codex":{}}',
+                        "--dry-run",
+                        "--json",
+                    ])
+
+        self.assertEqual(exit_code, 0)
+        mock_run_review.assert_not_called()
+        payload = json.loads(stdout_buf.getvalue())
+        claude_command = payload["providers_detail"]["claude"]["command_template"]
+        codex_command = payload["providers_detail"]["codex"]["command_template"]
+        self.assertIn("--safe-mode", claude_command)
+        self.assertIn("--ignore-user-config", codex_command)
+        self.assertIn("--ignore-rules", codex_command)
 
 
 if __name__ == "__main__":

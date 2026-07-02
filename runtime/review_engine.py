@@ -946,7 +946,8 @@ def provider_policy_preview(provider: str, adapter: ProviderAdapter, policy: Rev
     requested_context = requested_context if isinstance(requested_context, dict) else {}
     supported_context_keys = _supported_context_keys(adapter)
     unknown_context_keys = sorted(
-        key for key in requested_context.keys() if key not in supported_context_keys
+        key for key in requested_context.keys()
+        if key not in supported_context_keys and not (provider == "pi" and key == "extensions" and requested_context[key] is False)
     )
     effective_context = {
         str(key): value
@@ -1793,8 +1794,9 @@ def _run_provider(
             metadata.update(effective_model_config)
             # Inject provider context as a namespace (not flat keys) so
             # adapters read from metadata["provider_context"] and never
-            # collide with model/permission/artifact keys.
-            if effective_context:
+            # collide with model/permission/artifact keys. Explicit empty
+            # objects still reach adapters for safe-mode / ignore-* behavior.
+            if provider in request.policy.provider_context:
                 metadata["provider_context"] = dict(effective_context)
             input_task = TaskInput(
                 task_id=resolved_task_id,
