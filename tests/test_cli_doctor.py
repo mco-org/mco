@@ -17,6 +17,7 @@ class CliDoctorTests(unittest.TestCase):
         self.assertEqual(args.command, "doctor")
         self.assertEqual(args.providers, "claude,codex,gemini,opencode,qwen")
         self.assertFalse(args.json)
+        self.assertFalse(args.skill_health)
 
     def test_doctor_json_payload_contract(self) -> None:
         probe = {
@@ -63,6 +64,36 @@ class CliDoctorTests(unittest.TestCase):
         with redirect_stderr(io.StringIO()):
             exit_code = main(["doctor", "--providers", "unknown"])
         self.assertEqual(exit_code, 2)
+
+    def test_doctor_human_report_suggests_ready_providers_when_not_ok(self) -> None:
+        probe = {
+            "claude": ProviderPresence(
+                provider="claude",
+                detected=True,
+                binary_path="/usr/local/bin/claude",
+                version="1.0.0",
+                auth_ok=True,
+                reason="ok",
+            ),
+            "codex": ProviderPresence(
+                provider="codex",
+                detected=False,
+                binary_path=None,
+                version=None,
+                auth_ok=False,
+                reason="binary_not_found",
+            ),
+        }
+        output = io.StringIO()
+        with patch("runtime.cli._doctor_provider_presence", return_value=probe):
+            with redirect_stdout(output):
+                exit_code = main(["doctor", "--providers", "claude,codex"])
+
+        self.assertEqual(exit_code, 0)
+        text = output.getvalue()
+        self.assertIn("Next Steps", text)
+        self.assertIn("Ready providers: claude", text)
+        self.assertIn("--providers claude", text)
 
 
 if __name__ == "__main__":

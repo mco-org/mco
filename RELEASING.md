@@ -5,6 +5,26 @@ MCO is published through npm only. Do not publish to PyPI.
 This guide records the manual release path that works when GitHub Actions cannot
 publish because `NPM_TOKEN` is missing or npm requires web-based 2FA.
 
+## Preview package (CI artifact)
+
+Pull requests run the **Preview package** GitHub Actions workflow
+(`.github/workflows/preview-package.yml`). It builds and uploads an installable
+npm tarball as a workflow artifact. It does **not** publish to the npm registry.
+
+1. Open the PR **Checks** tab → **Preview package** → **Artifacts**
+2. Download `mco-preview-package-<run_id>` and extract the `.tgz` inside
+3. Install locally (Python 3.10+ required on PATH):
+
+```bash
+tmp=$(mktemp -d)
+npm install /path/to/tt-a1i-mco-X.Y.Z.tgz --prefix "$tmp" --no-audit --no-fund
+"$tmp/node_modules/.bin/mco" --help
+```
+
+When GitHub token permissions allow, the workflow also posts the same install
+hint as a PR comment. Fork PRs or restricted tokens may skip the comment without
+failing the workflow.
+
 ## 1. Prepare the release PR
 
 Start from the current remote main branch, not from a stale local `main`.

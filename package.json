@@ -17,6 +17,8 @@
     "AGENTS.md",
     "CLAUDE.md",
     "CHANGELOG.md",
+    "README.md",
+    "README.zh-CN.md",
     "bin/mco.js",
     "mco",
     "runtime/**/*.py",

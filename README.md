@@ -179,6 +179,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Per-provider model selection** — `--provider-models-json` can pin a model per selected provider while the default remains each CLI's configured model.
 - **Model discovery** — `mco agent models --providers codex,hermes,pi --json` lists known local model choices when the underlying CLI exposes them.
 - **Provider risk metadata and dry-run preview** — `mco doctor`, `mco agent list`, and `--dry-run --json` expose provider risk levels for orchestrating agents.
+- **Per-provider context policy** — `--provider-context-json` controls skills, context files, and plugin isolation where supported (opt-in; absent keys keep provider defaults).
 - **Codex structured output compatibility** — review schema is compatible with current OpenAI strict structured output requirements.
 
 ## What's New in v0.9
@@ -264,6 +265,7 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Piped prompt | `cat prompt.md \| mco run --providers claude` | Read prompt from stdin pipe |
 | Quiet output | `mco run --quiet --providers claude --prompt "..."` | Print only final text, no headers |
 | Pin provider models | `mco run --provider-models-json '{"codex":"gpt-5.4"}'` | Override selected providers' CLI default model |
+| Provider context policy | `mco run --provider-context-json '{"pi":{"skills":"disabled","context_files":false}}'` | Opt-in skills/context/plugin controls per provider |
 | List provider models | `mco agent models --providers codex,pi --json` | Show discoverable model choices and configured defaults |
 | Config-driven run | (uses `.mcorc.json`) | Persistent project defaults without CLI flags |
 | Idempotent session | `mco session ensure --provider claude --name dev` | Create or return existing session |
@@ -303,6 +305,10 @@ Install via npm (Python 3.10+ required on PATH):
 ```bash
 npm i -g @tt-a1i/mco
 ```
+
+Testing a pull request before merge? Download the **Preview package** workflow
+artifact from the PR Checks tab and install the tarball locally. See
+[RELEASING.md](./RELEASING.md#preview-package-ci-artifact).
 
 Or install from source for local development:
 
@@ -364,7 +370,10 @@ Check that your agents are installed, reachable, and authenticated before runnin
 ```bash
 mco doctor
 mco doctor --json
+mco doctor --skill-health --json
 ```
+
+Optional `--skill-health` runs a best-effort drift check for the bundled `skills/mco-cli/SKILL.md` against common local skill install paths (for example `~/.claude/skills/mco-cli/SKILL.md`, `~/.cursor/skills/mco-cli/SKILL.md`). It is disabled by default, never fails doctor when installs are missing, and adds `skill_health` / `skill_drift` fields to `--json` output when enabled.
 
 ### Output Formats (Review Mode)
 
@@ -458,6 +467,7 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | `--provider-timeouts` | unset | Per-provider stall-timeout overrides (`provider=seconds`) |
 | `--provider-permissions-json` | unset | Provider permission mapping JSON (see below) |
 | `--provider-models-json` | unset | Per-provider model mapping JSON, e.g. `'{"codex":"gpt-5.4","pi":{"provider":"seal","model":"deepseek-v4-pro"}}'` |
+| `--provider-context-json` | unset | Per-provider context policy JSON, e.g. `'{"pi":{"skills":"disabled","context_files":false}}'` |
 | `--save-artifacts` | off | Write artifacts while keeping stdout result delivery |
 | `--task-id` | auto-generated | Stable task identifier for artifact paths |
 | `--artifact-base` | `reports/review` | Base directory for artifact output |
@@ -514,6 +524,9 @@ mco review \
     "provider_models": {
       "codex": "gpt-5.4",
       "pi": {"provider": "seal", "model": "deepseek-v4-pro"}
+    },
+    "provider_context": {
+      "pi": {"skills": "disabled", "context_files": false}
     },
     "perspectives": {
       "claude": "Focus on security vulnerabilities and injection attacks",

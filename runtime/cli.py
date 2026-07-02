@@ -19,7 +19,9 @@ from .formatters import (
     format_sarif,
 )
 from .provider_risk import provider_risk
-from .review_engine import ReviewRequest, provider_policy_preview, run_review
+from .skill_health import check_skill_health
+from . import __version__
+from .review_engine import REVIEW_FINDINGS_SCHEMA_PATH, ReviewRequest, provider_policy_preview, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "gemini", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
@@ -101,7 +103,8 @@ REVIEW_EPILOG = (
 DOCTOR_EPILOG = (
     "Examples:\n"
     "  mco doctor\n"
-    "  mco doctor --providers claude,codex --json\n\n"
+    "  mco doctor --providers claude,codex --json\n"
+    "  mco doctor --skill-health --json\n\n"
     "Exit codes:\n"
     "  0 = command completed (read overall_ok in output)\n"
     "  2 = invalid input"
@@ -299,7 +302,13 @@ def _doctor_provider_presence(providers: List[str]) -> Dict[str, ProviderPresenc
     return presence
 
 
-def _doctor_payload(providers: List[str], presence_map: Dict[str, ProviderPresence]) -> Dict[str, object]:
+def _doctor_payload(
+    providers: List[str],
+    presence_map: Dict[str, ProviderPresence],
+    *,
+    skill_health: Optional[Dict[str, object]] = None,
+    skill_drift: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
     provider_payload: Dict[str, Dict[str, object]] = {}
     ready_count = 0
     for provider in providers:
@@ -321,13 +330,18 @@ def _doctor_payload(providers: List[str], presence_map: Dict[str, ProviderPresen
             "ready": ready,
             "risk": provider_risk(provider),
         }
-    return {
+    payload: Dict[str, object] = {
         "command": "doctor",
         "overall_ok": ready_count == len(providers),
         "ready_count": ready_count,
         "provider_count": len(providers),
         "providers": provider_payload,
     }
+    if skill_health is not None:
+        payload["skill_health"] = skill_health
+    if skill_drift is not None:
+        payload["skill_drift"] = skill_drift
+    return payload
 
 
 def _render_doctor_report(payload: Dict[str, object]) -> str:
@@ -352,6 +366,38 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
         risk = details.get("risk", {})
         if isinstance(risk, dict):
             lines.append(f"  risk={risk.get('level')} ({risk.get('reason')})")
+    if not payload.get("overall_ok"):
+        ready_providers = sorted(
+            provider
+            for provider, details in providers.items()
+            if isinstance(details, dict) and details.get("ready")
+        )
+        if ready_providers:
+            ready_csv = ",".join(ready_providers)
+            lines.extend([
+                "",
+                "Next Steps",
+                f"- Ready providers: {ready_csv}",
+                f"- Example: mco run --repo . --prompt \"<task>\" --providers {ready_csv} --dry-run --json",
+                "- Tip: persist provider subset in .mcorc.json",
+            ])
+    skill_health = payload.get("skill_health")
+    if isinstance(skill_health, dict) and skill_health.get("enabled"):
+        lines.extend(["", "Skill Check"])
+        lines.append(f"- status: {skill_health.get('status')} ({skill_health.get('reason')})")
+        reference = skill_health.get("reference", {})
+        if isinstance(reference, dict) and reference.get("path"):
+            ref_sha = reference.get("sha256")
+            sha_suffix = f", sha256={ref_sha[:12]}..." if isinstance(ref_sha, str) and ref_sha else ""
+            lines.append(f"- reference: {reference.get('path')}{sha_suffix}")
+        skill_drift = payload.get("skill_drift")
+        if isinstance(skill_drift, dict):
+            drifted = skill_drift.get("drifted") or []
+            matched = skill_drift.get("matched") or []
+            if drifted:
+                lines.append(f"- drift: {', '.join(str(item) for item in drifted)}")
+            if matched:
+                lines.append(f"- matched: {', '.join(str(item) for item in matched)}")
     return "\n".join(lines)
 
 
@@ -366,10 +412,10 @@ def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest
     if isinstance(applied_model, dict):
         metadata.update(applied_model)
     applied_context = policy.get("applied_context", {})
-    if isinstance(applied_context, dict) and applied_context:
-        metadata["provider_context"] = dict(applied_context)
-    if review_mode and provider == "codex":
-        metadata["output_schema_path"] = "<review_findings_schema>"
+    if provider in req.policy.provider_context:
+        metadata["provider_context"] = dict(applied_context) if isinstance(applied_context, dict) else {}
+    if review_mode and provider == "codex" and REVIEW_FINDINGS_SCHEMA_PATH.exists():
+        metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
     build_command = getattr(adapter, "_build_command", None)
     if callable(build_command):
         try:
@@ -1203,7 +1249,20 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=TOP_LEVEL_EPILOG,
         formatter_class=_HelpFormatter,
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="mco {}".format(__version__),
+        help="Show version and exit",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser(
+        "version",
+        help="Print mco version",
+        description="Print the installed mco version.",
+        formatter_class=_HelpFormatter,
+    )
 
     doctor = subparsers.add_parser(
         "doctor",
@@ -1218,6 +1277,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated providers. Supported: {}".format(SUPPORTED_PROVIDER_LIST),
     )
     doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    doctor.add_argument(
+        "--skill-health",
+        action="store_true",
+        help="Best-effort check that local mco-cli SKILL.md installs match the bundled reference (default: disabled)",
+    )
+    doctor.add_argument(
+        "--repo",
+        default=".",
+        help="Repository root used to locate skills/mco-cli/SKILL.md for skill drift checks",
+    )
 
     agent_cmd = subparsers.add_parser(
         "agent",
@@ -1870,13 +1939,31 @@ def main(argv: List[str] | None = None) -> int:
             }, ensure_ascii=True)
             print(err_event, flush=True)
         return int(exc.code) if isinstance(exc.code, int) else 2
+    if args.command == "version":
+        print(__version__)
+        return 0
+
     if args.command == "doctor":
         providers_str = getattr(args, "providers", ",".join(DEFAULT_CONFIG.providers))
         providers = [item for item in _parse_providers(providers_str) if item in SUPPORTED_PROVIDERS]
         if not providers:
             print("No valid providers selected.", file=sys.stderr)
             return 2
-        payload = _doctor_payload(providers, _doctor_provider_presence(providers))
+        repo_root = Path(getattr(args, "repo", ".")).resolve()
+        skill_health = None
+        skill_drift = None
+        if getattr(args, "skill_health", False):
+            skill_health, skill_drift = check_skill_health(
+                enabled=True,
+                package_root=Path(__file__).resolve().parent.parent,
+                cwd=repo_root,
+            )
+        payload = _doctor_payload(
+            providers,
+            _doctor_provider_presence(providers),
+            skill_health=skill_health,
+            skill_drift=skill_drift,
+        )
         if args.json:
             print(json.dumps(payload, ensure_ascii=True))
         else:
