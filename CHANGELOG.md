@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-07-07
+### Changed
+- Expanded default `mco doctor` checks to all eight supported providers, including explicit opt-in Copilot, Hermes, and Pi.
+- Kept `mco run` and `mco review` default provider set at the audited five built-ins.
+
 ## [0.10.6] - 2026-06-28
 ### Added
 - Added per-provider context policy with `--provider-context-json`, including explicit skills/context/plugin controls where supported.

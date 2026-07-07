@@ -21,6 +21,7 @@ from .review_engine import ReviewRequest, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "gemini", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
+DEFAULT_DOCTOR_PROVIDERS = SUPPORTED_PROVIDERS
 DEFAULT_CONFIG = ReviewConfig()
 DEFAULT_POLICY = DEFAULT_CONFIG.policy
 
@@ -1070,7 +1071,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument(
         "--providers",
-        default=",".join(DEFAULT_CONFIG.providers),
+        default=",".join(DEFAULT_DOCTOR_PROVIDERS),
         help="Comma-separated providers. Supported: {}".format(SUPPORTED_PROVIDER_LIST),
     )
     doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
@@ -1727,7 +1728,7 @@ def main(argv: List[str] | None = None) -> int:
             print(err_event, flush=True)
         return int(exc.code) if isinstance(exc.code, int) else 2
     if args.command == "doctor":
-        providers_str = getattr(args, "providers", ",".join(DEFAULT_CONFIG.providers))
+        providers_str = getattr(args, "providers", ",".join(DEFAULT_DOCTOR_PROVIDERS))
         providers = [item for item in _parse_providers(providers_str) if item in SUPPORTED_PROVIDERS]
         if not providers:
             print("No valid providers selected.", file=sys.stderr)

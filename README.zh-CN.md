@@ -164,7 +164,7 @@ MCO 设计为被任意编排方 Agent 或 AI IDE 调用 — Claude Code、Cursor
 | OpenCode | `opencode` | 已支持 |
 | Qwen Code | `qwen` | 已支持 |
 
-这五个 provider 是 `mco run`、`mco review` 和 `mco doctor` 的默认集合。
+这五个 provider 是 `mco run` 和 `mco review` 的默认集合。`mco doctor` 默认检查全部八个受支持的 provider。
 
 ## 显式选择的 Provider
 

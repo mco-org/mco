@@ -184,7 +184,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 | OpenCode | `opencode` | Supported |
 | Qwen Code | `qwen` | Supported |
 
-These five providers are the default set for `mco run`, `mco review`, and `mco doctor`.
+These five providers are the default set for `mco run` and `mco review`. `mco doctor` checks all eight supported providers by default.
 
 ## Explicit Opt-in Providers
 
