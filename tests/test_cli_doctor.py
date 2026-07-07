@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
-from runtime.cli import build_parser, main
+from runtime.cli import SUPPORTED_PROVIDER_LIST, build_parser, main
 from runtime.contracts import ProviderPresence
 
 
@@ -15,7 +15,7 @@ class CliDoctorTests(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["doctor"])
         self.assertEqual(args.command, "doctor")
-        self.assertEqual(args.providers, "claude,codex,gemini,opencode,qwen")
+        self.assertEqual(args.providers, SUPPORTED_PROVIDER_LIST)
         self.assertFalse(args.json)
 
     def test_doctor_json_payload_contract(self) -> None:
