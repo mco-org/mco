@@ -1,640 +1,195 @@
-> ### MCO 正在积极维护
->
-> 需要融入现有终端、脚本和 AI 编程 Agent 的轻量 CLI 编排时，选择
-> **MCO**。需要稳定 Agent 身份、共享任务图和团队控制的浏览器工作台时，
-> 选择互补产品 **[Hive](https://hivehq.dev)**。
-
----
-
 <p align="center">
-  <img src="./docs/assets/brand/mco-cover-starry.jpg" alt="MCO——十条 Agent 路径在星空下汇聚穿过宏伟的 M" width="100%" />
+  <img src="https://raw.githubusercontent.com/mco-org/mco/main/docs/assets/brand/mco-cover-starry.jpg" alt="MCO——十条 Agent 路径在星空下汇聚穿过宏伟的 M" width="100%" />
 </p>
 
 <h1 align="center">MCO</h1>
+
+<p align="center"><strong>编排 AI Coding Agent，比较多方视角，更有把握地行动。</strong></p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@tt-a1i/mco"><img src="https://img.shields.io/npm/v/@tt-a1i/mco?style=flat-square&color=cb3837&logo=npm&logoColor=white" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/@tt-a1i/mco"><img src="https://img.shields.io/npm/dm/@tt-a1i/mco?style=flat-square&color=cb3837" alt="npm downloads" /></a>
   <a href="https://github.com/mco-org/mco/stargazers"><img src="https://img.shields.io/github/stars/mco-org/mco?style=flat-square&color=f59e0b" alt="GitHub stars" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License: MIT" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/Providers-10%20supported-7c3aed?style=flat-square" alt="10 supported providers" />
 </p>
 
-<p align="center"><strong>MCO — 编排 AI 编程 Agent。任意提示词，任意 Agent，任意 IDE。</strong></p>
+<p align="center"><a href="./README.md">English</a> · 简体中文</p>
 
-<p align="center"><strong>MCO 内置十种 Agent。由用户选择团队，MCO 不再静默猜测默认 provider。</strong></p>
+MCO 是一个轻量、CLI 优先的 AI Coding Agent 编排层。把同一个任务交给你明确选择的多个 Agent，并行执行，比较结果，再决定下一步。
 
-<p align="center"><a href="./README.md">English</a> | 简体中文</p>
+它适合代码审查、功能实现、架构分析、CI 检查，以及任何需要减少单一模型盲区的工作流。
 
-<table align="center">
-  <tr>
-    <td align="center"><a href="https://github.com/anthropics/claude-code"><img src="https://github.com/anthropics.png?size=96" alt="Claude Code" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/google-gemini/gemini-cli"><img src="https://github.com/google-gemini.png?size=96" alt="Gemini CLI" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=96" alt="Codex CLI" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/sst/opencode"><img src="https://raw.githubusercontent.com/sst/opencode/master/packages/console/app/src/asset/brand/opencode-logo-light-square.svg" alt="OpenCode" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/QwenLM/qwen-code"><img src="https://github.com/QwenLM.png?size=96" alt="Qwen Code" width="48" /></a></td>
-    <td align="center"><strong>Copilot</strong></td>
-    <td align="center"><strong>Hermes</strong></td>
-    <td align="center"><strong>Pi</strong></td>
-    <td align="center"><strong>Grok</strong></td>
-    <td align="center"><strong>Cursor</strong></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Claude Code</strong></td>
-    <td align="center"><strong>Gemini CLI</strong></td>
-    <td align="center"><strong>Codex CLI</strong></td>
-    <td align="center"><strong>OpenCode</strong></td>
-    <td align="center"><strong>Qwen Code</strong></td>
-    <td align="center"><strong>Copilot CLI</strong></td>
-    <td align="center"><strong>Hermes</strong></td>
-    <td align="center"><strong>Pi</strong></td>
-    <td align="center"><strong>Grok Build</strong></td>
-    <td align="center"><strong>Cursor CLI</strong></td>
-  </tr>
-  <tr>
-    <td align="center"><code>claude</code></td>
-    <td align="center"><code>gemini</code></td>
-    <td align="center"><code>codex</code></td>
-    <td align="center"><code>opencode</code></td>
-    <td align="center"><code>qwen</code></td>
-    <td align="center"><code>copilot</code></td>
-    <td align="center"><code>hermes</code></td>
-    <td align="center"><code>pi</code></td>
-    <td align="center"><code>grok</code></td>
-    <td align="center"><code>cursor</code></td>
-  </tr>
-</table>
+既可以直接从终端使用，也可以由 Claude Code、Codex、Cursor、Copilot、Pi 或 OpenClaw 等上层 Agent 调用。
 
-> AI 编程 Agent 已经是开发者的标配工具。但一个 Agent 只是一个视角。
->
-> 像 Tech Lead 一样工作：把同一个任务分配给多个 Agent 并行执行，比较结果后再决策。
->
-> 一次明确选择，让你选中的 Agent 同时干活。
-
-### 与 OpenClaw 配合使用
-
-你的机器上运行着 [OpenClaw](https://github.com/open-claw/open-claw)？它可以直接使用 MCO 作为多 Agent 编排后端。只需告诉 OpenClaw 你的需求：
-
-> "用 mco 对这个仓库做安全审查，使用 Claude、Codex 和 Gemini，汇总结果。"
-
-OpenClaw 读取 `mco -h`，先询问你想使用哪些已安装 Agent，再把明确选择传给 MCO。你的本地电脑会变成一个没有隐式 provider 默认值的多 Agent 审查团队。
-
-同样适用于 **Claude Code、Cursor、Trae、Copilot、Windsurf**，或任何能执行 shell 命令的 Agent。
-
-## MCO 是什么
-
-MCO（Multi-CLI Orchestrator）是一个中立的 AI 编程 Agent 编排层。它将提示词并行分发给多个 Agent CLI，汇总执行结果，返回结构化输出 — JSON、SARIF 或 PR Markdown 报告。不绑定任何厂商，不改变你的工作流。
-
-以 [OpenClaw](https://github.com/open-claw/open-claw) 为代表的多 Agent 热潮正在重塑开发者工作流 — Claude Code、Codex CLI、Gemini CLI 等工具已全面可用。MCO 更进一步：不依赖单一 Agent，而是编排一整个团队。
-
-MCO 设计为被任意编排方 Agent 或 AI IDE 调用 — Claude Code、Cursor、Trae、Copilot、Windsurf 或 **OpenClaw**。调用方 Agent 自行组织上下文、分配任务，通过 MCO 将工作并行扇出到多个 Agent。例如，运行在你电脑上的 OpenClaw 可以调用 `mco review`，将代码审查同时分发给 Claude、Codex 和 Gemini — 一条命令就把本地环境变成多 Agent 审查团队。Agent 之间也可以互相调度：Claude Code 可以通过 MCO 分发任务给 Codex 和 Gemini，反之亦然。
-
-## AI Agent 快速开始
-
-当另一个编程 Agent 调用 MCO 时，必须先用自然语言询问用户想使用哪些 Agent，再通过 `--providers` 传入选择。未选择时，MCO 返回 `provider_selection_required`，不会执行任何 Agent。真实 fan-out 前先做健康检查和 dry-run。第一次只读运行可选择 Claude（plan mode）、Pi（只读工具白名单）或 Cursor（ask mode）：
-
-```bash
-mco doctor --providers claude,pi --json
-mco run --repo . --prompt "总结这个仓库。" --providers claude,pi --execution-mode read_only --dry-run --json
-mco run --repo . --prompt "总结这个仓库。" --providers claude,pi --execution-mode read_only --json
-```
-
-代码审查流程：
-
-```bash
-mco review --repo . --prompt "审查这个仓库的 bug。" --providers claude,codex,pi --dry-run --json
-mco review --repo . --prompt "审查这个仓库的 bug。" --providers claude,codex,pi --json
-```
-
-`--dry-run` 会解析 provider、默认/实际 risk、policy、prompt hash、artifact 设置和命令模板，但不会启动任何 Agent 进程。适合编排方 Agent 在真正执行前向用户展示将要运行的内容。使用 `--json` 时，解析、输入和配置错误会返回 [`docs/contracts/errors-v0.1.x.md`](./docs/contracts/errors-v0.1.x.md) 定义的稳定 envelope。
-
-## 一个 Agent 是工具，选中的 Agent 组成团队
-
-没有任何一个 AI 模型能看到所有问题。每个模型有各自的训练数据、推理风格和盲区。只用一个 Agent，就像团队里有五个工程师却只问其中一个的意见。
-
-**MCO 把这变成团队工作流：**
-
-1. **分配任务** — 你给 MCO 一个任务和一组 Agent。就像 Tech Lead 把同一份代码审查分配给五个团队成员。
-2. **并行执行** — 所有 Agent 同时工作，总耗时 ≈ 最慢的那个，而不是所有人的总和。
-3. **审查去重** — MCO 收集每个 Agent 的发现，跨 Agent 自动去重相同问题，追踪哪些 Agent 发现了什么（`detected_by`）。
-4. **汇总共识** — 可选地，让一个 Agent 汇总全部结果：大家达成了哪些共识，在哪些地方存在分歧，下一步该做什么。
-
-**实际使用中，不同 Agent 发现不同的问题：**
-
-- 一个 Agent 发现了异步代码中的竞态条件，却忽略了 ORM 层的 SQL 注入。
-- 另一个立刻定位了注入问题，却完全没注意到竞态条件。
-- 第三个两个都没发现，但找到了资源清理路径中一个隐蔽的内存泄漏，而前两个对此毫无察觉。
-
-这不是假设 — 不同模型确实擅长不同的事。有的长于安全分析，有的擅长逻辑流，有的对性能模式更敏感。并行跑 3–5 个 Agent 审查同一份代码，你得到的是**视角的并集**而非交集。结果比你挑任何单一 Agent 都更全面。
-
-这个原则不限于代码审查：
-
-- **架构分析** — 不同 Agent 暴露不同的设计风险和取舍
-- **Bug 排查** — 更广的代码路径和边界条件覆盖
-- **重构评估** — 多视角评判变更的影响范围和安全性
-
-问题不是"哪个 AI Agent 最好" — 而是"为什么只用一个？"
-
-## 核心特性
-
-- **并行扇出** — 同时分发到多个 Agent，wait-all 语义
-- **任意 IDE，任意 Agent** — 在 Claude Code、Cursor、Trae、Copilot、Windsurf 或命令行中使用
-- **Agent 互相调度** — Agent 之间可以通过 MCO 互相分发任务
-- **双模式** — `mco review` 结构化代码审查，`mco run` 通用任务执行
-- **跨 Agent 发现去重** — 多个 Agent 发现的相同问题自动合并，保留 `detected_by` 来源追踪
-- **共识引擎** — 合并后的 finding 会得到 `consensus_score = agreement_ratio × max_confidence`，并标记为 `confirmed` / `needs-verification` / `unverified`
-- **LLM 共识总结** — `--synthesize` 额外执行一轮总结，输出跨 Agent 的共识/分歧摘要
-- **实时终端流模式** — `--stream live` 提供面向 TTY 的实时终端渲染；`--stream jsonl` 继续服务自动化消费者
-- **辩论模式** — `--debate` 在合并 finding 后追加第二轮 challenge/refine 辩论
-- **分工模式** — `--divide files|dimensions` 支持按文件或按审查维度拆分任务，同时复用现有合并 + 共识流程
-- **CI/CD 集成** — `--format sarif` 对接 GitHub Code Scanning，`--format markdown-pr` 生成 PR 评论
-- **环境健康检查** — `mco doctor` 探测全部内置或显式选择 provider 的二进制、版本、认证状态和风险
-- **执行前预览** — `--dry-run --json` 在不运行 Agent 的情况下输出解析后的 provider、risk、policy 和命令模板
-- **Token 用量追踪** — `--include-token-usage` 可选输出各 Agent 和汇总的 token 消耗
-- **进度驱动超时** — Agent 自由跑完，仅在长时间无输出时取消
-- **自定义 Agent 注册** — 通过 `.mco/agents.yaml`、`.mcorc.yaml` 或 `~/.mco/agents.yaml` 注册 shim / ACP / Ollama Agent，并可用 `mco agent list` / `mco agent check` 检查
-- **可扩展适配器** — 统一接口适配任意 CLI Agent，不限于内置 provider
-- **机器可读输出** — JSON、SARIF 或 Markdown 输出，便于下游自动化
-
-## v0.10 新增内容
-
-- **十个内置适配器** — Claude、Codex、Gemini、OpenCode、Qwen、Copilot、Hermes、Pi、Grok Build 和 Cursor CLI。
-- **显式 provider 选择** — 调用方先询问用户，不再静默选中任何 provider 集合。
-- **Pi 只读审查模式** — Pi 默认启用 `read,grep,find,ls`，可以读代码，但不启用 shell、编辑或写文件工具。
-- **按 provider 指定模型** — `--provider-models-json` 可为本次运行固定每个 provider 的模型；未指定时继续使用各 CLI 自己的默认模型。
-- **模型发现** — `mco agent models --providers codex,hermes,pi --json` 会列出底层 CLI 当前可发现的模型选项。
-- **Provider 风险元数据和 dry-run 预览** — `mco doctor`、`mco agent list` 和 `--dry-run --json` 会暴露 provider risk level，方便上层 Agent 编排前审计。
-- **按 provider 上下文策略** — `--provider-context-json` 可控制 skills、context files 和插件隔离（opt-in；未配置时保持各 provider 默认行为）。
-- **Codex 结构化输出兼容** — review schema 兼容当前 OpenAI strict structured output 要求。
-
-## 能力索引
-
-| 能力 | 入口命令 | 说明 |
-|------|----------|------|
-| 环境检查 | `mco doctor --json` | 检查 provider 是否安装、认证、风险等级 |
-| 通用执行 | `mco run --providers claude,pi --prompt "..."` | 多 provider 并行执行，返回最终文本 |
-| 结构化审查 | `mco review --providers claude,codex --prompt "..."` | findings 合并、共识、决策输出 |
-| 执行前预览 | `mco review --providers claude,pi --dry-run --json` | 解析 provider、policy、risk、命令模板，不实际运行 |
-| 固定模型 | `--provider-models-json` | 按 provider 覆盖 CLI 默认模型 |
-| 上下文策略 | `--provider-context-json` | 按 provider 控制 skills / context files / plugins |
-| 模型发现 | `mco agent models --providers codex,pi --json` | 列出底层 CLI 可发现的模型 |
-| 自定义 Agent | `mco agent list` / `mco agent check NAME` | 查看并验证 shim / ACP / Ollama Agent |
-| CI 输出 | `--format sarif` / `--format markdown-pr` | SARIF 或 PR 评论格式（review 模式） |
-| 产物落盘 | `--save-artifacts` | 写入 `summary.md`、`run.json` 等审计产物 |
-
-## v0.9 新增内容
-
-- **共识引擎升级** — review 合并不再只是去重；每个 finding 现在都有：
-  - `agreement_ratio = detected_by_count / total_providers_ran`
-  - `consensus_score = agreement_ratio × max_confidence`
-  - `consensus_level = confirmed | needs-verification | unverified`
-- **实时终端模式** — `--stream live` 为交互式终端提供实时进度视图，同时保留 `--stream jsonl`。
-- **辩论模式** — `--debate` 让多个 Agent 在最终输出前对合并后的 finding 再做一轮质疑或补充。
-- **分工模式** — `--divide files` 按文件分片；`--divide dimensions` 按安全、性能、可维护性、正确性、错误处理五类维度自动分工。
-- **自定义 Agent 注册表** — 支持从 `.mco/agents.yaml` / `~/.mco/agents.yaml` 发现自定义 Agent，包括 Ollama 本地模型。
-
-## 内置 Provider
-
-| Provider | CLI | 状态 |
-|----------|-----|------|
-| Claude Code | `claude` | 已支持 |
-| Codex CLI | `codex` | 已支持 |
-| Gemini CLI | `gemini` | 已支持 |
-| OpenCode | `opencode` | 已支持 |
-| Qwen Code | `qwen` | 已支持 |
-| GitHub Copilot CLI | `copilot` | 已支持 |
-| Hermes | `hermes` | 已支持 |
-| Pi | `pi` | 已支持 |
-| [Grok Build](https://docs.x.ai/build/overview) | `grok` | 已支持 |
-| [Cursor CLI](https://cursor.com/docs/cli/overview) | `cursor` | 已支持 |
-
-`mco run` 和 `mco review` 不再有隐式 provider 集合。先询问用户并传入 `--providers`，或者在配置中持久化明确选择。`mco doctor` 默认检查全部十个受支持 provider。
-
-## 权限敏感的 Provider
-
-| Provider | CLI | 执行档位映射 |
-|----------|-----|--------------|
-| GitHub Copilot CLI | `copilot` | 只读、文件写入或 allow-all 权限 |
-| Hermes | `hermes` | 高权限 oneshot 模式，会自动绕过审批 |
-| Pi | `pi` | 工具白名单从只读扩展到 write/edit，再扩展到 bash |
-| Grok Build | `grok` | plan、accept-edits 或 bypass 权限模式 |
-| Cursor CLI | `cursor` | ask、沙箱 agent 或无沙箱 agent 档位 |
-
-通过显式指定启用：
-
-```bash
-mco review --providers claude,codex,copilot --prompt "审查这个仓库的 bug。"
-```
-
-Copilot 和 Pi 会遵循所选执行档位。Hermes 比较特殊：其 oneshot 模式天然绕过审批，因此选择 Hermes 时还必须显式传入 `--execution-mode yolo`。
-
-默认情况下，MCO 不替你选择模型，而是让每个 provider CLI 使用它自己的默认配置。需要固定某次运行的模型时：
-
-```bash
-mco review \
-  --providers codex,pi \
-  --provider-models-json '{"codex":"gpt-5.4","pi":{"provider":"seal","model":"deepseek-v4-pro"}}' \
-  --prompt "审查这个仓库的 bug。"
-```
-
-查看当前可发现的模型选项：
-
-```bash
-mco agent models --providers codex,hermes,pi --json
-```
-
-适配器架构可扩展 — 添加新的 Agent CLI 只需实现三个钩子：认证检查、命令构建、输出标准化。
-
-## 使用场景
-
-| 场景 | 命令 | 效果 |
-|------|------|------|
-| PR 代码审查 | `mco review --providers claude,codex --format markdown-pr` | 多个 Agent 并行审查，输出 PR 评论 |
-| CI 安全扫描 | `mco review --providers claude,codex --format sarif` | 结果直接上传 GitHub Code Scanning |
-| 架构分析 | `mco run --providers claude,gemini,qwen` | 多视角架构评估 |
-| 部署前健康检查 | `mco doctor --json` | 确认所有 Agent 已安装且已认证 |
-| 执行前预览 | `mco review --providers claude,pi --dry-run --json` | 不运行 Agent，仅解析 provider、policy、risk 和命令 |
-| 共识决策 | `mco review --providers claude,codex --synthesize` | 汇总 Agent 共识、标注分歧 |
-| 辩论复核 | `mco review --debate --providers claude,codex,gemini` | 在最终输出前再做一轮 challenge/refine |
-| 文件分工审查 | `mco review --providers claude,codex --divide files` | 按文件大小优先、均衡分配到不同 provider |
-| 维度分工审查 | `mco review --providers claude,codex --divide dimensions` | 每个 provider 聚焦一个审查维度 |
-| 实时 JSONL 流 | `mco review --providers claude,codex --stream jsonl` | provider 执行过程中输出 JSONL 事件流 |
-| 实时终端流 | `mco review --providers claude,codex --stream live` | 交互式终端中的实时人类可读进度视图 |
-| 查看 Agent 注册表 | `mco agent list` | 列出内置 + 自定义 Agent |
-| 检查单个 Agent | `mco agent check my-ollama` | 验证某个自定义 Agent 或 Ollama 包装器 |
-| 固定 provider 模型 | `mco run --providers codex --provider-models-json '{"codex":"gpt-5.4"}'` | 覆盖所选 provider 的 CLI 默认模型 |
-| 上下文策略 | `mco run --providers pi --provider-context-json '{"pi":{"skills":"disabled","context_files":false}}'` | 按 provider 控制 skills / context files / plugins |
-| 列出 provider 模型 | `mco agent models --providers codex,pi --json` | 查看可发现模型和当前默认配置 |
-
-注意：`--debate` 与 `--divide` 互斥，不能同时使用。
-
-辩论模式完整示例：
-
-```bash
-mco review \
-  --repo . \
-  --prompt "审查这个 PR，并在最终排序前质疑证据不足的 finding。" \
-  --providers claude,codex,gemini \
-  --debate
-```
-
-分工模式完整示例：
-
-```bash
-mco review \
-  --repo . \
-  --prompt "审查这个 PR 的正确性和性能问题。" \
-  --providers claude,codex,gemini \
-  --divide dimensions
-```
+> MCO 正在持续维护。如果你需要持久 Agent 身份、共享任务图和浏览器工作台，可以搭配使用 [Hive](https://hivehq.dev)。
 
 ## 快速开始
 
-### 人类用户
-
-一条命令安装 MCO 和内置 `mco-cli` Skill（需要系统有 Python 3.10+）：
+安装 CLI 和内置 `mco-cli` Skill：
 
 ```bash
 npx @tt-a1i/mco@latest install
 ```
 
-仅安装 CLI（Skill 需手动同步）：
+检查本机可用的 Agent：
 
 ```bash
-npm i -g @tt-a1i/mco
-mco skills sync --agent codex --agent claude-code
+mco doctor --json
 ```
 
-合并 PR 前想本地验证？从 PR **Checks** 页下载 **Preview package** workflow 产物，在本地安装 tarball。详见 [RELEASING.md](./RELEASING.md#preview-package-ci-artifact)。
-
-或从源码安装用于本地开发：
+运行一次只读的多 Agent 审查：
 
 ```bash
-git clone https://github.com/mco-org/mco.git
-cd mco
-python3 -m pip install -e .
+mco review \
+  --repo . \
+  --prompt "审查这个仓库中的高风险 bug。" \
+  --providers claude,codex,pi
 ```
 
-### AI Agent 安装
+运行允许修改工作区的编码任务：
 
-把 CLI 和版本匹配的 Skill 安装到选定的 calling agent：
+```bash
+mco run \
+  --repo . \
+  --prompt "实现需求并运行相关测试。" \
+  --providers codex,pi \
+  --execution-mode write
+```
+
+MCO 不会静默替你选择 Provider。缺少 `--providers` 时，应先询问用户希望使用哪些 Agent。
+
+## 为什么使用 MCO
+
+一个 Agent 只提供一个视角。MCO 把你选中的 Agent 组织成审查或执行团队：
+
+1. **选择** — 明确指定本次任务的 Agent。
+2. **分发** — 并行执行、串行挑战，或按范围分工。
+3. **比较** — 保留各 Provider 输出，合并重复 finding。
+4. **决策** — 检查证据、共识、分歧和失败，再采取行动。
+
+在结构化审查中，MCO 会标准化 finding、保留 `detected_by` 来源并计算共识等级。模型一致只能作为调查线索，不能自动视为事实。
+
+## 内置 Provider
+
+| Provider | CLI | Provider ID |
+|----------|-----|-------------|
+| Claude Code | `claude` | `claude` |
+| Codex CLI | `codex` | `codex` |
+| Gemini CLI | `gemini` | `gemini` |
+| OpenCode | `opencode` | `opencode` |
+| Qwen Code | `qwen` | `qwen` |
+| GitHub Copilot CLI | `copilot` | `copilot` |
+| Hermes | `hermes` | `hermes` |
+| Pi | `pi` | `pi` |
+| [Grok Build](https://docs.x.ai/build/overview) | `grok` | `grok` |
+| [Cursor CLI](https://cursor.com/docs/cli/overview) | `cursor` / `agent` | `cursor` |
+
+各 Provider CLI 仍然独立负责安装、认证、模型权限和原生沙箱行为。
+
+## 常用工作流
+
+| 目标 | 命令 |
+|------|------|
+| 通用多 Agent 任务 | `mco run --providers claude,codex --prompt "..."` |
+| 结构化代码审查 | `mco review --providers claude,codex --prompt "..."` |
+| 审查当前分支 diff | `mco review --providers claude,codex --diff` |
+| 只预览、不执行 | `mco review --providers claude,pi --dry-run --json` |
+| 生成 PR Markdown | `mco review --providers claude,codex --format markdown-pr` |
+| GitHub Code Scanning | `mco review --providers claude,codex --format sarif` |
+| 实时终端进度 | `mco review --providers claude,codex --stream live` |
+| 机器可读事件流 | `mco review --providers claude,codex --stream jsonl` |
+| 查看 Provider 模型 | `mco agent models --providers codex,pi --json` |
+
+仅为本次运行固定模型，不修改 Provider CLI 的默认配置：
+
+```bash
+mco review \
+  --providers codex,pi \
+  --provider-models-json '{"codex":"gpt-5.4","pi":{"provider":"seal","model":"deepseek-v4-pro"}}' \
+  --prompt "审查这个仓库中的 bug。"
+```
+
+## 权限与安全
+
+MCO 会把统一执行档位转换成各 Provider 的原生参数：
+
+| 档位 | 用途 | 默认场景 |
+|------|------|----------|
+| `read_only` | 只读检查和审查 | `mco review` |
+| `write` | 新建和编辑工作区文件 | `mco run` |
+| `yolo` | 使用 Provider 最宽的绕过权限 | 仅显式选择 |
+
+重要边界：
+
+- `--allow-paths` 只校验 MCO 请求的作用域，不是操作系统级沙箱。
+- 实际沙箱强度取决于底层 Provider CLI。
+- Hermes oneshot 会绕过审批，因此必须显式使用 `--execution-mode yolo`。
+- ACP terminal 属于可信 Agent 能力；不可信 Agent 或提示词应在隔离环境中运行。
+- 并行写入任务应使用独立 worktree，不要让多个 Agent 同时修改同一工作树。
+
+完整映射见 [Provider 与权限参考](./docs/reference/providers.md)。
+
+## 由其他 Agent 调用 MCO
+
+MCO CLI 是自描述的。调用方 Agent 可以读取 `mco -h`，询问用户选择哪些 Provider，预览策略，然后执行任务。
+
+> “使用 MCO，让 Claude 和 Codex 做安全审查，让 Pi 做架构审查。”
+
+安装器与运行时存在两个不同的选择：
+
+- 安装器 `--agent` 决定把 MCO Skill 安装给哪些调用方 Agent。
+- 运行时 `--providers` 决定哪些 Agent 执行当前任务。
 
 ```bash
 npx @tt-a1i/mco@latest install --agent codex --agent claude-code --yes
 mco doctor --skill-health --json
 ```
 
-请区分两个概念：
-
-- 安装器的 `--agent` 表示 **把 MCO Skill 装到哪里**。
-- 运行时的 `--providers` 表示 **由哪些 agent 执行任务**。
-
-运行第一次多 Agent 审查：
-
-```bash
-mco review \
-  --repo . \
-  --prompt "Review this repository for high-risk bugs and security issues." \
-  --providers claude,codex,qwen
-```
-
-### Agent 友好的 CLI
-
-MCO 的 CLI 完全自描述。运行 `mco -h` 或 `mco review -h` 即可看到分组参数、默认值和用法示例 — 全在终端里。这意味着任何能执行 shell 命令的 AI Agent 都可以通过阅读帮助输出自主学会使用 MCO，无需文档，无需预训练。
-
-实际使用中，你只需要告诉 IDE 里的 Agent 你想要什么：
-
-> "用 mco 把安全审查分发给 Claude 和 Codex，性能分析分发给 Gemini 和 Qwen — 并行执行。"
-
-Agent 读取 `mco -h`，理解参数，组装命令，自主编排整个流程。你描述意图，Agent 处理剩下的一切。
-
-## 使用方式
-
-### Review 模式
-
-结构化代码审查，输出标准化的 findings（含严重级别、分类、证据、建议）。
-
-```bash
-mco review \
-  --repo . \
-  --prompt "Review for security vulnerabilities and performance issues." \
-  --providers claude,codex,gemini,opencode,qwen \
-  --json
-```
-
-### Run 模式
-
-通用多 Agent 任务执行，不强制输出格式，provider 自由完成任务。
-
-```bash
-mco run \
-  --repo . \
-  --prompt "Summarize the architecture of this project." \
-  --providers claude,codex \
-  --json
-```
-
-### Doctor
-
-在执行任务前检查所有 Agent 的安装、可达性和认证状态：
-
-```bash
-mco doctor
-mco doctor --json
-mco doctor --skill-health --json
-```
-
-可选 `--skill-health` 会对 bundled `skills/mco-cli` 整个目录与所有受支持调用 Agent 声明的全局、项目安装路径做 best-effort 漂移检查，并明确区分 `not_installed` 与 `ok`。默认关闭；缺少本地安装不会导致 doctor 失败；启用后 `--json` 输出会包含 `skill_health` / `skill_drift` 字段。
-
-### 输出格式（Review 模式）
-
-| 格式 | 参数 | 用途 |
-|------|------|------|
-| 人类可读报告 | `--format report`（默认） | 终端阅读 |
-| PR Markdown | `--format markdown-pr` | 作为 GitHub PR 评论发布 |
-| SARIF 2.1.0 | `--format sarif` | 上传到 GitHub Code Scanning |
-| 机器可读 JSON | `--json` | 下游自动化 |
-
-### 共识引擎
-
-MCO v0.9 将 review 合并从“简单去重”升级为“共识分析”：
-
-- `agreement_ratio = detected_by_count / total_providers_ran`
-- `consensus_score = agreement_ratio × max_confidence`
-- `consensus_level = confirmed | needs-verification | unverified`
-
-三个等级的含义：
-
-- `confirmed` — 至少 50% 的 provider 报告了该 finding
-- `needs-verification` — 有 2 个及以上 provider 报告，但同意比例低于 50%
-- `unverified` — 仅有 1 个 provider 报告
-
-这些信息会统一进入输出层：
-
-- **JSON** — 每个 finding 都带 `consensus_score` 与 `consensus_level`
-- **SARIF** — `confidence` 取自 `consensus_score`
-- **Markdown** — 按共识等级分组展示
-- **Chain 模式** — `confirmed` 会显示成 `confirmed-by`
-
-### Review 协作模式
-
-| 模式 | 参数 | 行为 |
-|------|------|------|
-| 并行 | 默认 | 所有 provider 审查同一份范围 |
-| Chain | `--chain` | 顺序执行，后一个 provider 看到前一个的分析 |
-| Debate | `--debate` | 对合并后的 finding 再做一轮 challenge/refine |
-| 文件分工 | `--divide files` | 按文件切片分工，大文件优先后轮转分配 |
-| 维度分工 | `--divide dimensions` | 文件范围不变，但每个 provider 负责不同审查维度 |
-
-`--divide` 与 `--chain`、`--debate` 互斥。
-
-### 结果模式
-
-| 模式 | 行为 |
-|------|------|
-| `--result-mode stdout` | 完整结果输出到 stdout，不写产物文件（默认） |
-| `--result-mode artifact` | 写产物文件，输出摘要 |
-| `--result-mode both` | 既写产物又输出完整结果 |
-
-使用 `--save-artifacts` 可在保持 stdout 返回的同时写入产物。
-
-### 路径约束
-
-限制 agent 可访问的文件范围：
-
-```bash
-mco run \
-  --repo . \
-  --prompt "Analyze the adapter layer." \
-  --providers claude,codex \
-  --allow-paths runtime,scripts \
-  --target-paths runtime/adapters \
-  --enforcement-mode strict
-```
-
-## 默认值与参数覆盖
-
-MCO 除 provider 选择外无需配置。调用前明确选择，也可以把选择持久化到配置文件。
-
-### 关键运行参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--providers` | 必须明确选择 | 逗号分隔 provider 列表；未指定时先询问用户 |
-| `--execution-mode` | run 为 `write`；review 为 `read_only` | 统一执行权限档位：`read_only`、`write` 或显式 `yolo` |
-| `--stall-timeout` | `900` | 无输出进展超过此时间才取消（秒） |
-| `--review-hard-timeout` | `1800` | review 模式硬截止；`0` = 禁用 |
-| `--max-provider-parallelism` | `0` | `0` = 选中 provider 全并行 |
-| `--enforcement-mode` | `strict` | 权限不满足时 fail-closed |
-| `--strict-contract` | 关闭 | 强制 findings JSON 契约（review 模式） |
-| `--format` | `report` | 输出格式：`report`、`markdown-pr`、`sarif`（后两者仅 review 模式） |
-| `--include-token-usage` | 关闭 | 各 provider 和汇总 token 用量（best-effort） |
-| `--synthesize` | 关闭 | 额外执行一轮 LLM 总结，输出共识/分歧摘要 |
-| `--synth-provider` | `claude` | 执行总结的 provider |
-| `--provider-timeouts` | 未设置 | provider 级 stall timeout 覆盖（`provider=seconds`） |
-| `--provider-permissions-json` | 未设置 | provider 权限映射 JSON（见下方） |
-| `--provider-models-json` | 未设置 | provider 模型映射 JSON，例如 `'{"codex":"gpt-5.4","pi":{"provider":"seal","model":"deepseek-v4-pro"}}'` |
-| `--provider-context-json` | 未设置 | provider 上下文策略 JSON，例如 `'{"pi":{"skills":"disabled","context_files":false}}'` |
-| `--save-artifacts` | 关闭 | 在默认 stdout 模式下同时写入产物 |
-| `--task-id` | 自动生成 | 稳定的任务标识符，用于产物路径 |
-| `--artifact-base` | `reports/review` | 产物输出基础目录 |
-| `--diff` | 关闭 | 仅审查相对主分支 merge-base 的变更 |
-| `--staged` | 关闭 | 仅审查 git staged 变更 |
-| `--unstaged` | 关闭 | 仅审查未暂存变更 |
-| `--diff-base` | 自动 | 分支 diff 的 Git 基线（例如 `origin/main`、`HEAD~3`） |
-| `--stream` | 关闭 | `jsonl` 输出机器可读事件流，`live` 输出实时终端视图 |
-| `--transport` | `shim` | `shim`（stdout 解析）或 `acp`（Agent Client Protocol JSON-RPC） |
-| `--agent` | 未设置 | 注册临时 ACP Agent；执行时还需通过 `--providers NAME` 明确选择 |
-| `--file` | 未设置 | 从文件读取 prompt，或用 `-` 从 stdin 读取 |
-| `--quiet` | 关闭 | 仅输出最终文本，不带标题和格式；与 `--json`/`--stream` 互斥 |
-| `--chain` | 关闭 | 顺序执行 provider，把前序输出传给后序 |
-| `--debate` | 关闭 | 合并后再做一轮辩论复核 |
-| `--divide` | 关闭 | `files` 或 `dimensions` 分工模式 |
-| `--perspectives-json` | 未设置 | 按 provider 指定 review 视角 JSON |
-
-### 执行权限档位
-
-MCO 会把统一档位转换成每个 Agent 原生的启动参数：
-
-| 档位 | 含义 | 默认场景 |
-|------|------|----------|
-| `read_only` | 只读分析，不允许文件或 shell 修改 | `mco review` |
-| `write` | 允许读取、新建和编辑工作区文件；在 CLI 能表达时不开放无限制 shell/系统权限 | `mco run` |
-| `yolo` | 绕过审批并启用该 Agent 能提供的最宽执行权限 | 仅显式指定 |
-
-例如，`write` 会映射为 Claude `acceptEdits`、Codex `workspace-write`、Pi 的 `write/edit` 工具集，以及 Copilot 的文件写权限（禁用 shell）；`yolo` 则映射为各家的原生 bypass 参数。Hermes oneshot 天然绕过审批，因此 MCO 在 `read_only` 或 `write` 下会拒绝启动 Hermes；使用 Hermes 时必须显式传入 `--execution-mode yolo`。
-
-`--provider-permissions-json` 仍可作为专家级覆盖，并叠加在所选执行档位之上。`allow_paths` 只校验 MCO 请求的作用域，并不是操作系统级沙箱。
-
-```bash
-mco run \
-  --repo . \
-  --prompt "实现需求并运行测试。" \
-  --providers claude,codex,pi \
-  --execution-mode write
-```
-
-示例：
-
-```bash
-mco review \
-  --repo . \
-  --prompt "Review for bugs." \
-  --providers claude,codex,qwen \
-  --save-artifacts \
-  --stall-timeout 900 \
-  --review-hard-timeout 1800 \
-  --max-provider-parallelism 0 \
-  --provider-timeouts qwen=900,codex=900
-```
-
-运行 `mco review --help` 查看完整参数列表。
-
-## 自定义 Agent
-
-配置文件按以下优先级加载：
-
-1. `.mco/agents.yaml`（项目级）
-2. `.mcorc.yaml`（项目根目录）
-3. `~/.mco/agents.yaml`（全局）
-
-查看当前可见的 Agent：
-
-```bash
-mco agent list
-mco agent check my-ollama
-```
-
-示例 `.mco/agents.yaml`：
-
-```yaml
-agents:
-  - name: my-acp-agent
-    transport: acp
-    command: my-agent --acp
-    permission_keys: [sandbox]
-
-  - name: my-shim-agent
-    transport: shim
-    command: my-review-bot --json
-
-  - name: my-ollama
-    model: qwen2.5-coder:14b
-```
-
-说明：
-
-- `transport: acp` 注册自定义 ACP Agent
-- `transport: shim` 注册基于命令行的 shim Agent
-- `model: ...` 会自动注册一个基于 Ollama 的本地模型 Agent
-
-这意味着你可以把本地 Ollama 模型和 Claude、Codex、Gemini、OpenCode、Qwen 一起放进同一条 `mco review` / `mco run` 工作流里。
-
-## 退出码
-
-| 退出码 | 含义 |
-|--------|------|
-| `0` | 成功 |
-| `2` | FAIL / 输入 / 配置 / 运行时错误 |
-| `3` | INCONCLUSIVE（仅 review 模式，启用 `--strict-contract` 时） |
-
 ## 工作原理
 
-```
-You (Tech Lead)
-     │
-     ▼
-  mco review / mco run
-     │
-     ├─→ Claude Code  ──┐
-     ├─→ Codex CLI      │
-     ├─→ Gemini CLI     ├─→ 共识引擎 → Debate / Synthesize → 输出
-     ├─→ OpenCode       │
-     └─→ Qwen Code   ───┘
+```text
+用户或调用方 Agent
+        │
+        ▼
+  mco run / review
+        │
+        ├── Claude ──┐
+        ├── Codex    │
+        ├── Gemini   ├──► 合并 / 共识 / 总结 ──► 输出
+        ├── Pi       │
+        └── ...   ───┘
                               │
-                    ┌─────────┼─────────┐
-                    ▼         ▼         ▼
-                  JSON    SARIF    Markdown-PR
-               (stdout)  (CI/CD)  (PR 评论)
+                       JSON · SARIF · Markdown
 ```
 
-调用方 Agent（或用户）传入提示词和 provider 列表调用 `mco`，MCO 并行扇出到所有选中的 Agent，等待全部完成。
+Provider 进程统一封装在适配器契约后：detect、run、poll、cancel、normalize。单个 Provider 失败不会丢弃其他 Provider 的成功结果。
 
-每个 provider 通过统一的适配器契约作为独立子进程运行：
+## 文档
 
-1. **Detect** — 检测二进制文件和认证状态
-2. **Run** — 启动 CLI 进程，传入提示词，捕获 stdout/stderr
-3. **Poll** — 监控进程状态 + 输出字节增长，判断活跃度
-4. **Cancel** — stall timeout 或硬截止时 SIGTERM/SIGKILL
-5. **Normalize** — 从原始输出中提取结构化 findings
+| 主题 | 文档 |
+|------|------|
+| 安装、首次运行和常见工作流 | [工作流指南](./docs/guides/workflows.md) |
+| Provider、模型与权限映射 | [Provider 参考](./docs/reference/providers.md) |
+| CLI 参数、输出、产物与退出码 | [CLI 参考](./docs/reference/cli.md) |
+| 配置文件与自定义 Agent | [配置参考](./docs/reference/configuration.md) |
+| 机器可读错误契约 | [错误契约](./docs/contracts/errors-v0.1.x.md) |
+| Provider 权限契约 | [权限契约](./docs/contracts/provider-permissions-v0.1.x.md) |
+| 发布流程 | [RELEASING.md](./RELEASING.md) |
+| 版本历史 | [CHANGELOG.md](./CHANGELOG.md) |
 
-执行模型是 **wait-all**：单个 provider 超时或失败不会中断其他 provider。
+运行 `mco <command> --help` 查看当前安装版本的权威参数列表。
 
-### 重试与容错
+## 开发
 
-- 瞬态错误（超时、限流、网络抖动）自动重试，指数退避（默认重试 1 次）。
-- 单个 provider 失败不影响其他 provider。
-- 每次调用都会真实执行 provider 并返回新输出（不复用结果缓存）。
-
-### 在 Claude Code 内运行
-
-MCO 在启动 provider 子进程前会自动清理 `CLAUDECODE` 环境变量，可以安全地在 Claude Code 会话中运行 `mco`。
-
-## 产物结构
-
-当启用产物写入（`--save-artifacts` 或 `--result-mode artifact/both`）时，会生成：
-
-```
-reports/review/<task_id>/
-  summary.md          # 人类可读摘要
-  decision.md         # PASS / FAIL / ESCALATE / PARTIAL
-  findings.json       # 聚合后的标准化 findings（review 模式）
-  run.json            # 机器可读执行元数据
-  providers/          # 各 provider 结果 JSON
-  raw/                # 原始 stdout/stderr 日志
+```bash
+git clone https://github.com/mco-org/mco.git
+cd mco
+python3 -m pip install -e .
+python3 -m unittest discover -s tests -p 'test_*.py'
+npm test
 ```
 
 ## 许可证
 
-MIT — 见 [LICENSE](./LICENSE)
+MIT — 见 [LICENSE](./LICENSE)。

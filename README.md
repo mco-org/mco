@@ -1,239 +1,107 @@
-> ### MCO is actively maintained
->
-> Choose **MCO** for lightweight, CLI-first multi-agent orchestration that
-> fits existing terminals, scripts, and AI coding agents. Choose
-> **[Hive](https://hivehq.dev)** for a complementary browser workbench with
-> persistent agent identity, a shared task graph, and team controls.
-
----
-
 <p align="center">
-  <img src="./docs/assets/brand/mco-cover-starry.jpg" alt="MCO — ten agent paths converging through a monumental M beneath a starry sky" width="100%" />
+  <img src="https://raw.githubusercontent.com/mco-org/mco/main/docs/assets/brand/mco-cover-starry.jpg" alt="MCO — ten agent paths converging through a monumental M beneath a starry sky" width="100%" />
 </p>
 
 <h1 align="center">MCO</h1>
+
+<p align="center"><strong>Orchestrate AI coding agents. Compare perspectives. Act with confidence.</strong></p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@tt-a1i/mco"><img src="https://img.shields.io/npm/v/@tt-a1i/mco?style=flat-square&color=cb3837&logo=npm&logoColor=white" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/@tt-a1i/mco"><img src="https://img.shields.io/npm/dm/@tt-a1i/mco?style=flat-square&color=cb3837" alt="npm downloads" /></a>
   <a href="https://github.com/mco-org/mco/stargazers"><img src="https://img.shields.io/github/stars/mco-org/mco?style=flat-square&color=f59e0b" alt="GitHub stars" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License: MIT" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/Providers-10%20supported-7c3aed?style=flat-square" alt="10 supported providers" />
-  <a href="https://pypi.org/project/evermemos-mcp/"><img src="https://img.shields.io/badge/evermemos--mcp-memory%20powered-6366f1?style=flat-square" alt="evermemos-mcp" /></a>
 </p>
 
-<p align="center"><strong>MCO — Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.</strong></p>
+<p align="center">English · <a href="./README.zh-CN.md">简体中文</a></p>
 
-<p align="center"><strong>MCO equips your primary agent with ten built-in agents. The user chooses the team; MCO never silently guesses a provider set.</strong></p>
+MCO is a lightweight, CLI-first orchestration layer for AI coding agents. Give one task to the agents you choose, run them in parallel, and compare the results before you act.
 
-<p align="center">English | <a href="./README.zh-CN.md">简体中文</a></p>
+Use MCO for code review, implementation, architecture analysis, CI checks, and any workflow where one model's blind spots matter.
 
-<table align="center">
-  <tr>
-    <td align="center"><a href="https://github.com/anthropics/claude-code"><img src="https://github.com/anthropics.png?size=96" alt="Claude Code" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/google-gemini/gemini-cli"><img src="https://github.com/google-gemini.png?size=96" alt="Gemini CLI" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=96" alt="Codex CLI" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/sst/opencode"><img src="https://raw.githubusercontent.com/sst/opencode/master/packages/console/app/src/asset/brand/opencode-logo-light-square.svg" alt="OpenCode" width="48" /></a></td>
-    <td align="center"><a href="https://github.com/QwenLM/qwen-code"><img src="https://github.com/QwenLM.png?size=96" alt="Qwen Code" width="48" /></a></td>
-    <td align="center"><strong>Copilot</strong></td>
-    <td align="center"><strong>Hermes</strong></td>
-    <td align="center"><strong>Pi</strong></td>
-    <td align="center"><strong>Grok</strong></td>
-    <td align="center"><strong>Cursor</strong></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Claude Code</strong></td>
-    <td align="center"><strong>Gemini CLI</strong></td>
-    <td align="center"><strong>Codex CLI</strong></td>
-    <td align="center"><strong>OpenCode</strong></td>
-    <td align="center"><strong>Qwen Code</strong></td>
-    <td align="center"><strong>Copilot CLI</strong></td>
-    <td align="center"><strong>Hermes</strong></td>
-    <td align="center"><strong>Pi</strong></td>
-    <td align="center"><strong>Grok Build</strong></td>
-    <td align="center"><strong>Cursor CLI</strong></td>
-  </tr>
-  <tr>
-    <td align="center"><code>claude</code></td>
-    <td align="center"><code>gemini</code></td>
-    <td align="center"><code>codex</code></td>
-    <td align="center"><code>opencode</code></td>
-    <td align="center"><code>qwen</code></td>
-    <td align="center"><code>copilot</code></td>
-    <td align="center"><code>hermes</code></td>
-    <td align="center"><code>pi</code></td>
-    <td align="center"><code>grok</code></td>
-    <td align="center"><code>cursor</code></td>
-  </tr>
-</table>
+It works from a terminal or from another coding agent such as Claude Code, Codex, Cursor, Copilot, Pi, or OpenClaw.
 
-> AI coding agents are now standard tools for every developer. But one agent is just one perspective.
->
-> Work like a Tech Lead: assign one task to multiple agents, run in parallel, and compare outcomes before acting.
->
-> One explicit choice. The agents you selected working at once.
+> MCO is actively maintained. For a browser workbench with persistent agent identity and a shared task graph, see [Hive](https://hivehq.dev).
 
-### Works with OpenClaw
+## Quick start
 
-Running [OpenClaw](https://github.com/open-claw/open-claw) on your machine? It can use MCO as its multi-agent backbone. Just tell OpenClaw what you need:
-
-> "Use mco to run a security review on this repo with Claude, Codex, and Gemini. Synthesize the results."
-
-OpenClaw reads `mco -h`, asks which installed agents you want, and passes that explicit selection to MCO. Your local machine becomes a multi-agent review team without an invisible provider default.
-
-This works the same way from **Claude Code, Cursor, Trae, Copilot, Windsurf**, or any agent that can run shell commands.
-
-**Demo video (Bilibili):** [给 OpenClaw 装上兵权：组建你自己的 AI 军团](https://www.bilibili.com/video/BV1NRASz6EAH)
-
-## What is MCO
-
-MCO (Multi-CLI Orchestrator) is a neutral orchestration layer for AI coding agents. It dispatches prompts to multiple agent CLIs in parallel, aggregates results, and returns structured output — JSON, SARIF, or PR-ready Markdown. No vendor lock-in. No workflow rewrite.
-
-With the rise of agentic coding — led by projects like [OpenClaw](https://github.com/open-claw/open-claw) and the broad availability of Claude Code, Codex CLI, Gemini CLI, and more — every developer now has access to powerful AI agents. MCO takes the next step: instead of relying on a single agent, you orchestrate a team.
-
-MCO is designed to be called by any orchestrating agent or AI-powered IDE — Claude Code, Cursor, Trae, Copilot, Windsurf, or **OpenClaw**. The calling agent organizes context, assigns tasks, and uses MCO to fan out work across multiple agents simultaneously. For example, OpenClaw running on your machine can call `mco review` to dispatch code reviews to Claude, Codex, and Gemini in parallel — turning your local setup into a multi-agent review team with a single command. Agents can also orchestrate each other: Claude Code can dispatch tasks to Codex and Gemini via MCO, and vice versa.
-
-## AI Agent Quick Start
-
-When another coding agent calls MCO, it must first ask the user which agents to use, then pass that choice with `--providers`. If the choice is missing, MCO returns `provider_selection_required` without dispatching. Start with the health check and a dry run before execution. For a read-only first run, select Claude (plan mode), Pi (read-only tool allowlist), or Cursor (ask mode):
+Install the CLI and its bundled `mco-cli` Skill:
 
 ```bash
-mco doctor --providers claude,pi --json
-mco run --repo . --prompt "Summarize this repo." --providers claude,pi --execution-mode read_only --dry-run --json
-mco run --repo . --prompt "Summarize this repo." --providers claude,pi --execution-mode read_only --json
+npx @tt-a1i/mco@latest install
 ```
 
-For review workflows:
+Check the agents available on your machine:
 
 ```bash
-mco review --repo . --prompt "Review for bugs." --providers claude,codex,pi --dry-run --json
-mco review --repo . --prompt "Review for bugs." --providers claude,codex,pi --json
+mco doctor --json
 ```
 
-`--dry-run` resolves providers, default/effective risk metadata, policy, prompt hash, artifact settings, and command templates without starting any agent process. Use it when an orchestrating agent needs to show the user what will run before fan-out. With `--json`, parse/input/config failures return the stable envelope documented in [`docs/contracts/errors-v0.1.x.md`](./docs/contracts/errors-v0.1.x.md).
-
-## One Agent is a Tool. Selected Agents are a Team.
-
-No single AI model sees everything. Each model has its own training data, reasoning style, and blind spots. Using just one agent is like having a team of five engineers and only asking one for their opinion.
-
-**MCO turns this into a team workflow:**
-
-1. **Assign** — You give MCO a task and a list of agents. Like a Tech Lead assigning the same code review to five team members.
-2. **Execute in parallel** — All agents work simultaneously. Wall-clock time ≈ the slowest agent, not the sum.
-3. **Review and deduplicate** — MCO collects each agent's findings, deduplicates identical issues across agents, and tracks which agents found what (`detected_by`).
-4. **Synthesize consensus** — Optionally, one agent summarizes the combined results: what everyone agrees on, where they diverge, and what to do next.
-
-**In practice, different agents catch different things:**
-
-- One agent spots a race condition in your async code but overlooks an SQL injection in the ORM layer.
-- Another finds the injection immediately but misses the race condition entirely.
-- A third catches neither of those but flags a subtle memory leak in the resource cleanup path.
-
-These aren't hypothetical — different models genuinely have different strengths. Some are better at security analysis, some at logic flow, some at performance patterns. By running 3–5 agents in parallel on the same codebase, you get a **union of perspectives** rather than the intersection. The result is a more thorough review than any single agent could produce, regardless of which one you pick.
-
-This principle extends beyond code review:
-
-- **Architecture analysis** — different agents surface different design risks and trade-offs
-- **Bug hunting** — broader coverage across code paths and edge cases
-- **Refactoring assessment** — multiple perspectives on impact and safety of proposed changes
-
-The question isn't "which AI agent is best" — it's "why limit yourself to one?"
-
-## Key Highlights
-
-- **Parallel fan-out** — dispatch to multiple agents simultaneously, wait-all semantics
-- **Any IDE, any agent** — works from Claude Code, Cursor, Trae, Copilot, Windsurf, or plain shell
-- **Agent-to-agent orchestration** — agents can dispatch tasks to other agents through MCO
-- **Dual mode** — `mco review` for structured code review findings, `mco run` for general task execution
-- **Cross-agent deduplication** — identical findings from multiple agents are merged automatically with `detected_by` provenance
-- **Consensus engine** — merged findings get `consensus_score = agreement_ratio × max_confidence` plus `confirmed` / `needs-verification` / `unverified` consensus levels
-- **Cross-session memory** — `--memory` flag persists findings and agent scores via [evermemos-mcp](https://pypi.org/project/evermemos-mcp/), building institutional knowledge across runs
-- **LLM synthesis** — `--synthesize` runs an extra pass to produce consensus/divergence summary across all agents
-- **Live terminal streaming** — `--stream live` renders rich real-time terminal progress; `--stream jsonl` remains available for machine consumers
-- **Debate mode** — `--debate` adds a second challenge round where agents critique the merged findings before final ranking
-- **Divide mode** — `--divide files|dimensions` splits review work by file slices or review dimensions while preserving the existing merge + consensus pipeline
-- **CI/CD integration** — `--format sarif` for GitHub Code Scanning, `--format markdown-pr` for PR comments
-- **Environment health check** — `mco doctor` probes binary presence, version, auth status, and risk for all built-in or explicitly selected providers
-- **Dry-run execution preview** — `--dry-run --json` shows resolved providers, risk levels, policies, and command templates without running agents
-- **Token usage tracking** — `--include-token-usage` for best-effort per-agent and aggregate token consumption
-- **Progress-driven timeouts** — agents run freely until completion; cancel only when output goes idle
-- **Stateful sessions** — `mco session` for persistent multi-turn conversations with prompt queue and cancellation
-- **ACP transport** — `--transport acp` for structured JSON-RPC communication via the Agent Client Protocol
-- **Custom ACP agents** — `--agent NAME COMMAND` to register any ACP-compatible binary as a provider
-- **Custom agent registry** — `.mco/agents.yaml`, `.mcorc.yaml`, or `~/.mco/agents.yaml` can register shim, ACP, or Ollama-backed agents; inspect them with `mco agent list` / `mco agent check`
-- **Flexible prompt input** — `--file path`, `--file -` (stdin), or piped input for non-interactive workflows
-- **Quiet mode** — `--quiet` for pipe-friendly output (final text only, no headers)
-- **Config files** — `.mcorc.json` (project) and `~/.mco/config.json` (global) for persistent defaults
-- **Idempotent sessions** — `mco session ensure` creates-or-returns a session in one call
-- **Async send** — `--no-wait` returns immediately after queuing a prompt; retrieve results later via `session result`
-- **Ctrl+C cancel** — interrupt `session send` gracefully, automatically cancels the running prompt
-- **Chain mode** — `--chain` runs providers sequentially, feeding each provider's output as context to the next for challenge-and-supplement workflows
-- **Per-provider perspectives** — `--perspectives-json` assigns different review focus areas (security, performance, maintainability) to each provider
-- **Consensus badges** — findings show `[N/M agree]` in parallel mode or `[confirmed by N/M]` in chain mode to surface cross-agent agreement
-- **Session retry with error classification** — session dispatch retries retryable errors (timeout, rate limit, network) with exponential backoff; partial output preserved on timeout
-- **ACP bidirectional handlers** — agents can read/write files and run terminal commands through MCO
-- **Extensible adapter contract** — uniform interface for any CLI agent, not limited to built-in providers
-- **Machine-readable output** — JSON, SARIF, or Markdown output for downstream automation
-
-## What's New in v0.10
-
-- **Ten built-in adapters** — Claude, Codex, Gemini, OpenCode, Qwen, Copilot, Hermes, Pi, Grok Build, and Cursor CLI.
-- **Explicit provider selection** — callers ask the user which agents to use; no provider set is silently selected.
-- **Read-only Pi review mode** — Pi runs with `read,grep,find,ls` enabled so it can inspect code without shell, edit, or write tools.
-- **Per-provider model selection** — `--provider-models-json` can pin a model per selected provider while the default remains each CLI's configured model.
-- **Model discovery** — `mco agent models --providers codex,hermes,pi --json` lists known local model choices when the underlying CLI exposes them.
-- **Provider risk metadata and dry-run preview** — `mco doctor`, `mco agent list`, and `--dry-run --json` expose provider risk levels for orchestrating agents.
-- **Per-provider context policy** — `--provider-context-json` controls skills, context files, and plugin isolation where supported (opt-in; absent keys keep provider defaults).
-- **Codex structured output compatibility** — review schema is compatible with current OpenAI strict structured output requirements.
-
-## What's New in v0.9
-
-- **Consensus Engine** — findings are no longer just deduplicated. Each merged finding now carries:
-  - `agreement_ratio = detected_by_count / total_providers_ran`
-  - `consensus_score = agreement_ratio × max_confidence`
-  - `consensus_level = confirmed | needs-verification | unverified`
-- **Real-time terminal mode** — `--stream live` adds a human-friendly TTY renderer while preserving `--stream jsonl` for automation.
-- **Debate round** — `--debate` asks providers to challenge or refine merged findings before the final output.
-- **Divide mode** — `--divide files` balances file ownership across providers; `--divide dimensions` assigns providers to security, performance, maintainability, correctness, and error-handling perspectives.
-- **Custom agent registry** — MCO can now discover custom agents from `.mco/agents.yaml` / `~/.mco/agents.yaml`, including Ollama-backed local models.
-
-## Built-in Providers
-
-| Provider | CLI | Status |
-|----------|-----|--------|
-| Claude Code | `claude` | Supported |
-| Codex CLI | `codex` | Supported |
-| Gemini CLI | `gemini` | Supported |
-| OpenCode | `opencode` | Supported |
-| Qwen Code | `qwen` | Supported |
-| GitHub Copilot CLI | `copilot` | Supported |
-| Hermes | `hermes` | Supported |
-| Pi | `pi` | Supported |
-| [Grok Build](https://docs.x.ai/build/overview) | `grok` | Supported |
-| [Cursor CLI](https://cursor.com/docs/cli/overview) | `cursor` | Supported |
-
-`mco run` and `mco review` have no implicit provider set. Ask the user and pass `--providers`, or persist an explicit selection in configuration. `mco doctor` checks all ten supported providers by default.
-
-## Permission-sensitive Providers
-
-| Provider | CLI | Execution-mode mapping |
-|----------|-----|--------------------------|
-| GitHub Copilot CLI | `copilot` | Read-only, file-write, or allow-all access |
-| Hermes | `hermes` | Elevated oneshot mode; approvals are auto-bypassed |
-| Pi | `pi` | Tool allowlist expands from read-only to write/edit and then bash |
-| Grok Build | `grok` | Plan, accept-edits, or bypass permission mode |
-| Cursor CLI | `cursor` | Ask, sandboxed-agent, or unsandboxed-agent profile |
-
-Use them by naming them explicitly:
+Run a read-only multi-agent review:
 
 ```bash
-mco review --providers claude,codex,copilot --prompt "Review this repository for bugs."
+mco review \
+  --repo . \
+  --prompt "Review this repository for high-risk bugs." \
+  --providers claude,codex,pi
 ```
 
-Copilot and Pi follow the selected execution mode. Hermes is different: its oneshot mode inherently bypasses approvals, so selecting Hermes also requires explicit `--execution-mode yolo`.
+Run a coding task with workspace write access:
 
-By default MCO does not choose a model for you; it lets each provider CLI use its own configured default. To pin models for one run:
+```bash
+mco run \
+  --repo . \
+  --prompt "Implement the requested change and run the relevant tests." \
+  --providers codex,pi \
+  --execution-mode write
+```
+
+MCO never silently chooses a provider team. If `--providers` is missing, ask the user which agents to use.
+
+## Why MCO
+
+One agent gives you one perspective. MCO turns selected agents into a review or execution team:
+
+1. **Choose** — explicitly select the agents for the task.
+2. **Dispatch** — run them in parallel, chain their work, or divide the scope.
+3. **Compare** — retain provider-level output and merge duplicate findings.
+4. **Decide** — inspect evidence, consensus, disagreements, and failures before acting.
+
+For structured reviews, MCO normalizes findings, preserves `detected_by` provenance, and assigns consensus levels. Agreement is evidence to investigate, not automatic truth.
+
+## Built-in providers
+
+| Provider | CLI | Provider ID |
+|----------|-----|-------------|
+| Claude Code | `claude` | `claude` |
+| Codex CLI | `codex` | `codex` |
+| Gemini CLI | `gemini` | `gemini` |
+| OpenCode | `opencode` | `opencode` |
+| Qwen Code | `qwen` | `qwen` |
+| GitHub Copilot CLI | `copilot` | `copilot` |
+| Hermes | `hermes` | `hermes` |
+| Pi | `pi` | `pi` |
+| [Grok Build](https://docs.x.ai/build/overview) | `grok` | `grok` |
+| [Cursor CLI](https://cursor.com/docs/cli/overview) | `cursor` / `agent` | `cursor` |
+
+Each provider CLI remains responsible for its own installation, authentication, model access, and native sandbox behavior.
+
+## Common workflows
+
+| Goal | Command |
+|------|---------|
+| General multi-agent task | `mco run --providers claude,codex --prompt "..."` |
+| Structured code review | `mco review --providers claude,codex --prompt "..."` |
+| Review current branch diff | `mco review --providers claude,codex --diff` |
+| Preview without execution | `mco review --providers claude,pi --dry-run --json` |
+| PR-ready Markdown | `mco review --providers claude,codex --format markdown-pr` |
+| GitHub Code Scanning | `mco review --providers claude,codex --format sarif` |
+| Live terminal progress | `mco review --providers claude,codex --stream live` |
+| Machine-readable events | `mco review --providers claude,codex --stream jsonl` |
+| Discover provider models | `mco agent models --providers codex,pi --json` |
+
+Pin a model for one run without changing the provider CLI's default:
 
 ```bash
 mco review \
@@ -242,556 +110,86 @@ mco review \
   --prompt "Review this repository for bugs."
 ```
 
-List currently discoverable model choices:
+## Permissions and safety
 
-```bash
-mco agent models --providers codex,hermes,pi --json
-```
+MCO translates one execution profile into each provider's native flags:
 
-The adapter architecture is extensible — adding a new agent CLI requires implementing three hooks: auth check, command builder, and output normalizer.
+| Mode | Intended use | Default |
+|------|--------------|---------|
+| `read_only` | Inspect and review without workspace mutation | `mco review` |
+| `write` | Create and edit workspace files | `mco run` |
+| `yolo` | Use the provider's broadest bypass profile | Explicit opt-in only |
 
-## Use Cases
+Important boundaries:
 
-| Scenario | Command | What happens |
-|----------|---------|--------------|
-| PR code review | `mco review --providers claude,codex --format markdown-pr` | Multiple agents review in parallel, output a PR-ready comment |
-| Security scan in CI | `mco review --providers claude,codex --format sarif` | Results upload directly to GitHub Code Scanning |
-| Architecture analysis | `mco run --providers claude,gemini,qwen` | Multi-perspective architecture assessment |
-| Pre-deploy health check | `mco doctor --json` | Verify all agents are installed and authenticated |
-| Execution preview | `mco review --providers claude,pi --dry-run --json` | Resolve providers, policy, risk, and commands without running agents |
-| Consensus decision | `mco review --providers claude,codex --synthesize` | Summarize what agents agree on and where they diverge |
-| Debate findings | `mco review --debate --providers claude,codex,gemini` | Run an extra challenge round before final ranking |
-| File division review | `mco review --providers claude,codex --divide files` | Split changed files across providers, balanced by file size |
-| Dimension division review | `mco review --providers claude,codex --divide dimensions` | Give each provider a dedicated review dimension |
-| Persistent code review | `mco review --providers claude,codex --memory` | Findings accumulate across runs; agents learn what's already been flagged |
-| Diff-only review | `mco review --providers claude,codex --diff` | Review only changed files vs main branch |
-| Staged changes review | `mco review --providers claude,codex --staged` | Review only git staged changes |
-| Real-time event stream | `mco review --providers claude,codex --stream jsonl` | JSONL events to stdout as providers execute |
-| Live terminal stream | `mco review --providers claude,codex --stream live` | Rich terminal progress view for interactive TTY sessions |
-| Multi-turn session | `mco session start --provider claude` | Persistent session with conversation history |
-| Cancel running prompt | `mco session cancel my-review` | Interrupt running + queued prompts immediately |
-| Queue status | `mco session queue my-review` | Show running request ID and queue depth |
-| Multi-session broadcast | `mco session broadcast "prompt"` | Fan out to all active sessions, aggregate results |
-| ACP transport | `mco run --transport acp --providers claude` | Structured JSON-RPC communication with ACP agents |
-| Custom ACP agent | `mco run --agent mybot "mybot --acp" --providers mybot` | Register and explicitly select a temporary ACP-compatible agent |
-| Prompt from file | `mco review --file prompt.md --providers claude` | Read prompt from a file instead of inline |
-| Piped prompt | `cat prompt.md \| mco run --providers claude` | Read prompt from stdin pipe |
-| Quiet output | `mco run --quiet --providers claude --prompt "..."` | Print only final text, no headers |
-| Pin provider models | `mco run --providers codex --provider-models-json '{"codex":"gpt-5.4"}'` | Override selected providers' CLI default model |
-| Provider context policy | `mco run --providers pi --provider-context-json '{"pi":{"skills":"disabled","context_files":false}}'` | Opt-in skills/context/plugin controls per provider |
-| List provider models | `mco agent models --providers codex,pi --json` | Show discoverable model choices and configured defaults |
-| Config-driven run | (uses `.mcorc.json`) | Persistent project defaults without CLI flags |
-| Idempotent session | `mco session ensure --provider claude --name dev` | Create or return existing session |
-| Async prompt | `mco session send dev "task" --no-wait` | Queue prompt and return immediately |
-| Retrieve async result | `mco session result dev 42` | Get result of a previously queued nowait request |
-| Chain analysis | `mco review --chain --providers claude,codex` | Claude analyzes first, Codex challenges and supplements |
-| Perspective assignment | `mco review --providers claude,codex --perspectives-json '{"claude":"security","codex":"performance"}'` | Each provider focuses on a different review area |
-| List custom agents | `mco agent list` | Show built-in + configured custom agents |
-| Check one custom agent | `mco agent check my-ollama` | Validate one configured agent or Ollama model wrapper |
+- `--allow-paths` validates MCO's requested scope; it is not an operating-system sandbox.
+- Provider sandbox strength depends on the underlying CLI.
+- Hermes oneshot bypasses approvals and therefore requires explicit `--execution-mode yolo`.
+- ACP terminal access is a trusted-agent capability. Use isolation for untrusted agents or prompts.
+- Run parallel writers in separate worktrees; do not let multiple agents edit one working tree concurrently.
 
-Note: `--debate` and `--divide` are mutually exclusive. Use one workflow at a time.
+See [Provider and permission reference](./docs/reference/providers.md) for the complete mapping.
 
-Debate example:
+## Use MCO from another agent
 
-```bash
-mco review \
-  --repo . \
-  --prompt "Review this PR and challenge weak findings before final ranking." \
-  --providers claude,codex,gemini \
-  --debate
-```
+MCO's CLI is self-describing. A calling agent can read `mco -h`, ask which providers the user wants, preview the policy, and then execute.
 
-Divide example:
+> “Use MCO to run a security review with Claude and Codex, and an architecture review with Pi.”
 
-```bash
-mco review \
-  --repo . \
-  --prompt "Review this PR for correctness and performance issues." \
-  --providers claude,codex,gemini \
-  --divide dimensions
-```
+The installer and runtime use two different selections:
 
-## Quick Start
-
-### Human setup
-
-Install MCO and the bundled `mco-cli` Skill in one command (Python 3.10+ required on PATH):
-
-```bash
-npx @tt-a1i/mco@latest install
-```
-
-Install only the CLI globally (Skill sync is manual):
-
-```bash
-npm i -g @tt-a1i/mco
-mco skills sync --agent codex --agent claude-code
-```
-
-Testing a pull request before merge? Download the **Preview package** workflow
-artifact from the PR Checks tab and install the tarball locally. See
-[RELEASING.md](./RELEASING.md#preview-package-ci-artifact).
-
-Or install from source for local development:
-
-```bash
-git clone https://github.com/mco-org/mco.git
-cd mco
-python3 -m pip install -e .
-```
-
-### AI agent setup
-
-Install the CLI and copy the version-matched Skill into selected calling agents:
+- Installer `--agent` chooses which calling agents receive the MCO Skill.
+- Runtime `--providers` chooses which agents execute the current task.
 
 ```bash
 npx @tt-a1i/mco@latest install --agent codex --agent claude-code --yes
 mco doctor --skill-health --json
 ```
 
-Important distinction:
-
-- Installer `--agent` selects **where to install the MCO Skill**.
-- Runtime `--providers` selects **which agents execute the task**.
-
-Run your first multi-agent review:
-
-```bash
-mco review \
-  --repo . \
-  --prompt "Review this repository for high-risk bugs and security issues." \
-  --providers claude,codex,qwen
-```
-
-### Agent-Friendly CLI
-
-MCO's CLI is fully self-describing. Run `mco -h` or `mco review -h` to see grouped flags, defaults, and usage examples — all in the terminal. This means any AI agent that can execute shell commands can learn MCO's interface autonomously by reading the help output, without requiring documentation or prior training.
-
-In practice, you simply tell your IDE agent what you want:
-
-> "Use mco to dispatch a security review to Claude and Codex, and a performance analysis to Gemini and Qwen — run them in parallel."
-
-The agent reads `mco -h`, understands the flags, composes the commands, and orchestrates the entire workflow on its own. You describe the intent; the agent handles the rest.
-
-## Usage
-
-### Review Mode
-
-Structured code review with findings schema. Each provider returns normalized findings with severity, category, evidence, and recommendations.
-
-```bash
-mco review \
-  --repo . \
-  --prompt "Review for security vulnerabilities and performance issues." \
-  --providers claude,codex,gemini,opencode,qwen \
-  --json
-```
-
-### Run Mode
-
-General-purpose multi-agent execution. No forced output schema — providers complete the task freely.
-
-```bash
-mco run \
-  --repo . \
-  --prompt "Summarize the architecture of this project." \
-  --providers claude,codex \
-  --json
-```
-
-### Doctor
-
-Check that your agents are installed, reachable, and authenticated before running tasks:
-
-```bash
-mco doctor
-mco doctor --json
-mco doctor --skill-health --json
-```
-
-Optional `--skill-health` runs a best-effort whole-directory drift check for the bundled `skills/mco-cli` Skill against the global and project install paths declared for every supported calling agent. It distinguishes `not_installed` from `ok`, is disabled by default, never fails doctor when installs are missing, and adds `skill_health` / `skill_drift` fields to `--json` output when enabled.
-
-### Output Formats (Review Mode)
-
-| Format | Flag | Use case |
-|--------|------|----------|
-| Human-readable report | `--format report` (default) | Terminal reading |
-| PR Markdown | `--format markdown-pr` | Post as GitHub PR comment |
-| SARIF 2.1.0 | `--format sarif` | Upload to GitHub Code Scanning |
-| Machine JSON | `--json` | Downstream automation |
-
-### Consensus Engine
-
-MCO v0.9 upgrades review merging from simple deduplication into a consensus analysis layer:
-
-- `agreement_ratio = detected_by_count / total_providers_ran`
-- `consensus_score = agreement_ratio × max_confidence`
-- `consensus_level = confirmed | needs-verification | unverified`
-
-Meaning of each level:
-
-- `confirmed` — at least 50% of providers reported the finding
-- `needs-verification` — 2+ providers reported it, but under 50% agreement
-- `unverified` — only one provider reported it
-
-Outputs now surface this consistently:
-
-- **JSON** — each finding includes `consensus_score` and `consensus_level`
-- **SARIF** — `confidence` is mapped from `consensus_score`
-- **Markdown** — findings are grouped by consensus level
-- **Chain mode** — confirmed findings are rendered as `confirmed-by` instead of `agree`
-
-### Review Coordination Modes
-
-| Mode | Flag | What it does |
-|------|------|--------------|
-| Parallel | default | All providers review the same scope independently |
-| Chain | `--chain` | Run providers sequentially; each sees prior analysis |
-| Debate | `--debate` | Run a second challenge round on merged findings |
-| Divide by files | `--divide files` | Evenly distribute files across providers, prioritizing large files first |
-| Divide by dimensions | `--divide dimensions` | Keep the same file scope, but assign each provider a review dimension |
-
-`--divide` is mutually exclusive with `--chain` and `--debate`.
-
-### Result Modes
-
-| Mode | Behavior |
-|------|----------|
-| `--result-mode stdout` | Print full result to stdout, skip artifact files (default) |
-| `--result-mode artifact` | Write artifact files, print summary |
-| `--result-mode both` | Write artifacts and print full result |
-
-Use `--save-artifacts` to keep stdout mode while still writing artifacts.
-
-### Path Constraints
-
-Restrict which files agents can access:
-
-```bash
-mco run \
-  --repo . \
-  --prompt "Analyze the adapter layer." \
-  --providers claude,codex \
-  --allow-paths runtime,scripts \
-  --target-paths runtime/adapters \
-  --enforcement-mode strict
-```
-
-## Defaults and Overrides
-
-MCO requires an explicit provider choice, but otherwise needs no configuration. You can persist that choice in config files:
-
-- **Project config**: `.mcorc.json` in the repo root
-- **Global config**: `~/.mco/config.json`
-
-Merge order: CLI flags > project config > global config > built-in defaults. Nested objects (like `policy`) are deep-merged.
-
-### Key Runtime Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--providers` | required selection | Comma-separated provider list; ask the user if absent |
-| `--execution-mode` | `write` for run; `read_only` for review | Unified capability profile: `read_only`, `write`, or explicit `yolo` |
-| `--stall-timeout` | `900` | Cancel when no output progress for this duration (seconds) |
-| `--review-hard-timeout` | `1800` | Hard deadline for review mode; `0` disables |
-| `--max-provider-parallelism` | `0` | `0` = full parallelism across selected providers |
-| `--enforcement-mode` | `strict` | `strict` fails closed on unmet permissions |
-| `--strict-contract` | off | Enforce strict findings JSON contract (review mode) |
-| `--format` | `report` | Output format: `report`, `markdown-pr`, `sarif` (review-only for last two) |
-| `--include-token-usage` | off | Best-effort per-provider and aggregate token usage |
-| `--synthesize` | off | Run extra LLM pass for consensus/divergence summary |
-| `--synth-provider` | `claude` | Which provider runs the synthesis pass |
-| `--provider-timeouts` | unset | Per-provider stall-timeout overrides (`provider=seconds`) |
-| `--provider-permissions-json` | unset | Provider permission mapping JSON (see below) |
-| `--provider-models-json` | unset | Per-provider model mapping JSON, e.g. `'{"codex":"gpt-5.4","pi":{"provider":"seal","model":"deepseek-v4-pro"}}'` |
-| `--provider-context-json` | unset | Per-provider context policy JSON, e.g. `'{"pi":{"skills":"disabled","context_files":false}}'` |
-| `--save-artifacts` | off | Write artifacts while keeping stdout result delivery |
-| `--task-id` | auto-generated | Stable task identifier for artifact paths |
-| `--artifact-base` | `reports/review` | Base directory for artifact output |
-| `--memory` | off | Enable cross-session memory via evermemos-mcp |
-| `--space` | auto | Space slug for memory storage (default: inferred from git remote) |
-| `--diff` | off | Review only changes vs merge-base with main/master |
-| `--staged` | off | Review only staged changes |
-| `--unstaged` | off | Review only unstaged working tree changes |
-| `--diff-base` | auto | Git ref for branch diff (e.g. `origin/main`, `HEAD~3`). Implies `--diff` |
-| `--stream` | off | `jsonl` for machine-readable events, `live` for interactive terminal rendering |
-| `--transport` | `shim` | `shim` (stdout parsing) or `acp` (Agent Client Protocol JSON-RPC) |
-| `--agent` | unset | Register a temporary ACP agent; execution still requires `--providers NAME` |
-| `--file` | unset | Read prompt from file path, or `-` for stdin. Mutually exclusive with `--prompt` |
-| `--quiet` | off | Output only final text, no headers or formatting. Mutually exclusive with `--json`/`--stream` |
-| `--chain` | off | Run providers sequentially, feeding each output as context to the next |
-| `--debate` | off | Run a second challenge round on merged findings |
-| `--divide` | off | `files` or `dimensions` task division across providers |
-| `--perspectives-json` | unset | Per-provider review perspective JSON (e.g. `'{"claude":"security","codex":"performance"}'`) |
-
-### Execution modes
-
-MCO translates one execution mode into each selected agent's native launch flags:
-
-| Mode | Meaning | Default use |
-|------|---------|-------------|
-| `read_only` | Inspect and reason without file or shell mutation | `mco review` |
-| `write` | Read, create, and edit workspace files without unrestricted shell/system access where the CLI can express that boundary | `mco run` |
-| `yolo` | Bypass approvals and enable the agent's broadest available execution profile | Explicit opt-in only |
-
-For example, `write` becomes Claude `acceptEdits`, Codex `workspace-write`, Pi's `write/edit` tool set, and Copilot write access with shell denied. `yolo` becomes each provider's native bypass flag. Hermes oneshot already bypasses approvals, so MCO rejects Hermes under `read_only` or `write`; select `--execution-mode yolo` explicitly when using Hermes.
-
-Provider-specific `--provider-permissions-json` remains available as an expert override and is applied on top of the selected execution profile. `allow_paths` validates MCO's requested scope; it is not an operating-system sandbox.
-
-```bash
-mco run \
-  --repo . \
-  --prompt "Implement the requested change and run tests." \
-  --providers claude,codex,pi \
-  --execution-mode write
-```
-
-Override example:
-
-```bash
-mco review \
-  --repo . \
-  --prompt "Review for bugs." \
-  --providers claude,codex,qwen \
-  --save-artifacts \
-  --stall-timeout 900 \
-  --review-hard-timeout 1800 \
-  --max-provider-parallelism 0 \
-  --provider-timeouts qwen=900,codex=900
-```
-
-### Config File Example
-
-```json
-// .mcorc.json
-{
-  "providers": ["claude", "codex", "gemini"],
-  "transport": "acp",
-  "quiet": true,
-  "policy": {
-    "stall_timeout_seconds": 600,
-    "enforcement_mode": "best_effort",
-    "max_provider_parallelism": 3,
-    "chain": false,
-    "provider_models": {
-      "codex": "gpt-5.4",
-      "pi": {"provider": "seal", "model": "deepseek-v4-pro"}
-    },
-    "provider_context": {
-      "pi": {"skills": "disabled", "context_files": false}
-    },
-    "perspectives": {
-      "claude": "Focus on security vulnerabilities and injection attacks",
-      "codex": "Focus on performance bottlenecks and resource leaks",
-      "gemini": "Focus on code maintainability and design patterns"
-    }
-  }
-}
-```
-
-Run `mco review --help` for the full flag list.
-
-## Custom Agents
-
-Config files are loaded in priority order:
-
-1. `.mco/agents.yaml` (project-specific)
-2. `.mcorc.yaml` (project root)
-3. `~/.mco/agents.yaml` (global)
-
-Inspect what MCO sees:
-
-```bash
-mco agent list
-mco agent check my-ollama
-```
-
-Example `.mco/agents.yaml`:
-
-```yaml
-agents:
-  - name: my-acp-agent
-    transport: acp
-    command: my-agent --acp
-    permission_keys: [sandbox]
-
-  - name: my-shim-agent
-    transport: shim
-    command: my-review-bot --json
-
-  - name: my-ollama
-    model: qwen2.5-coder:14b
-```
-
-How it works:
-
-- `transport: acp` registers a custom ACP provider
-- `transport: shim` registers a command-based shim provider
-- `model: ...` registers an Ollama-backed provider automatically
-
-This means local Ollama models can participate in the same `mco review` / `mco run` workflows as Claude, Codex, Gemini, OpenCode, and Qwen.
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `2` | FAIL / input / config / runtime error |
-| `3` | INCONCLUSIVE (review mode only, with `--strict-contract`) |
-
-## How It Works
-
-```
-You (Tech Lead)
-     │
-     ▼
-  mco review / mco run
-     │
-     ├─→ Claude Code  ──┐
-     ├─→ Codex CLI      │
-     ├─→ Gemini CLI     ├─→ Consensus Engine → Debate / Synthesize → Output
-     ├─→ OpenCode       │
-     └─→ Qwen Code   ───┘
+## How it works
+
+```text
+You or a calling agent
+        │
+        ▼
+  mco run / review
+        │
+        ├── Claude ──┐
+        ├── Codex    │
+        ├── Gemini   ├──► merge / consensus / synthesis ──► output
+        ├── Pi       │
+        └── ...   ───┘
                               │
-                    ┌─────────┼─────────┐
-                    ▼         ▼         ▼
-                  JSON    SARIF    Markdown-PR
-               (stdout)  (CI/CD)  (PR comment)
-
-     ↕  (with --memory)
-  evermemos-mcp
-  ┌─────────────────────────┐
-  │ findings  · agent scores│
-  │ run history · priors    │
-  └─────────────────────────┘
+                       JSON · SARIF · Markdown
 ```
 
-The calling agent (or user) invokes `mco` with a prompt and a list of providers. MCO fans out to all selected agents in parallel and waits for all to finish.
+Provider processes are isolated behind a shared adapter contract: detect, run, poll, cancel, and normalize. One provider failure does not discard successful provider results.
 
-Each provider runs as an independent subprocess through a uniform adapter contract:
+## Documentation
 
-1. **Detect** — check binary presence and auth status
-2. **Run** — spawn CLI process with prompt, capture stdout/stderr
-3. **Poll** — monitor process + output byte growth for progress detection
-4. **Cancel** — SIGTERM/SIGKILL on stall timeout or hard deadline
-5. **Normalize** — extract structured findings from raw output
+| Topic | Guide |
+|-------|-------|
+| Installation, first run, and common workflows | [Workflow guide](./docs/guides/workflows.md) |
+| Providers, models, and permission mappings | [Provider reference](./docs/reference/providers.md) |
+| CLI flags, outputs, artifacts, and exit codes | [CLI reference](./docs/reference/cli.md) |
+| Config files and custom agents | [Configuration reference](./docs/reference/configuration.md) |
+| Machine-readable error contract | [Error contract](./docs/contracts/errors-v0.1.x.md) |
+| Provider permission contract | [Permission contract](./docs/contracts/provider-permissions-v0.1.x.md) |
+| Release process | [RELEASING.md](./RELEASING.md) |
+| Release history | [CHANGELOG.md](./CHANGELOG.md) |
 
-Execution model is **wait-all**: one provider's timeout or failure never stops others.
+Run `mco <command> --help` for the authoritative option list installed with your version.
 
-### Retry and Resilience
-
-- Transient errors (timeout, rate-limit, network) are retried automatically with exponential backoff (default: 1 retry).
-- A single provider failure never blocks other providers.
-- Every invocation executes providers and returns fresh output (no result-cache replay).
-
-### Running Inside Claude Code
-
-MCO automatically strips the `CLAUDECODE` environment variable before spawning provider subprocesses. You can safely run `mco` from within a Claude Code session.
-
-## Artifacts
-
-When artifact writing is enabled (`--save-artifacts` or `--result-mode artifact/both`), MCO writes:
-
-```
-reports/review/<task_id>/
-  summary.md          # Human-readable summary
-  decision.md         # PASS / FAIL / ESCALATE / PARTIAL
-  findings.json       # Aggregated normalized findings (review mode)
-  run.json            # Machine-readable execution metadata
-  providers/          # Per-provider result JSON
-  raw/                # Raw stdout/stderr logs
-```
-
-## Cross-Session Memory (Powered by evermemos-mcp)
-
-MCO integrates with [evermemos-mcp](https://pypi.org/project/evermemos-mcp/) to give your agent team persistent memory across sessions. Add `--memory` once and MCO starts accumulating institutional knowledge: which findings were real, which agents are reliable for which task types, and what has already been fixed.
-
-Fully opt-in — without `--memory`, MCO behaves exactly as before.
+## Development
 
 ```bash
-# Install the optional Python dependency
-python3 -m pip install mcp
-
-# Run with memory enabled
-mco review \
-  --repo . \
-  --prompt "Review for security issues." \
-  --providers claude,codex,gemini \
-  --memory
+git clone https://github.com/mco-org/mco.git
+cd mco
+python3 -m pip install -e .
+python3 -m unittest discover -s tests -p 'test_*.py'
+npm test
 ```
-
-**What memory adds:**
-
-| Phase | What happens |
-|-------|-------------|
-| Pre-run | Prior findings injected into prompt with confidence grades `[HIGH]`/`[MEDIUM]`/`[LOW]` |
-| Pre-run | Agent weights loaded — more reliable agents get more weight in consensus |
-| Post-run | New findings persisted with finding hash for cross-run deduplication |
-| Post-run | Agent scores updated (cross-validation: agents that agree get higher reliability) |
-| Post-run | Passively fixed findings auto-confirmed (disappeared + file changed = fixed) |
-
-**Finding lifecycle:**
-
-```
-open → passive_fix_candidate → fixed
-            ↓
-         (rejected / wontfix / accepted)
-```
-
-A finding that disappears when its file was changed is marked `passive_fix_candidate`. If it stays absent a second consecutive run, it's auto-confirmed as `fixed` — no manual intervention needed.
-
-**Agent reliability:**
-
-MCO tracks each agent's cross-validation rate per task category (security, performance, logic, architecture, style). Agents that consistently agree with others on real findings build up higher reliability scores. Cold-start blends repo-specific, tech-stack, and global baseline scores until enough runs accumulate.
-
-### Memory Subcommands
-
-```bash
-mco memory status                      # Memory spaces and finding/score counts
-mco memory agent-stats                 # Per-agent reliability scores
-mco memory priors --category security  # Blended agent weight priors for a task type
-
-mco findings list                      # All persisted findings
-mco findings list --status open        # Filter by status
-mco findings confirm <hash>            # Manually mark a finding as fixed
-```
-
-### Storage Design
-
-- **Backend**: [evermemos-mcp](https://pypi.org/project/evermemos-mcp/) via `uvx evermemos-mcp@latest` (append-only, MCP stdio protocol)
-- **Finding hash**: `sha256(repo + file_path + category + normalize(title))` — stable across runs, independent of line numbers or severity changes
-- **Spaces**: `coding:<slug>--findings`, `coding:<slug>--agents`, `coding:<slug>--context`, `coding:stacks--<tech>`, `coding:global--agents`
-- **Deduplication**: client-side latest-wins on read; all writes are appends
-
-Requires `EVERMEMOS_API_KEY` environment variable. See `mco review --help` for `--space` and other memory flags.
-
-## MCP Server Mode
-
-MCO can run as an MCP server, allowing AI agents and MCP-compatible clients to call MCO tools programmatically over stdio.
-
-The npm package includes MCO itself. MCP server mode also needs the Python MCP SDK:
-
-```bash
-python3 -m pip install mcp
-```
-
-Configure in your MCP client:
-
-```json
-{
-  "mcpServers": {
-    "mco": {
-      "command": "mco",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-**Available tools:** `mco_review`, `mco_run`, `mco_doctor`, `mco_findings_list`, `mco_memory_status`
-
-All tools return a uniform envelope: `{"ok": true, "data": ...}` on success, `{"ok": false, "error": {"code": "...", "message": "..."}}` on failure.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE)
+MIT — see [LICENSE](./LICENSE).
