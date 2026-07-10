@@ -61,6 +61,11 @@ def _event_usage(payload: Mapping[str, Any]) -> Optional[dict[str, int]]:
     return _normalize_usage(usage)
 
 
+def decode_plain_text(raw: str) -> AnswerTransport:
+    deltas = (AnswerDelta(raw),) if raw else ()
+    return AnswerTransport(deltas, raw, "succeeded", None)
+
+
 def decode_codex_events(raw: str) -> AnswerTransport:
     deltas: list[AnswerDelta] = []
     final_answer: Optional[str] = None

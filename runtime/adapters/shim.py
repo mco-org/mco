@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, TextIO
 
+from ..answer_transport import AnswerTransport, decode_plain_text
 from ..artifacts import expected_paths
 from ..contracts import (
     CapabilitySet,
@@ -95,6 +96,9 @@ class ShimAdapterBase:
 
     def supported_model_keys(self) -> List[str]:
         return []
+
+    def decode_transport(self, raw: str) -> AnswerTransport:
+        return decode_plain_text(raw)
 
     def run(self, input_task: TaskInput) -> TaskRunRef:
         command_override = input_task.metadata.get("command_override")
