@@ -317,10 +317,19 @@ mco review \
 
 ## Quick Start
 
-Install via npm (Python 3.10+ required on PATH):
+### Human setup
+
+Install MCO and the bundled `mco-cli` Skill in one command (Python 3.10+ required on PATH):
+
+```bash
+npx @tt-a1i/mco@latest install
+```
+
+Install only the CLI globally (Skill sync is manual):
 
 ```bash
 npm i -g @tt-a1i/mco
+mco skills sync --agent codex --agent claude-code
 ```
 
 Testing a pull request before merge? Download the **Preview package** workflow
@@ -334,6 +343,20 @@ git clone https://github.com/mco-org/mco.git
 cd mco
 python3 -m pip install -e .
 ```
+
+### AI agent setup
+
+Install the CLI and copy the version-matched Skill into selected calling agents:
+
+```bash
+npx @tt-a1i/mco@latest install --agent codex --agent claude-code --yes
+mco doctor --skill-health --json
+```
+
+Important distinction:
+
+- Installer `--agent` selects **where to install the MCO Skill**.
+- Runtime `--providers` selects **which agents execute the task**.
 
 Run your first multi-agent review:
 

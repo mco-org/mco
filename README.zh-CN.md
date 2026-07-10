@@ -294,10 +294,19 @@ mco review \
 
 ## 快速开始
 
-通过 npm 安装（需要系统有 Python 3.10+）：
+### 人类用户
+
+一条命令安装 MCO 和内置 `mco-cli` Skill（需要系统有 Python 3.10+）：
+
+```bash
+npx @tt-a1i/mco@latest install
+```
+
+仅安装 CLI（Skill 需手动同步）：
 
 ```bash
 npm i -g @tt-a1i/mco
+mco skills sync --agent codex --agent claude-code
 ```
 
 合并 PR 前想本地验证？从 PR **Checks** 页下载 **Preview package** workflow 产物，在本地安装 tarball。详见 [RELEASING.md](./RELEASING.md#preview-package-ci-artifact)。
@@ -309,6 +318,20 @@ git clone https://github.com/mco-org/mco.git
 cd mco
 python3 -m pip install -e .
 ```
+
+### AI Agent 安装
+
+把 CLI 和版本匹配的 Skill 安装到选定的 calling agent：
+
+```bash
+npx @tt-a1i/mco@latest install --agent codex --agent claude-code --yes
+mco doctor --skill-health --json
+```
+
+请区分两个概念：
+
+- 安装器的 `--agent` 表示 **把 MCO Skill 装到哪里**。
+- 运行时的 `--providers` 表示 **由哪些 agent 执行任务**。
 
 运行第一次多 Agent 审查：
 

@@ -7,16 +7,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.8] - 2026-07-10
 ### Added
-- Added built-in xAI Grok Build (`grok`) and Cursor CLI (`cursor`) adapters, including their official headless and ACP launch commands.
-- Added unified `--execution-mode read_only|write|yolo` profiles across all built-in adapters and MCP tools, with provider-native launch flag translation.
+- Added one-command installer: `npx @tt-a1i/mco@latest install`.
+- Added `mco skills read`, `mco skills status`, and `mco skills sync` for bundled Skill management.
+- Added version-matched Skill installation through `skills@1` with mandatory `--copy`.
+- Added installer and Skill-sync contract documentation.
 
 ### Changed
-- Removed the implicit run/review provider set. Callers must use an explicit CLI or persisted configuration selection; otherwise MCO returns `provider_selection_required` so the orchestrating agent can ask the user.
-- Defaulted `mco review` to read-only execution and `mco run` to workspace file-writing execution; approval-bypassing `yolo` remains explicit. Hermes fails closed outside `yolo` because its oneshot mode inherently bypasses approvals.
+- Split the bundled `mco-cli` Skill into progressive references with format validation in CI.
 
 ## [0.10.7] - 2026-07-07
 ### Added
+- Added built-in xAI Grok Build (`grok`) and Cursor CLI (`cursor`) adapters, including their official headless and ACP launch commands.
+- Added unified `--execution-mode read_only|write|yolo` profiles across all built-in adapters and MCP tools, with provider-native launch flag translation.
 - Added agent-safe `--dry-run` previews with default and effective provider risk, resolved policies, and command templates.
 - Added stable JSON error envelopes for parse, input, and configuration failures.
 - Added best-effort skill health checks and PR preview package artifacts.

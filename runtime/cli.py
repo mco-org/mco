@@ -21,6 +21,7 @@ from .formatters import (
 from .execution_modes import EXECUTION_MODES, execution_permissions
 from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
+from .skill_manager import read_bundled_skill, skill_status, sync_bundled_skill
 from . import __version__
 from .review_engine import REVIEW_FINDINGS_SCHEMA_PATH, ReviewRequest, provider_policy_preview, run_review
 
@@ -38,6 +39,7 @@ _ERROR_DETAILS = {
     "invalid_providers": ("input", "Select providers shown by `mco agent list --json`."),
     "config_error": ("configuration", "Correct the project/global configuration and retry."),
     "invalid_config": ("configuration", "Remove the incompatible flags or configuration values and retry."),
+    "agent_selection_required": ("configuration", "Choose one or more calling agents for the mco-cli Skill."),
     "runtime_error": ("runtime", "Inspect provider results and logs before retrying."),
 }
 
@@ -1492,6 +1494,39 @@ def build_parser() -> argparse.ArgumentParser:
     mem_status.add_argument("--repo", default=".", help="Repository root path")
     mem_status.add_argument("--space", default="", help="Space slug override")
 
+    skills_cmd = subparsers.add_parser(
+        "skills",
+        help="Read, inspect, and sync the bundled mco-cli Skill",
+        description="Manage the version-matched mco-cli Skill bundled with this npm package.",
+        formatter_class=_HelpFormatter,
+    )
+    skills_sub = skills_cmd.add_subparsers(dest="skills_action", required=True)
+
+    skills_read = skills_sub.add_parser("read", help="Print bundled Skill markdown", formatter_class=_HelpFormatter)
+    skills_read.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+
+    skills_status = skills_sub.add_parser(
+        "status",
+        help="Show bundled Skill health and drift",
+        formatter_class=_HelpFormatter,
+    )
+    skills_status.add_argument("--repo", default=".", help="Repository root used for project-local skill checks")
+    skills_status.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+
+    skills_sync = skills_sub.add_parser(
+        "sync",
+        help="Copy bundled Skill into selected calling agents",
+        formatter_class=_HelpFormatter,
+    )
+    skills_sync.add_argument(
+        "--agent",
+        action="append",
+        default=[],
+        help="Calling-agent target for Skill installation (repeatable)",
+    )
+    skills_sync.add_argument("--dry-run", action="store_true", help="Print the exact sync plan without mutation")
+    skills_sync.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+
     # ── serve subcommand ──────────────────────────────────────
     subparsers.add_parser(
         "serve",
@@ -1762,6 +1797,85 @@ def _handle_findings(args: argparse.Namespace) -> int:
             return 2
 
     print("Unknown findings action.", file=sys.stderr)
+    return 2
+
+
+def _package_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _handle_skills(args: argparse.Namespace) -> int:
+    package_root = _package_root()
+    wants_json = bool(getattr(args, "json", False))
+
+    if args.skills_action == "read":
+        skill_path = package_root / "skills" / "mco-cli" / "SKILL.md"
+        try:
+            content = read_bundled_skill(package_root)
+        except FileNotFoundError as exc:
+            message = str(exc)
+            if wants_json:
+                print(json.dumps(_error_envelope("config_error", message), ensure_ascii=True))
+            else:
+                print(message, file=sys.stderr)
+            return 2
+        if wants_json:
+            print(json.dumps({
+                "ok": True,
+                "skill": "mco-cli",
+                "path": str(skill_path),
+                "content": content,
+            }, ensure_ascii=True))
+        else:
+            print(content, end="" if content.endswith("\n") else "\n")
+        return 0
+
+    if args.skills_action == "status":
+        repo_root = Path(getattr(args, "repo", ".")).resolve()
+        payload = {"ok": True, **skill_status(package_root, cwd=repo_root)}
+        if wants_json:
+            print(json.dumps(payload, ensure_ascii=True))
+        else:
+            health = payload["skill_health"]
+            print("Skill status: {}".format(health.get("status")))
+            print("Reference: {}".format((health.get("reference") or {}).get("path", "unknown")))
+        return 0
+
+    if args.skills_action == "sync":
+        agents = list(getattr(args, "agent", []) or [])
+        if not agents:
+            message = "Choose one or more calling agents for the mco-cli Skill."
+            if wants_json:
+                print(json.dumps(_error_envelope("agent_selection_required", message), ensure_ascii=True))
+            else:
+                print(message, file=sys.stderr)
+            return 2
+        try:
+            result = sync_bundled_skill(
+                package_root,
+                agents,
+                dry_run=bool(getattr(args, "dry_run", False)),
+            )
+        except ValueError as exc:
+            message = str(exc)
+            subtype = "agent_selection_required" if "agent_selection_required" in message else "invalid_config"
+            if "unknown skill agent" in message or "invalid skill agent" in message:
+                subtype = "invalid_config"
+            if wants_json:
+                print(json.dumps(_error_envelope(subtype, message), ensure_ascii=True))
+            else:
+                print(message, file=sys.stderr)
+            return 2
+        payload = {"ok": result.get("status") != "failed", **result}
+        if wants_json:
+            print(json.dumps(payload, ensure_ascii=True))
+        else:
+            print("Skill sync {} for agents: {}".format(result.get("status"), ", ".join(result.get("agents", []))))
+            if result.get("dry_run"):
+                print("Command: {}".format(" ".join(result.get("argv", []))))
+        return 0 if payload["ok"] else 1
+
+    print("Unknown skills action.", file=sys.stderr)
     return 2
 
 
@@ -2145,6 +2259,9 @@ def main(argv: List[str] | None = None) -> int:
 
     if args.command == "memory":
         return _handle_memory(args)
+
+    if args.command == "skills":
+        return _handle_skills(args)
 
     if args.command == "session":
         return _handle_session(args)

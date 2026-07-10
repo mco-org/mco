@@ -13,29 +13,31 @@ def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _reference_skill_candidates(package_root: Path, cwd: Path) -> List[Path]:
-    candidates = [
-        cwd / "skills" / SKILL_NAME / SKILL_FILENAME,
-        package_root / "skills" / SKILL_NAME / SKILL_FILENAME,
-    ]
-    unique: List[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate.resolve()) if candidate.exists() else str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(candidate)
-    return unique
+def _reference_skill_candidates(
+    package_root: Path,
+    cwd: Path,
+    *,
+    reference_preference: str = "cwd_first",
+) -> List[Path]:
+    bundled = package_root / "skills" / SKILL_NAME / SKILL_FILENAME
+    project = cwd / "skills" / SKILL_NAME / SKILL_FILENAME
+    if reference_preference == "bundled_only":
+        return [bundled]
+    return [project, bundled]
 
 
 def _resolve_reference_skill(
     *,
     package_root: Path,
     cwd: Optional[Path] = None,
+    reference_preference: str = "cwd_first",
 ) -> Tuple[Optional[Path], str, Optional[str]]:
     search_root = cwd or Path.cwd()
-    for candidate in _reference_skill_candidates(package_root, search_root):
+    for candidate in _reference_skill_candidates(
+        package_root,
+        search_root,
+        reference_preference=reference_preference,
+    ):
         if candidate.is_file():
             return candidate, "ok", _file_sha256(candidate)
     return None, "reference_not_found", None
@@ -98,6 +100,7 @@ def check_skill_health(
     enabled: bool,
     package_root: Optional[Path] = None,
     cwd: Optional[Path] = None,
+    reference_preference: str = "cwd_first",
 ) -> Tuple[Dict[str, object], Dict[str, object]]:
     if not enabled:
         skipped = {
@@ -111,6 +114,7 @@ def check_skill_health(
     reference_path, reference_status, reference_sha256 = _resolve_reference_skill(
         package_root=root,
         cwd=cwd,
+        reference_preference=reference_preference,
     )
     reference_payload: Dict[str, object] = {
         "skill": SKILL_NAME,
