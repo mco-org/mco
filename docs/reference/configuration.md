@@ -79,7 +79,7 @@ Temporary ACP agents can also be registered for one invocation:
 
 ```bash
 mco run \
-  --agent mybot "mybot --acp" \
+  --custom-agent mybot "mybot --acp" \
   --providers mybot \
   --prompt "Analyze this repository."
 ```

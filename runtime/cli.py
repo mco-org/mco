@@ -19,6 +19,8 @@ from .formatters import (
     format_sarif,
 )
 from .execution_modes import EXECUTION_MODES, execution_permissions
+from .invocation_runtime import parse_invocations, run_invocations, validate_execution_scope
+from .models import discover_models
 from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
 from .skill_manager import read_bundled_skill, skill_status, sync_bundled_skill
@@ -1139,10 +1141,17 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     scope.add_argument(
         "--agent",
+        action="append",
+        dest="invocation_agents",
+        metavar="[ALIAS=]PROVIDER:MODEL",
+        help="Repeatable model-qualified invocation. For example: --agent fast=pi:gpt-5.4",
+    )
+    scope.add_argument(
+        "--custom-agent",
         nargs=2,
         metavar=("NAME", "COMMAND"),
         default=None,
-        help='Register a temporary ACP agent; select it separately with --providers mybot',
+        help="Register a temporary ACP agent; select it separately with --providers NAME",
     )
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
@@ -2231,13 +2240,13 @@ def main(argv: List[str] | None = None) -> int:
             return 0
 
         if args.agent_action == "models":
-            from .models import discover_models
+            from .models import discover_models as _discover_models
 
             providers_str = getattr(args, "providers", "codex,hermes,pi")
             providers = [p.strip() for p in providers_str.split(",") if p.strip()]
             results: Dict[str, object] = {}
             for provider in providers:
-                result = discover_models(provider)
+                result = _discover_models(provider)
                 results[provider] = result
                 if not getattr(args, "json", False):
                     status = "OK" if result.get("ok") else "FAIL"
@@ -2291,6 +2300,7 @@ def main(argv: List[str] | None = None) -> int:
 
     policy_cfg = file_config.get("policy", {}) if isinstance(file_config.get("policy"), dict) else {}
 
+    providers_was_explicit = hasattr(args, "providers")
     # Group 1: top-level flags
     _TOP_LEVEL_DEFAULTS = {
         "providers": ",".join(DEFAULT_CONFIG.providers),
@@ -2345,8 +2355,8 @@ def main(argv: List[str] | None = None) -> int:
 
     configured_agents = file_config.get("agents", []) if isinstance(file_config.get("agents"), list) else []
 
-    # Build extra_agents from --agent flag
-    extra_agents = _normalize_cli_agent_pairs(getattr(args, "agent", None))
+    # Build extra_agents from --custom-agent flag.
+    extra_agents = _normalize_cli_agent_pairs(getattr(args, "custom_agent", None))
     if not extra_agents:
         extra_agents = None
 
@@ -2394,13 +2404,6 @@ def main(argv: List[str] | None = None) -> int:
             "--space takes a slug (e.g. 'my-repo'), not a full space_id.\n"
             "The 'coding:' prefix and '--findings'/'--context' suffixes are added automatically.",
         )
-    if not providers:
-        return _stream_error_exit(
-            "provider_selection_required",
-            "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
-            "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
-        )
-
     # Normalize diff flags
     diff_base_arg = args.diff_base.strip() if isinstance(args.diff_base, str) else ""
     if diff_base_arg and args.staged:
@@ -2419,6 +2422,78 @@ def main(argv: List[str] | None = None) -> int:
         prompt = _resolve_prompt(args)
     except ValueError as exc:
         return _stream_error_exit("input_error", str(exc))
+    raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
+    use_invocation_runtime = bool(raw_invocation_agents)
+    if use_invocation_runtime:
+        if providers_was_explicit:
+            if raw_invocation_agents:
+                return _stream_error_exit("invalid_config", "--agent and --providers are mutually exclusive")
+        try:
+            execution_scope = validate_execution_scope(
+                repo_root,
+                _parse_paths(args.target_paths),
+                cfg.policy.allow_paths,
+            )
+            invocations = parse_invocations(raw_invocation_agents, execution_scope)
+        except ValueError as exc:
+            return _stream_error_exit("input_error", str(exc))
+        if not invocations:
+            return _stream_error_exit(
+                "provider_selection_required",
+                "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
+                "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
+            )
+        adapter_map = _doctor_adapter_registry(
+            transport=getattr(args, "transport", "shim"),
+            extra_agents=extra_agents,
+            configured_agents=configured_agents,
+        )
+        unknown = [item.provider for item in invocations if item.provider not in adapter_map]
+        if unknown:
+            return _stream_error_exit("invalid_providers", "Unknown providers: {}".format(", ".join(dict.fromkeys(unknown))))
+        for invocation in invocations:
+            preview = provider_policy_preview(invocation.provider, adapter_map[invocation.provider], cfg.policy)
+            if preview["would_fail_strict"]:
+                return _stream_error_exit(
+                    "config_error",
+                    "invocation '{}': {}".format(invocation.invocation_id, preview["failure_reason"]),
+                )
+            discovery = discover_models(invocation.provider)
+            models = discovery.get("models", []) if isinstance(discovery, dict) else []
+            known_model_ids = {
+                str(item.get("id", ""))
+                for item in models
+                if isinstance(item, dict) and str(item.get("id", ""))
+            }
+            if discovery.get("ok") and known_model_ids and invocation.model != "default" and invocation.model not in known_model_ids:
+                return _stream_error_exit(
+                    "input_error",
+                    "unknown model '{}' for provider '{}'".format(invocation.model, invocation.provider),
+                )
+        try:
+            payload = run_invocations(
+                invocations=invocations,
+                adapters=adapter_map,
+                repo_root=repo_root,
+                prompt=prompt,
+                timeout_seconds=cfg.policy.stall_timeout_seconds,
+                provider_permissions=cfg.policy.provider_permissions,
+                allow_paths=cfg.policy.allow_paths,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            return _stream_error_exit("runtime_error", str(exc))
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=True))
+        else:
+            for item in payload["outputs"]:
+                print(item["output"], end="")
+        return 0
+    if not providers:
+        return _stream_error_exit(
+            "provider_selection_required",
+            "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
+            "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
+        )
     req = ReviewRequest(
         repo_root=repo_root,
         prompt=prompt,
