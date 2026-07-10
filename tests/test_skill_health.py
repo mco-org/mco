@@ -79,6 +79,30 @@ class SkillHealthTests(unittest.TestCase):
         self.assertEqual(health["reason"], "reference_skill_not_found")
         self.assertEqual(drift["status"], "ok")
 
+    def test_bundled_only_ignores_cwd_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_root = root / "package"
+            bundled_dir = package_root / "skills" / "mco-cli"
+            bundled_dir.mkdir(parents=True)
+            (bundled_dir / "SKILL.md").write_text("bundled\n", encoding="utf-8")
+
+            repo_skill = root / "skills" / "mco-cli"
+            repo_skill.mkdir(parents=True)
+            (repo_skill / "SKILL.md").write_text("repo\n", encoding="utf-8")
+
+            health, _ = check_skill_health(
+                enabled=True,
+                package_root=package_root,
+                cwd=root,
+                reference_preference="bundled_only",
+            )
+
+        self.assertEqual(
+            Path(str(health["reference"]["path"])).resolve(),
+            (bundled_dir / "SKILL.md").resolve(),
+        )
+
 
 class CliDoctorSkillTests(unittest.TestCase):
     def test_doctor_without_skill_health_omits_skill_fields(self) -> None:

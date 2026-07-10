@@ -35,6 +35,15 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Run Node tests
+        run: npm test
+
+      - name: Validate bundled skill format
+        run: python3 scripts/check_skill_format.py skills/mco-cli
+
+      - name: Validate package/runtime version alignment
+        run: python3 scripts/check_package_version.py
+
       - name: Run npm packaging smoke
         run: ./scripts/run_npm_packaging_smoke.sh
 

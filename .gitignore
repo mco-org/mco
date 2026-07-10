@@ -3,6 +3,7 @@
 
 # Python
 __pycache__/
+/node_modules/
 *.py[cod]
 *.pyo
 *.pyd

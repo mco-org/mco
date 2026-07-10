@@ -1,0 +1,37 @@
+{
+  "agents": {
+    "claude-code": {
+      "binaries": ["claude"]
+    },
+    "codex": {
+      "binaries": ["codex"]
+    },
+    "cursor": {
+      "binaries": ["agent", "cursor"]
+    },
+    "gemini-cli": {
+      "binaries": ["gemini"]
+    },
+    "opencode": {
+      "binaries": ["opencode"]
+    },
+    "pi": {
+      "binaries": ["pi"]
+    },
+    "hermes-agent": {
+      "binaries": ["hermes"]
+    },
+    "github-copilot": {
+      "binaries": ["copilot"]
+    },
+    "qwen-code": {
+      "binaries": ["qwen"]
+    },
+    "windsurf": {
+      "binaries": ["windsurf"]
+    },
+    "cline": {
+      "binaries": ["cline"]
+    }
+  }
+}

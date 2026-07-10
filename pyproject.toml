@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mco"
-version = "0.10.7"
+version = "0.10.8"
 description = "Neutral multi-provider CLI orchestrator for agent-style run/review workflows."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,7 +42,8 @@ mco = "runtime.cli:main"
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["runtime*"]
+include = ["runtime*", "skills"]
 
 [tool.setuptools.package-data]
-runtime = ["schemas/*.json"]
+runtime = ["schemas/*.json", "data/*.json"]
+skills = ["mco-cli/*.md", "mco-cli/references/*.md"]
