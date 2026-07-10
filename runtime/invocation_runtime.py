@@ -50,6 +50,19 @@ def parse_invocations(raw_agents: Sequence[str], execution_scope: Sequence[str])
     return invocations
 
 
+def default_invocations(
+    providers: Sequence[str],
+    execution_scope: Sequence[str],
+    provider_models: Mapping[str, Mapping[str, str]],
+) -> list[AgentInvocation]:
+    raw_agents = []
+    for provider in providers:
+        model_config = provider_models.get(provider, {})
+        model = model_config.get("model", "default") if isinstance(model_config, Mapping) else "default"
+        raw_agents.append("{}:{}".format(provider, model or "default"))
+    return parse_invocations(raw_agents, execution_scope)
+
+
 def validate_execution_scope(repo_root: str, target_paths: Sequence[str], allow_paths: Sequence[str]) -> list[str]:
     root = Path(repo_root).resolve()
     allowed = [(root / path).resolve() for path in allow_paths]

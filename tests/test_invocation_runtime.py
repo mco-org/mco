@@ -49,6 +49,20 @@ class DeterministicFakeAdapter:
 
 
 class InvocationRuntimeCliTests(unittest.TestCase):
+    def test_providers_shorthand_uses_invocation_runtime_with_default_model(self) -> None:
+        adapter = DeterministicFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "compare", "--json", "--providers", "pi",
+                ])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual([task.metadata["invocation_id"] for task in adapter.inputs], ["pi-default"])
+        self.assertNotIn("model", adapter.inputs[0].metadata)
+        self.assertEqual(stdout.getvalue().strip(), '{"status": "complete", "outputs": [{"invocation_id": "pi-default", "provider": "pi", "model": "default", "output": "answer for default"}]}')
+
     def test_cli_runs_multiple_models_for_one_provider_and_returns_raw_answers(self) -> None:
         adapter = DeterministicFakeAdapter()
         with tempfile.TemporaryDirectory() as repo:

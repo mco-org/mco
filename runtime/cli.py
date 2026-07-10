@@ -19,7 +19,7 @@ from .formatters import (
     format_sarif,
 )
 from .execution_modes import EXECUTION_MODES, execution_permissions
-from .invocation_runtime import parse_invocations, run_invocations, validate_execution_scope
+from .invocation_runtime import default_invocations, parse_invocations, run_invocations, validate_execution_scope
 from .models import discover_models
 from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
@@ -2423,7 +2423,7 @@ def main(argv: List[str] | None = None) -> int:
     except ValueError as exc:
         return _stream_error_exit("input_error", str(exc))
     raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
-    use_invocation_runtime = bool(raw_invocation_agents)
+    use_invocation_runtime = bool(raw_invocation_agents) or providers_was_explicit
     if use_invocation_runtime:
         if providers_was_explicit:
             if raw_invocation_agents:
@@ -2434,7 +2434,11 @@ def main(argv: List[str] | None = None) -> int:
                 _parse_paths(args.target_paths),
                 cfg.policy.allow_paths,
             )
-            invocations = parse_invocations(raw_invocation_agents, execution_scope)
+            invocations = (
+                parse_invocations(raw_invocation_agents, execution_scope)
+                if raw_invocation_agents
+                else default_invocations(providers, execution_scope, cfg.policy.provider_models)
+            )
         except ValueError as exc:
             return _stream_error_exit("input_error", str(exc))
         if not invocations:
