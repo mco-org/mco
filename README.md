@@ -94,12 +94,12 @@ MCO is designed to be called by any orchestrating agent or AI-powered IDE — Cl
 
 ## AI Agent Quick Start
 
-When another coding agent calls MCO, start with the health check and a dry run before executing:
+When another coding agent calls MCO, start with the health check and a dry run before executing. The default five-provider set means compatibility-audited, not read-only: Codex defaults to workspace write, Gemini and Qwen bypass interactive approvals, and OpenCode permissions remain provider-controlled. For a read-only first run, explicitly select Claude (plan mode) and Pi (read-only tool allowlist):
 
 ```bash
-mco doctor --json
-mco run --repo . --prompt "Summarize this repo." --providers claude,codex --dry-run --json
-mco run --repo . --prompt "Summarize this repo." --providers claude,codex --json
+mco doctor --providers claude,pi --json
+mco run --repo . --prompt "Summarize this repo." --providers claude,pi --dry-run --json
+mco run --repo . --prompt "Summarize this repo." --providers claude,pi --json
 ```
 
 For review workflows:
@@ -109,7 +109,7 @@ mco review --repo . --prompt "Review for bugs." --providers claude,codex,pi --dr
 mco review --repo . --prompt "Review for bugs." --providers claude,codex,pi --json
 ```
 
-`--dry-run` resolves providers, policy, risk metadata, prompt hash, artifact settings, and command templates without starting any agent process. Use it when an orchestrating agent needs to show the user what will run before fan-out.
+`--dry-run` resolves providers, default/effective risk metadata, policy, prompt hash, artifact settings, and command templates without starting any agent process. Use it when an orchestrating agent needs to show the user what will run before fan-out. With `--json`, parse/input/config failures return the stable envelope documented in [`docs/contracts/errors-v0.1.x.md`](./docs/contracts/errors-v0.1.x.md).
 
 ## One Agent is a Tool. Five Agents are a Team.
 

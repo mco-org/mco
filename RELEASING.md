@@ -21,9 +21,11 @@ npm install /path/to/tt-a1i-mco-X.Y.Z.tgz --prefix "$tmp" --no-audit --no-fund
 "$tmp/node_modules/.bin/mco" --help
 ```
 
-When GitHub token permissions allow, the workflow also posts the same install
-hint as a PR comment. Fork PRs or restricted tokens may skip the comment without
-failing the workflow.
+For same-repository pull requests, a separate job with only `pull-requests: write`
+permission makes a best-effort PR comment with the install hint. A denied comment
+never blocks the preview build. That job never checks out or executes PR code.
+Fork PRs receive the same instructions through the workflow summary without
+granting untrusted code a write-capable token.
 
 ## 1. Prepare the release PR
 

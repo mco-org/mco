@@ -504,8 +504,9 @@ class CliJsonContractTests(unittest.TestCase):
 
     def test_invalid_synth_provider_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            stdout = io.StringIO()
             stderr = io.StringIO()
-            with redirect_stderr(stderr):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main(
                     [
                         "run",
@@ -521,7 +522,80 @@ class CliJsonContractTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(exit_code, 2)
-            self.assertIn("--synth-provider must be one of selected providers", stderr.getvalue())
+            self.assertEqual(stderr.getvalue(), "")
+            payload = json.loads(stdout.getvalue())
+            self.assertFalse(payload["ok"])
+            self.assertEqual(
+                tuple(payload["error"].keys()),
+                ("category", "subtype", "message", "hint", "provider", "retryable", "exit_code"),
+            )
+            self.assertEqual(payload["error"]["category"], "configuration")
+            self.assertEqual(payload["error"]["subtype"], "invalid_config")
+            self.assertEqual(payload["error"]["exit_code"], 2)
+            self.assertIn("--synth-provider must be one of selected providers", payload["error"]["message"])
+
+    def test_argparse_failure_is_json_when_json_requested(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main(["run", "--json", "--transport", "invalid"])
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stderr.getvalue(), "")
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["category"], "input")
+        self.assertEqual(payload["error"]["subtype"], "parse_error")
+        self.assertFalse(payload["error"]["retryable"])
+        self.assertTrue(payload["error"]["hint"])
+
+    def test_mixed_known_and_unknown_providers_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                exit_code = main([
+                    "run",
+                    "--repo", tmpdir,
+                    "--prompt", "run",
+                    "--providers", "codex,unknown-provider",
+                    "--json",
+                ])
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stderr.getvalue(), "")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"]["subtype"], "invalid_providers")
+        self.assertIn("unknown-provider", payload["error"]["message"])
+
+    def test_provider_failure_categories_remain_machine_readable(self) -> None:
+        failures = (
+            {"reason": "provider_unavailable", "presence_reason": "auth_check_failed"},
+            {"final_error": "retryable_timeout", "cancel_reason": "stall_timeout"},
+            {"final_error": "normalization_error", "parse_reason": "invalid_json"},
+            {"reason": "permission_enforcement_failed", "unknown_permission_keys": ["sandbox"]},
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for provider_result in failures:
+                with self.subTest(provider_result=provider_result):
+                    result = ReviewResult(
+                        task_id="task-failed",
+                        artifact_root=None,
+                        decision="FAIL",
+                        terminal_state="FAILED",
+                        provider_results={"codex": {"success": False, **provider_result}},
+                        findings_count=0,
+                        parse_success_count=0,
+                        parse_failure_count=1,
+                        schema_valid_count=0,
+                        dropped_findings_count=0,
+                    )
+                    exit_code, payload = self._invoke_json(
+                        ["run", "--repo", tmpdir, "--prompt", "run", "--providers", "codex", "--json"],
+                        result,
+                    )
+                    self.assertEqual(exit_code, 2)
+                    self.assertEqual(payload["provider_results"]["codex"], {"success": False, **provider_result})
 
 
 if __name__ == "__main__":

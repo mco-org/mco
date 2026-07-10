@@ -65,6 +65,18 @@ class CliDoctorTests(unittest.TestCase):
             exit_code = main(["doctor", "--providers", "unknown"])
         self.assertEqual(exit_code, 2)
 
+    def test_doctor_invalid_provider_json_uses_error_envelope(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main(["doctor", "--providers", "claude,unknown", "--json"])
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stderr.getvalue(), "")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"]["subtype"], "invalid_providers")
+        self.assertIn("unknown", payload["error"]["message"])
+
     def test_doctor_human_report_suggests_ready_providers_when_not_ok(self) -> None:
         probe = {
             "claude": ProviderPresence(
@@ -94,6 +106,26 @@ class CliDoctorTests(unittest.TestCase):
         self.assertIn("Next Steps", text)
         self.assertIn("Ready providers: claude", text)
         self.assertIn("--providers claude", text)
+
+    def test_doctor_json_classifies_copilot_risk(self) -> None:
+        probe = {
+            "copilot": ProviderPresence(
+                provider="copilot",
+                detected=True,
+                binary_path="/usr/local/bin/copilot",
+                version="1.0.65",
+                auth_ok=True,
+                reason="ok",
+            ),
+        }
+        output = io.StringIO()
+        with patch("runtime.cli._doctor_provider_presence", return_value=probe):
+            with redirect_stdout(output):
+                exit_code = main(["doctor", "--providers", "copilot", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["providers"]["copilot"]["risk"]["level"], "approval_bypass")
 
 
 if __name__ == "__main__":

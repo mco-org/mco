@@ -11,6 +11,9 @@ jobs:
   preview-pack:
     name: Build preview npm tarball
     runs-on: ubuntu-latest
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      version: ${{ steps.pack.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,16 +50,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Comment preview install hint
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Write preview install hint
         run: |
           VERSION="${{ steps.pack.outputs.version }}"
           TARBALL="${{ steps.pack.outputs.tarball }}"
           ARTIFACT="mco-preview-package-${{ github.run_id }}"
-          gh pr comment "${{ github.event.pull_request.number }}" --body "$(cat <<EOF
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
           ## MCO preview package
 
           This workflow built \`${TARBALL}\` (v${VERSION}) from the PR head. It is **not** published to npm.
@@ -73,4 +72,33 @@ jobs:
 
           Replace \`/path/to/${TARBALL}\` with the \`.tgz\` extracted from the artifact.
           EOF
-          )" || echo "::notice::Skipped PR comment (insufficient token permissions, e.g. fork PR)."
+
+  comment-preview:
+    name: Comment preview install hint
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: preview-pack
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment on same-repository pull request
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TARBALL: ${{ needs.preview-pack.outputs.tarball }}
+          VERSION: ${{ needs.preview-pack.outputs.version }}
+          ARTIFACT: mco-preview-package-${{ github.run_id }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<EOF
+          ## MCO preview package
+
+          This workflow built \`${TARBALL}\` (v${VERSION}) from the PR head. It is **not** published to npm.
+
+          **Download:** Checks → *Preview package* → Artifacts → \`${ARTIFACT}\`
+
+          Install the downloaded tarball in a temporary prefix:
+
+          \`npm install /path/to/${TARBALL} --prefix /tmp/mco-preview --no-audit --no-fund\`
+          EOF
+          )"

@@ -89,12 +89,12 @@ MCO 设计为被任意编排方 Agent 或 AI IDE 调用 — Claude Code、Cursor
 
 ## AI Agent 快速开始
 
-当另一个编程 Agent 调用 MCO 时，先做健康检查和 dry-run，再执行真实 fan-out：
+当另一个编程 Agent 调用 MCO 时，先做健康检查和 dry-run，再执行真实 fan-out。默认五个 provider 表示兼容性已经审计，不表示全部只读：Codex 默认可写工作区，Gemini 和 Qwen 会跳过交互式审批，OpenCode 的权限由 provider 自身控制。第一次只读运行应显式选择 Claude（plan mode）和 Pi（只读工具白名单）：
 
 ```bash
-mco doctor --json
-mco run --repo . --prompt "总结这个仓库。" --providers claude,codex --dry-run --json
-mco run --repo . --prompt "总结这个仓库。" --providers claude,codex --json
+mco doctor --providers claude,pi --json
+mco run --repo . --prompt "总结这个仓库。" --providers claude,pi --dry-run --json
+mco run --repo . --prompt "总结这个仓库。" --providers claude,pi --json
 ```
 
 代码审查流程：
@@ -104,7 +104,7 @@ mco review --repo . --prompt "审查这个仓库的 bug。" --providers claude,c
 mco review --repo . --prompt "审查这个仓库的 bug。" --providers claude,codex,pi --json
 ```
 
-`--dry-run` 会解析 provider、policy、risk 元数据、prompt hash、artifact 设置和命令模板，但不会启动任何 Agent 进程。适合编排方 Agent 在真正执行前向用户展示将要运行的内容。
+`--dry-run` 会解析 provider、默认/实际 risk、policy、prompt hash、artifact 设置和命令模板，但不会启动任何 Agent 进程。适合编排方 Agent 在真正执行前向用户展示将要运行的内容。使用 `--json` 时，解析、输入和配置错误会返回 [`docs/contracts/errors-v0.1.x.md`](./docs/contracts/errors-v0.1.x.md) 定义的稳定 envelope。
 
 ## 一个 Agent 是工具，五个 Agent 是团队
 

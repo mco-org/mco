@@ -70,6 +70,19 @@ class TestAcpAdapter(unittest.TestCase):
         self.assertTrue(presence.auth_ok)
         self.assertEqual(presence.reason, "acp_transport")
 
+    def test_preview_command_applies_permission_flags(self) -> None:
+        adapter = AcpAdapter(
+            provider_id="claude",
+            binary_name="claude",
+            acp_command=["claude", "code", "--transport", "stdio"],
+            permission_flags={"permission_mode": "--permission-mode"},
+        )
+
+        self.assertEqual(
+            adapter.preview_command({"permission_mode": "plan"}),
+            ["claude", "code", "--transport", "stdio", "--permission-mode", "plan"],
+        )
+
     def test_run_poll_lifecycle(self) -> None:
         task = TaskInput(
             task_id="test-acp-001",

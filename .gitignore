@@ -14,20 +14,16 @@ dist/
 # Local runtime state
 .mco/state.json
 
-# Hive workspace / local config (not part of repo)
-.hive/
-config/
+# Hive workspace / local mcporter config (not part of repo)
+/.hive/
+/config/mcporter.json
 
 # Temp artifacts
 *.tmp
 
-# Local review runs
-reports/review/task-*/
-reports/review/bench-step*/
-reports/review/run-best-effort-*/
-reports/review/value-assessment-*/
+# Local review runs. Historical tracked reports remain tracked.
+/reports/review/*/
 
-# Local CI / gate / dry-run artifacts
-reports/adapter-contract/
-reports/dry-run/
-reports/gate/
+# Generated CI and dry-run output. Release signoffs under reports/gate remain visible.
+/reports/adapter-contract/*/
+/reports/dry-run/*/

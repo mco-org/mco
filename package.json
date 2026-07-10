@@ -22,6 +22,7 @@
     "bin/mco.js",
     "mco",
     "runtime/**/*.py",
-    "runtime/schemas/*.json"
+    "runtime/schemas/*.json",
+    "skills/mco-cli/SKILL.md"
   ]
 }

@@ -20,7 +20,7 @@ Required methods:
 - `normalize(raw: Any, ctx: NormalizeContext) -> list[NormalizedFinding]`
 
 Frozen enums/sets:
-- `ProviderId`: `claude|codex|gemini|opencode|qwen`
+- `ProviderId`: `claude|codex|gemini|opencode|qwen|hermes|pi|copilot`
 - `CapabilityTier`: `C0..C6`
 
 ## 2) RunResult Contract (Frozen)
@@ -78,4 +78,3 @@ If any frozen field/signature/layout changes:
 2. Update this document.
 3. Update `tests/test_contract_freeze.py`.
 4. Record migration note in `reports/gate/*-signoff.md`.
-

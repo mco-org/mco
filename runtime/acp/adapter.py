@@ -125,6 +125,19 @@ class AcpAdapter:
     def supported_permission_keys(self) -> List[str]:
         return list(self._permission_keys)
 
+    def preview_command(
+        self,
+        provider_permissions: Optional[Dict[str, str]] = None,
+    ) -> List[str]:
+        """Build the exact ACP launch command without starting the provider."""
+        permissions = provider_permissions or {}
+        command = list(self._acp_command)
+        for permission_key, cli_flag in self._permission_flags.items():
+            value = permissions.get(permission_key)
+            if isinstance(value, str) and value.strip():
+                command.extend([cli_flag, value.strip()])
+        return command
+
     def run(self, input_task: TaskInput) -> TaskRunRef:
         """Start an ACP session and send the prompt."""
         artifact_root = str(input_task.metadata.get(
@@ -144,11 +157,7 @@ class AcpAdapter:
         enable_terminal = provider_perms.get("terminal", "") != ""
 
         # Build ACP command with permission flags applied
-        acp_cmd = list(self._acp_command)
-        for perm_key, cli_flag in self._permission_flags.items():
-            value = provider_perms.get(perm_key)
-            if isinstance(value, str) and value.strip():
-                acp_cmd.extend([cli_flag, value.strip()])
+        acp_cmd = self.preview_command(provider_perms)
 
         client = AcpClient(
             command=acp_cmd,

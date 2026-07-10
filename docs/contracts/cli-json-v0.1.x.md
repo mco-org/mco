@@ -38,6 +38,7 @@ Top-level JSON object with required fields:
   - `run` for generalized execution flow.
 - `findings_count` is retained canonical findings count.
 - `parse_success_count` / `parse_failure_count` are review parsing health counters.
+- Failures before a normal result is available use the envelope frozen in `docs/contracts/errors-v0.1.x.md`.
 
 ## Exit Code Notes
 
@@ -52,4 +53,3 @@ Top-level JSON object with required fields:
 Contract enforcement tests:
 
 - `tests/test_cli_json_contract.py`
-

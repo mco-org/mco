@@ -74,6 +74,7 @@ class TestSyncDoctor(unittest.TestCase):
         self.assertEqual(len(providers), 1)
         self.assertEqual(providers[0]["name"], "claude")
         self.assertTrue(providers[0]["detected"])
+        self.assertEqual(providers[0]["risk"]["level"], "read_only")
 
     def test_invalid_provider_returns_error(self) -> None:
         result = _sync_doctor("nonexistent")

@@ -18,7 +18,7 @@ from .formatters import (
     format_markdown_pr,
     format_sarif,
 )
-from .provider_risk import provider_risk
+from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
 from . import __version__
 from .review_engine import REVIEW_FINDINGS_SCHEMA_PATH, ReviewRequest, provider_policy_preview, run_review
@@ -28,6 +28,55 @@ SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
 DEFAULT_DOCTOR_PROVIDERS = SUPPORTED_PROVIDERS
 DEFAULT_CONFIG = ReviewConfig()
 DEFAULT_POLICY = DEFAULT_CONFIG.policy
+
+
+_ERROR_DETAILS = {
+    "parse_error": ("input", "Check command syntax with `mco <command> --help`."),
+    "input_error": ("input", "Correct the input and retry the command."),
+    "invalid_providers": ("input", "Select providers shown by `mco agent list --json`."),
+    "config_error": ("configuration", "Correct the project/global configuration and retry."),
+    "invalid_config": ("configuration", "Remove the incompatible flags or configuration values and retry."),
+    "runtime_error": ("runtime", "Inspect provider results and logs before retrying."),
+}
+
+
+def _error_envelope(
+    subtype: str,
+    message: str,
+    *,
+    provider: Optional[str] = None,
+    retryable: bool = False,
+    exit_code: int = 2,
+) -> Dict[str, object]:
+    category, hint = _ERROR_DETAILS.get(
+        subtype,
+        ("runtime", "Inspect the error message and retry only after correcting the cause."),
+    )
+    return {
+        "ok": False,
+        "error": {
+            "category": category,
+            "subtype": subtype,
+            "message": message,
+            "hint": hint,
+            "provider": provider,
+            "retryable": retryable,
+            "exit_code": exit_code,
+        },
+    }
+
+
+def _stream_error_event(subtype: str, message: str) -> Dict[str, object]:
+    from datetime import datetime, timezone
+
+    envelope = _error_envelope(subtype, message)
+    return {
+        "type": "error",
+        "code": subtype,
+        "message": message,
+        "error": envelope["error"],
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+    }
 
 
 class _HelpFormatter(argparse.RawTextHelpFormatter):
@@ -417,24 +466,22 @@ def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest
         metadata["provider_context"] = dict(applied_context) if isinstance(applied_context, dict) else {}
     if review_mode and provider == "codex" and REVIEW_FINDINGS_SCHEMA_PATH.exists():
         metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
+    preview_command = getattr(adapter, "preview_command", None)
+    if callable(preview_command):
+        permissions = policy.get("applied_permissions", {})
+        return list(preview_command(permissions if isinstance(permissions, dict) else {}))
     build_command = getattr(adapter, "_build_command", None)
     if callable(build_command):
-        try:
-            return list(build_command(TaskInput(
-                task_id=req.task_id or "<task_id>",
-                prompt="<prompt>",
-                repo_root=req.repo_root,
-                target_paths=req.target_paths or ["."],
-                metadata=metadata,
-            )))
-        except Exception:
-            pass
+        return list(build_command(TaskInput(
+            task_id=req.task_id or "<task_id>",
+            prompt="<prompt>",
+            repo_root=req.repo_root,
+            target_paths=req.target_paths or ["."],
+            metadata=metadata,
+        )))
     build_record = getattr(adapter, "_build_command_for_record", None)
     if callable(build_record):
-        try:
-            return list(build_record())
-        except Exception:
-            return []
+        return list(build_record())
     return []
 
 
@@ -458,15 +505,32 @@ def _build_dry_run_payload(
     for provider in providers:
         adapter = adapters.get(provider)
         if adapter is None:
+            default_risk = provider_risk(provider, transport=transport)
             provider_details[provider] = {
-                "risk": provider_risk(provider),
+                "default_risk": default_risk,
+                "risk": default_risk,
                 "policy": {"failure_reason": "adapter_not_implemented", "would_fail_strict": True},
                 "command_template": [],
             }
             continue
-        policy = provider_policy_preview(provider, adapter, req.policy)
+        policy = dict(provider_policy_preview(provider, adapter, req.policy))
+        default_risk = provider_risk(provider, transport=transport)
+        applied_permissions = policy.get("applied_permissions", {})
+        effective_risk = effective_provider_risk(
+            provider,
+            applied_permissions if isinstance(applied_permissions, dict) else {},
+            transport=transport,
+        )
+        if (
+            effective_risk["level"] == "unknown"
+            and req.policy.enforcement_mode == "strict"
+            and not policy.get("would_fail_strict")
+        ):
+            policy["would_fail_strict"] = True
+            policy["failure_reason"] = "risk_classification_unknown"
         provider_details[provider] = {
-            "risk": provider_risk(provider),
+            "default_risk": default_risk,
+            "risk": effective_risk,
             "policy": policy,
             "command_template": _dry_run_command_template(provider, adapter, req, review_mode, policy),
         }
@@ -1921,8 +1985,9 @@ def main(argv: List[str] | None = None) -> int:
     # If streaming is requested, suppress argparse stderr and emit a machine-readable error.
     _raw_argv = argv if argv is not None else sys.argv[1:]
     _wants_stream = "--stream" in _raw_argv and any(mode in _raw_argv for mode in ("jsonl", "live"))
+    _wants_json = "--json" in _raw_argv
     _parse_error_msg = ""
-    if _wants_stream:
+    if _wants_stream or _wants_json:
         def _capture_parse_error(message: str) -> None:
             nonlocal _parse_error_msg
             _parse_error_msg = message
@@ -1931,14 +1996,12 @@ def main(argv: List[str] | None = None) -> int:
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
-        if _wants_stream and exc.code != 0:
-            from datetime import datetime, timezone
-            err_event = json.dumps({
-                "type": "error", "code": "parse_error",
-                "message": _parse_error_msg or "Invalid arguments. Run 'mco review --help' for usage.",
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            }, ensure_ascii=True)
-            print(err_event, flush=True)
+        if exc.code != 0:
+            message = _parse_error_msg or "Invalid arguments. Run 'mco review --help' for usage."
+            if _wants_stream:
+                print(json.dumps(_stream_error_event("parse_error", message), ensure_ascii=True), flush=True)
+            elif _wants_json:
+                print(json.dumps(_error_envelope("parse_error", message), ensure_ascii=True))
         return int(exc.code) if isinstance(exc.code, int) else 2
     if args.command == "version":
         print(__version__)
@@ -1946,10 +2009,16 @@ def main(argv: List[str] | None = None) -> int:
 
     if args.command == "doctor":
         providers_str = getattr(args, "providers", ",".join(DEFAULT_DOCTOR_PROVIDERS))
-        providers = [item for item in _parse_providers(providers_str) if item in SUPPORTED_PROVIDERS]
-        if not providers:
-            print("No valid providers selected.", file=sys.stderr)
+        requested_providers = _parse_providers(providers_str)
+        invalid_providers = [item for item in requested_providers if item not in SUPPORTED_PROVIDERS]
+        if invalid_providers:
+            message = "Unknown providers: {}".format(", ".join(invalid_providers))
+            if args.json:
+                print(json.dumps(_error_envelope("invalid_providers", message), ensure_ascii=True))
+            else:
+                print(message, file=sys.stderr)
             return 2
+        providers = requested_providers
         repo_root = Path(getattr(args, "repo", ".")).resolve()
         skill_health = None
         skill_drift = None
@@ -2002,9 +2071,16 @@ def main(argv: List[str] | None = None) -> int:
             if getattr(args, "json", False):
                 print(json.dumps(payload, ensure_ascii=True))
             else:
+                risk = payload.get("risk", {})
+                risk_level = risk.get("level") if isinstance(risk, dict) else "unknown"
                 print(
-                    "Agent {name}: ready={ready} detected={detected} transport={transport} reason={reason}".format(
-                        **payload
+                    "Agent {name}: ready={ready} detected={detected} transport={transport} reason={reason} risk={risk}".format(
+                        name=payload.get("name"),
+                        ready=payload.get("ready"),
+                        detected=payload.get("detected"),
+                        transport=payload.get("transport"),
+                        reason=payload.get("reason"),
+                        risk=risk_level,
                     )
                 )
             return 0
@@ -2106,13 +2182,11 @@ def main(argv: List[str] | None = None) -> int:
     )
 
     def _stream_error_exit(code: str, message: str) -> int:
-        """Emit error event (if streaming) or print to stderr, then return 2."""
+        """Emit a stable machine error when requested, otherwise use stderr."""
         if stream_callback:
-            from datetime import datetime, timezone
-            stream_callback({
-                "type": "error", "code": code, "message": message,
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            })
+            stream_callback(_stream_error_event(code, message))
+        elif getattr(args, "json", False):
+            print(json.dumps(_error_envelope(code, message), ensure_ascii=True))
         else:
             print(message, file=sys.stderr)
         return 2
@@ -2150,7 +2224,13 @@ def main(argv: List[str] | None = None) -> int:
     if extra_agents:
         valid_providers |= set(extra_agents.keys())
 
-    providers = [item for item in cfg.providers if item in valid_providers]
+    invalid_providers = [item for item in cfg.providers if item not in valid_providers]
+    if invalid_providers:
+        return _stream_error_exit(
+            "invalid_providers",
+            "Unknown providers: {}".format(", ".join(invalid_providers)),
+        )
+    providers = list(cfg.providers)
     # Auto-add custom agent to providers if not already listed
     if extra_agents:
         for name in extra_agents:
@@ -2211,8 +2291,10 @@ def main(argv: List[str] | None = None) -> int:
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
-        print(f"--format {args.format} is supported only for review command", file=sys.stderr)
-        return 2
+        return _stream_error_exit(
+            "invalid_config",
+            f"--format {args.format} is supported only for review command",
+        )
     effective_result_mode = args.result_mode
     if args.save_artifacts and effective_result_mode == "stdout":
         effective_result_mode = "both"
@@ -2221,21 +2303,29 @@ def main(argv: List[str] | None = None) -> int:
     adapters = _doctor_adapter_registry(transport=transport, extra_agents=extra_agents, configured_agents=configured_agents) if (transport != "shim" or extra_agents or configured_agents) else None
     if getattr(args, "dry_run", False):
         preview_adapters = adapters or _doctor_adapter_registry()
-        payload = _build_dry_run_payload(
-            args,
-            req,
-            providers=providers,
-            adapters=preview_adapters,
-            review_mode=review_mode,
-            result_mode=effective_result_mode,
-            write_artifacts=write_artifacts,
-            transport=transport,
-            diff_mode=diff_mode,
-            diff_base=diff_base_arg,
-            memory_space=memory_space,
-            synthesize=synthesize,
-            synth_provider=synth_provider,
-        )
+        try:
+            payload = _build_dry_run_payload(
+                args,
+                req,
+                providers=providers,
+                adapters=preview_adapters,
+                review_mode=review_mode,
+                result_mode=effective_result_mode,
+                write_artifacts=write_artifacts,
+                transport=transport,
+                diff_mode=diff_mode,
+                diff_base=diff_base_arg,
+                memory_space=memory_space,
+                synthesize=synthesize,
+                synth_provider=synth_provider,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            if stream_renderer is not None:
+                stream_renderer.close()
+            return _stream_error_exit(
+                "runtime_error",
+                "Dry-run command preview failed: {}".format(exc),
+            )
         if stream_renderer is not None:
             stream_renderer.close()
         if args.json:
@@ -2243,6 +2333,30 @@ def main(argv: List[str] | None = None) -> int:
         else:
             print(_render_dry_run_report(payload))
         return 0
+    if transport == "acp" and req.policy.enforcement_mode == "strict":
+        execution_adapters = adapters or _doctor_adapter_registry(transport=transport)
+        unknown_risk_providers: List[str] = []
+        for provider in providers:
+            adapter = execution_adapters.get(provider)
+            if adapter is None:
+                continue
+            policy = provider_policy_preview(provider, adapter, req.policy)
+            applied_permissions = policy.get("applied_permissions", {})
+            risk = effective_provider_risk(
+                provider,
+                applied_permissions if isinstance(applied_permissions, dict) else {},
+                transport=transport,
+            )
+            if risk["level"] == "unknown":
+                unknown_risk_providers.append(provider)
+        if unknown_risk_providers:
+            if stream_renderer is not None:
+                stream_renderer.close()
+            return _stream_error_exit(
+                "invalid_config",
+                "risk_classification_unknown: strict ACP execution requires an explicit supported "
+                "permission override for provider(s): {}".format(",".join(unknown_risk_providers)),
+            )
     try:
         result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:
