@@ -29,6 +29,7 @@ Before running `mco run` or `mco review`, ask the user in natural language which
 - [Installation and Skill sync](references/installation.md)
 - [Provider selection](references/provider-selection.md)
 - [Execution modes](references/execution-modes.md)
+- [Multi-model parallel execution](references/multi-model.md)
 - [Troubleshooting and recovery](references/troubleshooting.md)
 
 ## Minimal response template

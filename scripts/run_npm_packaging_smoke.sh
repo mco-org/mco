@@ -41,6 +41,7 @@ for required_path in \
   package/skills/mco-cli/references/installation.md \
   package/skills/mco-cli/references/provider-selection.md \
   package/skills/mco-cli/references/execution-modes.md \
+  package/skills/mco-cli/references/multi-model.md \
   package/skills/mco-cli/references/troubleshooting.md
 do
   if ! grep -Fxq "$required_path" "$PACK_DIR/contents.txt"; then
@@ -104,6 +105,7 @@ for required_path in \
   skills/mco-cli/references/installation.md \
   skills/mco-cli/references/provider-selection.md \
   skills/mco-cli/references/execution-modes.md \
+  skills/mco-cli/references/multi-model.md \
   skills/mco-cli/references/troubleshooting.md
 do
   if ! python3 -m zipfile -l "$WHEEL_FILE" | grep -Fq "$required_path"; then

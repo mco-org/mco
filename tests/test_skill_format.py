@@ -26,6 +26,10 @@ class SkillFormatTests(unittest.TestCase):
             (skill_dir / "references" / "installation.md").write_text("# install\n", encoding="utf-8")
             self.assertEqual(validate_skill_dir(skill_dir), [])
 
+    def test_bundled_skill_passes(self) -> None:
+        skill_dir = Path(__file__).resolve().parents[1] / "skills" / "mco-cli"
+        self.assertEqual(validate_skill_dir(skill_dir), [])
+
     def test_missing_frontmatter_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
