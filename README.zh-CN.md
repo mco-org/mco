@@ -99,8 +99,8 @@ MCO 设计为被任意编排方 Agent 或 AI IDE 调用 — Claude Code、Cursor
 
 ```bash
 mco doctor --providers claude,pi --json
-mco run --repo . --prompt "总结这个仓库。" --providers claude,pi --dry-run --json
-mco run --repo . --prompt "总结这个仓库。" --providers claude,pi --json
+mco run --repo . --prompt "总结这个仓库。" --providers claude,pi --execution-mode read_only --dry-run --json
+mco run --repo . --prompt "总结这个仓库。" --providers claude,pi --execution-mode read_only --json
 ```
 
 代码审查流程：
@@ -216,13 +216,13 @@ mco review --repo . --prompt "审查这个仓库的 bug。" --providers claude,c
 
 ## 权限敏感的 Provider
 
-| Provider | CLI | 默认权限模型 |
+| Provider | CLI | 执行档位映射 |
 |----------|-----|--------------|
-| GitHub Copilot CLI | `copilot` | 非交互运行，使用 `--allow-all-tools --no-ask-user` |
+| GitHub Copilot CLI | `copilot` | 只读、文件写入或 allow-all 权限 |
 | Hermes | `hermes` | 高权限 oneshot 模式，会自动绕过审批 |
-| Pi | `pi` | 只读工具：`read,grep,find,ls` |
-| Grok Build | `grok` | 默认保留审批提示；`approval_mode=always-approve` 会绕过审批 |
-| Cursor CLI | `cursor` | 默认只读 `ask`；`mode=agent` 启用写入/shell，`force=true` 绕过审批 |
+| Pi | `pi` | 工具白名单从只读扩展到 write/edit，再扩展到 bash |
+| Grok Build | `grok` | plan、accept-edits 或 bypass 权限模式 |
+| Cursor CLI | `cursor` | ask、沙箱 agent 或无沙箱 agent 档位 |
 
 通过显式指定启用：
 
@@ -230,7 +230,7 @@ mco review --repo . --prompt "审查这个仓库的 bug。" --providers claude,c
 mco review --providers claude,codex,copilot --prompt "审查这个仓库的 bug。"
 ```
 
-Copilot 和 Hermes 可显式选择，适用于你接受其非交互审批绕过语义的场景。Pi 可以通过只读工具 allowlist 主动读取仓库文件。默认不启用 `bash`、`edit`、`write` 或 `--approve`。
+Copilot 和 Pi 会遵循所选执行档位。Hermes 比较特殊：其 oneshot 模式天然绕过审批，因此选择 Hermes 时还必须显式传入 `--execution-mode yolo`。
 
 默认情况下，MCO 不替你选择模型，而是让每个 provider CLI 使用它自己的默认配置。需要固定某次运行的模型时：
 
@@ -442,6 +442,7 @@ MCO 除 provider 选择外无需配置。调用前明确选择，也可以把选
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--providers` | 必须明确选择 | 逗号分隔 provider 列表；未指定时先询问用户 |
+| `--execution-mode` | run 为 `write`；review 为 `read_only` | 统一执行权限档位：`read_only`、`write` 或显式 `yolo` |
 | `--stall-timeout` | `900` | 无输出进展超过此时间才取消（秒） |
 | `--review-hard-timeout` | `1800` | review 模式硬截止；`0` = 禁用 |
 | `--max-provider-parallelism` | `0` | `0` = 选中 provider 全并行 |
@@ -472,12 +473,27 @@ MCO 除 provider 选择外无需配置。调用前明确选择，也可以把选
 | `--divide` | 关闭 | `files` 或 `dimensions` 分工模式 |
 | `--perspectives-json` | 未设置 | 按 provider 指定 review 视角 JSON |
 
-默认 provider 权限：
+### 执行权限档位
 
-| Provider | 权限 Key | 默认值 |
-|----------|----------|--------|
-| `claude` | `permission_mode` | `plan` |
-| `codex` | `sandbox` | `workspace-write` |
+MCO 会把统一档位转换成每个 Agent 原生的启动参数：
+
+| 档位 | 含义 | 默认场景 |
+|------|------|----------|
+| `read_only` | 只读分析，不允许文件或 shell 修改 | `mco review` |
+| `write` | 允许读取、新建和编辑工作区文件；在 CLI 能表达时不开放无限制 shell/系统权限 | `mco run` |
+| `yolo` | 绕过审批并启用该 Agent 能提供的最宽执行权限 | 仅显式指定 |
+
+例如，`write` 会映射为 Claude `acceptEdits`、Codex `workspace-write`、Pi 的 `write/edit` 工具集，以及 Copilot 的文件写权限（禁用 shell）；`yolo` 则映射为各家的原生 bypass 参数。Hermes oneshot 天然绕过审批，因此 MCO 在 `read_only` 或 `write` 下会拒绝启动 Hermes；使用 Hermes 时必须显式传入 `--execution-mode yolo`。
+
+`--provider-permissions-json` 仍可作为专家级覆盖，并叠加在所选执行档位之上。`allow_paths` 只校验 MCO 请求的作用域，并不是操作系统级沙箱。
+
+```bash
+mco run \
+  --repo . \
+  --prompt "实现需求并运行测试。" \
+  --providers claude,codex,pi \
+  --execution-mode write
+```
 
 示例：
 

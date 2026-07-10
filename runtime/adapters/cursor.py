@@ -27,7 +27,7 @@ class CursorAdapter(ShimAdapterBase):
         return [binary, "status"]
 
     def supported_permission_keys(self) -> List[str]:
-        return ["mode", "force"]
+        return ["mode", "force", "sandbox"]
 
     def supported_model_keys(self) -> List[str]:
         return ["model"]
@@ -46,6 +46,11 @@ class CursorAdapter(ShimAdapterBase):
             raise ValueError("unsupported Cursor force value: {}".format(force))
         if force == "true":
             command.append("--force")
+        sandbox = permissions.get("sandbox") if isinstance(permissions, dict) else None
+        if sandbox not in (None, "", "enabled", "disabled"):
+            raise ValueError("unsupported Cursor sandbox value: {}".format(sandbox))
+        if isinstance(sandbox, str) and sandbox:
+            command.extend(["--sandbox", sandbox])
         model = input_task.metadata.get("model")
         if isinstance(model, str) and model.strip():
             command.extend(["--model", model.strip()])

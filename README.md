@@ -104,8 +104,8 @@ When another coding agent calls MCO, it must first ask the user which agents to 
 
 ```bash
 mco doctor --providers claude,pi --json
-mco run --repo . --prompt "Summarize this repo." --providers claude,pi --dry-run --json
-mco run --repo . --prompt "Summarize this repo." --providers claude,pi --json
+mco run --repo . --prompt "Summarize this repo." --providers claude,pi --execution-mode read_only --dry-run --json
+mco run --repo . --prompt "Summarize this repo." --providers claude,pi --execution-mode read_only --json
 ```
 
 For review workflows:
@@ -221,13 +221,13 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 
 ## Permission-sensitive Providers
 
-| Provider | CLI | Default permission model |
+| Provider | CLI | Execution-mode mapping |
 |----------|-----|--------------------------|
-| GitHub Copilot CLI | `copilot` | Non-interactive run with `--allow-all-tools --no-ask-user` |
+| GitHub Copilot CLI | `copilot` | Read-only, file-write, or allow-all access |
 | Hermes | `hermes` | Elevated oneshot mode; approvals are auto-bypassed |
-| Pi | `pi` | Read-only tools only: `read,grep,find,ls` |
-| Grok Build | `grok` | Approval prompts enabled; `approval_mode=always-approve` opts into bypass |
-| Cursor CLI | `cursor` | Read-only `ask` mode; `mode=agent` enables write/shell, and `force=true` bypasses approvals |
+| Pi | `pi` | Tool allowlist expands from read-only to write/edit and then bash |
+| Grok Build | `grok` | Plan, accept-edits, or bypass permission mode |
+| Cursor CLI | `cursor` | Ask, sandboxed-agent, or unsandboxed-agent profile |
 
 Use them by naming them explicitly:
 
@@ -235,7 +235,7 @@ Use them by naming them explicitly:
 mco review --providers claude,codex,copilot --prompt "Review this repository for bugs."
 ```
 
-Copilot and Hermes are available for explicit selection when you accept their non-interactive approval-bypass semantics. Pi can read repository files through its read-only tool allowlist. It does not enable `bash`, `edit`, `write`, or `--approve` by default.
+Copilot and Pi follow the selected execution mode. Hermes is different: its oneshot mode inherently bypasses approvals, so selecting Hermes also requires explicit `--execution-mode yolo`.
 
 By default MCO does not choose a model for you; it lets each provider CLI use its own configured default. To pin models for one run:
 
@@ -472,6 +472,7 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--providers` | required selection | Comma-separated provider list; ask the user if absent |
+| `--execution-mode` | `write` for run; `read_only` for review | Unified capability profile: `read_only`, `write`, or explicit `yolo` |
 | `--stall-timeout` | `900` | Cancel when no output progress for this duration (seconds) |
 | `--review-hard-timeout` | `1800` | Hard deadline for review mode; `0` disables |
 | `--max-provider-parallelism` | `0` | `0` = full parallelism across selected providers |
@@ -504,12 +505,27 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | `--divide` | off | `files` or `dimensions` task division across providers |
 | `--perspectives-json` | unset | Per-provider review perspective JSON (e.g. `'{"claude":"security","codex":"performance"}'`) |
 
-Default provider permissions:
+### Execution modes
 
-| Provider | Key | Default |
-|----------|-----|---------|
-| `claude` | `permission_mode` | `plan` |
-| `codex` | `sandbox` | `workspace-write` |
+MCO translates one execution mode into each selected agent's native launch flags:
+
+| Mode | Meaning | Default use |
+|------|---------|-------------|
+| `read_only` | Inspect and reason without file or shell mutation | `mco review` |
+| `write` | Read, create, and edit workspace files without unrestricted shell/system access where the CLI can express that boundary | `mco run` |
+| `yolo` | Bypass approvals and enable the agent's broadest available execution profile | Explicit opt-in only |
+
+For example, `write` becomes Claude `acceptEdits`, Codex `workspace-write`, Pi's `write/edit` tool set, and Copilot write access with shell denied. `yolo` becomes each provider's native bypass flag. Hermes oneshot already bypasses approvals, so MCO rejects Hermes under `read_only` or `write`; select `--execution-mode yolo` explicitly when using Hermes.
+
+Provider-specific `--provider-permissions-json` remains available as an expert override and is applied on top of the selected execution profile. `allow_paths` validates MCO's requested scope; it is not an operating-system sandbox.
+
+```bash
+mco run \
+  --repo . \
+  --prompt "Implement the requested change and run tests." \
+  --providers claude,codex,pi \
+  --execution-mode write
+```
 
 Override example:
 

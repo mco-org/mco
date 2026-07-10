@@ -29,6 +29,7 @@ Before running `mco run` or `mco review`, ask the user in natural language which
 ```
 
 Use for generic agent tasks. This mode does not require findings schema.
+It defaults to `--execution-mode write`, so selected agents can create, edit, and delete workspace files.
 
 ### 2) Review execution
 
@@ -41,6 +42,7 @@ Use for generic agent tasks. This mode does not require findings schema.
 ```
 
 Use for bug/security/test-gap style review scenarios.
+It defaults to `--execution-mode read_only`.
 
 ### 3) Strict gate review (CI style)
 
@@ -82,6 +84,8 @@ When returning to end users:
 ## Recommended defaults
 
 - There is no implicit provider set. Ask the user and pass `--providers` explicitly.
+- Use `read_only` for inspection, `write` for normal coding tasks, and `yolo` only after the user explicitly requests unrestricted/bypass execution.
+- Hermes oneshot is approval-bypassing by design and therefore requires explicit `--execution-mode yolo`.
 - `--result-mode stdout` for interactive agents.
 - `--result-mode artifact --json` for CI pipelines.
 - `--strict-contract` only for gate workflows.
@@ -111,4 +115,3 @@ Use this structure in final answers:
 2. Provider-by-provider status
 3. Key findings grouped by severity
 4. Actionable next steps
-

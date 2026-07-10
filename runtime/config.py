@@ -41,6 +41,7 @@ class ReviewPolicy:
     chain: bool = False
     debate: bool = False
     divide: str = ""
+    execution_mode: str = ""
 
 
 @dataclass(frozen=True)

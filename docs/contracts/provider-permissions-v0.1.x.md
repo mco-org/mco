@@ -2,6 +2,8 @@
 
 This document freezes provider permission-key behavior for `mco run` / `mco review` in `v0.1.x`.
 
+MCO first resolves `execution_mode`, then translates it into provider permission keys. Defaults are `write` for `run` and `read_only` for `review`; `yolo` is never implicit. Provider-specific overrides are merged on top.
+
 ## Global Enforcement Semantics
 
 - `enforcement_mode=strict` (default):
@@ -12,18 +14,18 @@ This document freezes provider permission-key behavior for `mco run` / `mco revi
 
 ## Matrix
 
-| Provider | `supported_permission_keys()` | Effective adapter mapping | Default behavior if key omitted |
-|---|---|---|---|
-| `claude` | `["permission_mode"]` | `permission_mode` -> `claude --permission-mode <value>` | `permission_mode=plan` |
-| `codex` | `["sandbox"]` | `sandbox` -> `codex exec --sandbox <value>` | `sandbox=workspace-write` |
-| `gemini` | `[]` | No permission-key mapping in adapter | N/A |
-| `opencode` | `[]` | No permission-key mapping in adapter | N/A |
-| `qwen` | `[]` | No permission-key mapping in adapter | N/A |
-| `hermes` | `[]` | No permission-key mapping; oneshot approval behavior is provider-controlled | Approval prompts are bypassed |
-| `pi` | `[]` | No permission-key mapping; adapter locks tools to `read,grep,find,ls` | Read-only tool allowlist; extensions disabled |
-| `copilot` | `[]` | No permission-key mapping; adapter always passes `--allow-all-tools --no-ask-user` | Approval bypass |
-| `grok` | `["approval_mode"]` | `always-approve` adds `grok --always-approve`; `ask` keeps the CLI default | Approval prompts remain enabled |
-| `cursor` | `["mode", "force"]` | `ask` / `plan` -> `agent --mode <value>`; `agent` uses full agent mode; `force=true` adds `--force` | `mode=ask`, `force=false` (read-only) |
+| Provider | `supported_permission_keys()` | `read_only` | `write` | `yolo` |
+|---|---|---|---|---|
+| `claude` | `["permission_mode"]` | `plan` | `acceptEdits` | `bypassPermissions` |
+| `codex` | `["sandbox", "approval_policy", "bypass"]` | `read-only`, approvals never | `workspace-write`, approvals never | dangerous bypass flag |
+| `gemini` | `["approval_mode"]` | `plan` | `auto_edit` | `yolo` |
+| `opencode` | `["agent_mode", "auto"]` | `plan`, no auto approval | `build --auto` | `build --auto` (broadest CLI profile) |
+| `qwen` | `["approval_mode"]` | `plan` | `auto-edit` | `yolo` |
+| `hermes` | `["yolo"]` | unsupported | unsupported | `--yolo` |
+| `pi` | `["tool_profile"]` | read/search/list tools | adds write/edit | adds bash |
+| `copilot` | `["access"]` | deny write and shell | allow write, deny shell | `--allow-all` |
+| `grok` | `["permission_mode", "approval_mode"]` | `plan` | `acceptEdits` | `bypassPermissions` |
+| `cursor` | `["mode", "force", "sandbox"]` | ask mode, sandbox enabled | agent force, sandbox enabled | agent force, sandbox disabled |
 
 ## Strict vs Best-Effort Examples
 
@@ -47,8 +49,8 @@ Given config:
 
 - `allow_paths` is orchestrator-level validation, not OS-kernel sandboxing.
 - Real process sandboxing/isolation remains provider-specific.
-- An empty permission-key set means MCO cannot tune that provider's permissions; it does not mean the provider is read-only.
-- Gemini and Qwen pass `-y`; Hermes oneshot and Copilot bypass interactive approvals. Pi is the only provider with an adapter-enforced read-only tool allowlist.
-- OpenCode runs in the selected repository but exposes no permission key through MCO; treat its isolation as provider-controlled.
-- Grok can modify the workspace after tool approval; `approval_mode=always-approve` explicitly bypasses those prompts.
-- Cursor defaults to read-only `ask` mode. `mode=agent` enables its full write/shell-capable agent mode; `force=true` additionally bypasses approvals.
+- `write` means “can modify project files”, not identical isolation across vendors. MCO uses the narrowest provider-native profile that still permits normal coding work.
+- Hermes oneshot auto-bypasses approvals. MCO therefore fails closed for Hermes under `read_only` and `write` instead of claiming a boundary Hermes cannot enforce.
+- OpenCode currently exposes no separate mode broader than `build --auto`; its `write` and `yolo` mappings are therefore identical.
+- Pi is the strongest tool-granular mapping: `write` enables file write/edit but withholds bash; `yolo` adds bash.
+- ACP permission flags are currently auditable only where the ACP adapter exposes matching permission keys. Strict mode fails closed when a requested execution profile cannot be enforced.

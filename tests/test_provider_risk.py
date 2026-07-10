@@ -12,8 +12,8 @@ class ProviderRiskTests(unittest.TestCase):
             with self.subTest(provider=provider):
                 self.assertNotEqual(provider_risk(provider)["level"], "unknown")
 
-    def test_copilot_is_approval_bypass(self) -> None:
-        self.assertEqual(provider_risk("copilot")["level"], "approval_bypass")
+    def test_copilot_adapter_default_is_read_only(self) -> None:
+        self.assertEqual(provider_risk("copilot")["level"], "read_only")
 
     def test_grok_defaults_to_approval_prompts(self) -> None:
         self.assertEqual(provider_risk("grok")["level"], "workspace_write")

@@ -18,6 +18,7 @@ from .formatters import (
     format_markdown_pr,
     format_sarif,
 )
+from .execution_modes import EXECUTION_MODES, execution_permissions
 from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
 from . import __version__
@@ -555,6 +556,7 @@ def _build_dry_run_payload(
         "policy": {
             "allow_paths": list(req.policy.allow_paths),
             "enforcement_mode": req.policy.enforcement_mode,
+            "execution_mode": req.policy.execution_mode,
             "provider_permissions": req.policy.provider_permissions,
             "provider_models": req.policy.provider_models,
             "provider_context": req.policy.provider_context,
@@ -564,6 +566,7 @@ def _build_dry_run_payload(
             "divide": req.policy.divide,
         },
         "providers_detail": provider_details,
+        "execution_mode": req.policy.execution_mode,
         "diff": {"mode": diff_mode, "base": diff_base or None},
         "memory": {"enabled": bool(getattr(args, "memory", False)), "space": memory_space or None},
         "synthesis": {"enabled": synthesize, "provider": synth_provider or None},
@@ -1127,6 +1130,12 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         help="Agent communication transport. shim: stdout parsing (default), acp: Agent Client Protocol (JSON-RPC)",
     )
     scope.add_argument(
+        "--execution-mode",
+        choices=EXECUTION_MODES,
+        default=argparse.SUPPRESS,
+        help="Unified agent permission mode: read_only, write, or yolo",
+    )
+    scope.add_argument(
         "--agent",
         nargs=2,
         metavar=("NAME", "COMMAND"),
@@ -1601,6 +1610,26 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         base_permissions,
         _parse_provider_permissions_json(getattr(args, "provider_permissions_json", "")),
     )
+    cli_execution_mode = getattr(args, "execution_mode", "")
+    if not isinstance(cli_execution_mode, str):
+        cli_execution_mode = ""
+    execution_mode = cli_execution_mode or fc_policy.get("execution_mode") or (
+        "read_only" if getattr(args, "command", "run") == "review" else "write"
+    )
+    if execution_mode not in EXECUTION_MODES:
+        raise ValueError("unknown execution_mode: {}".format(execution_mode))
+    for provider in providers:
+        profile_permissions = execution_permissions(provider, execution_mode)
+        if profile_permissions is None and provider in SUPPORTED_PROVIDERS:
+            raise ValueError(
+                "{} does not support --execution-mode {}; use --execution-mode yolo or choose another provider".format(
+                    provider,
+                    execution_mode,
+                )
+            )
+        if profile_permissions is not None:
+            profile_permissions.update(provider_permissions.get(provider, {}))
+            provider_permissions[provider] = profile_permissions
 
     base_models = dict(cfg.policy.provider_models)
     if fc_policy.get("provider_models") and isinstance(fc_policy["provider_models"], dict):
@@ -1686,6 +1715,7 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         chain=getattr(args, "chain", False) or fc_policy.get("chain", False),
         debate=getattr(args, "debate", False) or fc_policy.get("debate", False),
         divide=divide,
+        execution_mode=execution_mode,
     )
     return ReviewConfig(providers=providers, artifact_base=artifact_base, policy=policy)
 

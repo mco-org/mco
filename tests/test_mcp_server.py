@@ -145,6 +145,20 @@ class TestSyncReview(unittest.TestCase):
         self.assertEqual(result["data"]["decision"], "PASS")
         self.assertEqual(result["data"]["findings_count"], 1)
         self.assertEqual(len(result["data"]["findings"]), 1)
+        policy = mock_run.call_args[0][0].policy
+        self.assertEqual(policy.execution_mode, "read_only")
+        self.assertEqual(policy.provider_permissions["claude"], {"permission_mode": "plan"})
+        self.assertEqual(
+            policy.provider_permissions["codex"],
+            {"sandbox": "read-only", "approval_policy": "never"},
+        )
+
+    @patch("runtime.review_engine.run_review")
+    def test_hermes_review_requires_explicit_yolo(self, mock_run) -> None:
+        result = _sync_review(repo=".", prompt="Review", providers="hermes")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "unsupported_execution_mode")
+        mock_run.assert_not_called()
 
     def test_invalid_repo(self) -> None:
         result = _sync_review(
@@ -210,6 +224,23 @@ class TestSyncRun(unittest.TestCase):
         self.assertEqual(data["task_id"], "run-123")
         self.assertIn("final_text", data["provider_results"]["claude"])
         self.assertNotIn("output_text", data["provider_results"]["claude"])
+        policy = mock_run.call_args[0][0].policy
+        self.assertEqual(policy.execution_mode, "write")
+        self.assertEqual(policy.provider_permissions["claude"], {"permission_mode": "acceptEdits"})
+
+    @patch("runtime.review_engine.run_review")
+    def test_run_accepts_explicit_yolo(self, mock_run) -> None:
+        mock_result = MagicMock(
+            task_id="run-yolo",
+            decision="PASS",
+            terminal_state="completed",
+            provider_results={},
+        )
+        mock_run.return_value = mock_result
+        result = _sync_run(repo=".", prompt="Edit", providers="hermes", execution_mode="yolo")
+        self.assertTrue(result["ok"])
+        policy = mock_run.call_args[0][0].policy
+        self.assertEqual(policy.provider_permissions["hermes"], {"yolo": "true"})
 
 
 class TestSyncFindingsList(unittest.TestCase):

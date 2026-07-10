@@ -27,7 +27,7 @@ class GrokAdapter(ShimAdapterBase):
         return [binary, "models"]
 
     def supported_permission_keys(self) -> List[str]:
-        return ["approval_mode"]
+        return ["permission_mode", "approval_mode"]
 
     def supported_model_keys(self) -> List[str]:
         return ["model"]
@@ -42,9 +42,14 @@ class GrokAdapter(ShimAdapterBase):
             "plain",
         ]
         permissions = input_task.metadata.get("provider_permissions", {})
+        permission_mode = permissions.get("permission_mode") if isinstance(permissions, dict) else None
         approval_mode = permissions.get("approval_mode") if isinstance(permissions, dict) else None
+        if permission_mode not in (None, "", "plan", "acceptEdits", "bypassPermissions"):
+            raise ValueError("unsupported Grok permission_mode: {}".format(permission_mode))
         if approval_mode not in (None, "", "ask", "always-approve"):
             raise ValueError("unsupported Grok approval_mode: {}".format(approval_mode))
+        if isinstance(permission_mode, str) and permission_mode:
+            command.extend(["--permission-mode", permission_mode])
         if approval_mode == "always-approve":
             command.append("--always-approve")
         model = input_task.metadata.get("model")

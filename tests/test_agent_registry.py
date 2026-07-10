@@ -225,7 +225,7 @@ agents:
             available = {item["name"]: item for item in _load_available_agents(tmp)}
             self.assertEqual(available["claude"]["risk"]["level"], "read_only")
             self.assertEqual(available["codex"]["risk"]["level"], "workspace_write")
-            self.assertEqual(available["copilot"]["risk"]["level"], "approval_bypass")
+            self.assertEqual(available["copilot"]["risk"]["level"], "read_only")
             self.assertEqual(available["local-bot"]["risk"]["level"], "unknown")
 
 

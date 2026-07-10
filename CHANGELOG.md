@@ -9,9 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 - Added built-in xAI Grok Build (`grok`) and Cursor CLI (`cursor`) adapters, including their official headless and ACP launch commands.
+- Added unified `--execution-mode read_only|write|yolo` profiles across all built-in adapters and MCP tools, with provider-native launch flag translation.
 
 ### Changed
 - Removed the implicit run/review provider set. Callers must use an explicit CLI or persisted configuration selection; otherwise MCO returns `provider_selection_required` so the orchestrating agent can ask the user.
+- Defaulted `mco review` to read-only execution and `mco run` to workspace file-writing execution; approval-bypassing `yolo` remains explicit. Hermes fails closed outside `yolo` because its oneshot mode inherently bypasses approvals.
 
 ## [0.10.7] - 2026-07-07
 ### Added
