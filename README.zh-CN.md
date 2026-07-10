@@ -6,11 +6,11 @@
 
 ---
 
-<h1 align="center">MCO</h1>
-
 <p align="center">
-  <img src="./docs/assets/logos/mco-logo-readme.svg" alt="MCO Logo" width="520" />
+  <img src="./docs/assets/brand/mco-cover-starry.jpg" alt="MCO——十条 Agent 路径在星空下汇聚穿过宏伟的 M" width="100%" />
 </p>
+
+<h1 align="center">MCO</h1>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@tt-a1i/mco"><img src="https://img.shields.io/npm/v/@tt-a1i/mco?style=flat-square&color=cb3837&logo=npm&logoColor=white" alt="npm version" /></a>
