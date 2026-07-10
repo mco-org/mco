@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from runtime.answer_transport import AnswerTransport, decode_pi_events
 from runtime.cli import main
 from runtime.contracts import CapabilitySet, ProviderPresence, TaskInput, TaskRunRef, TaskStatus
 
@@ -48,7 +49,39 @@ class DeterministicFakeAdapter:
         raise AssertionError("invocation runtime must not parse findings")
 
 
+class ProtocolFakeAdapter(DeterministicFakeAdapter):
+    def run(self, input_task: TaskInput) -> TaskRunRef:
+        self.inputs.append(input_task)
+        root = Path(input_task.metadata["artifact_root"]) / input_task.task_id
+        raw = root / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "pi.stdout.log").write_text(
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"official answer"}}\n'
+            '{"type":"agent_end"}\n',
+            encoding="utf-8",
+        )
+        (raw / "pi.stderr.log").write_text("protocol log", encoding="utf-8")
+        return TaskRunRef(input_task.task_id, "pi", input_task.task_id, str(root), "2026-07-11T00:00:00Z")
+
+    def decode_transport(self, raw: str) -> AnswerTransport:
+        return decode_pi_events(raw)
+
+
 class InvocationRuntimeCliTests(unittest.TestCase):
+    def test_cli_returns_decoded_protocol_answer_instead_of_event_json(self) -> None:
+        adapter = ProtocolFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "compare", "--json",
+                    "--agent", "pi:protocol-model",
+                ])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn('"output": "official answer"', stdout.getvalue())
+        self.assertNotIn("message_update", stdout.getvalue())
+
     def test_providers_shorthand_uses_invocation_runtime_with_default_model(self) -> None:
         adapter = DeterministicFakeAdapter()
         with tempfile.TemporaryDirectory() as repo:

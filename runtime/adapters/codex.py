@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
+from ..answer_transport import AnswerTransport, decode_codex_events
 from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
 from .parsing import normalize_findings_from_text
 from .shim import ShimAdapterBase
@@ -34,6 +35,9 @@ class CodexAdapter(ShimAdapterBase):
 
     def supported_context_keys(self) -> List[str]:
         return ["context_files"]
+
+    def decode_transport(self, raw: str) -> AnswerTransport:
+        return decode_codex_events(raw)
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
         sandbox = "workspace-write"

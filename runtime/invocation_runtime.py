@@ -122,7 +122,12 @@ def run_invocations(
             if status.attempt_state != "SUCCEEDED":
                 raise RuntimeError("invocation '{}' failed: {}".format(invocation.invocation_id, status.message))
             output_path = Path(run_ref.artifact_path) / "raw" / "{}.stdout.log".format(invocation.provider)
-            output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+            raw_output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+            decode_transport = getattr(adapter, "decode_transport", None)
+            if callable(decode_transport):
+                output = decode_transport(raw_output).final_answer
+            else:
+                output = raw_output
             outputs.append({
                 "invocation_id": invocation.invocation_id,
                 "provider": invocation.provider,

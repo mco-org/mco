@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+from ..answer_transport import AnswerTransport, decode_pi_events
 from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
 from .parsing import normalize_findings_from_text
 from .shim import ShimAdapterBase
@@ -35,6 +36,9 @@ class PiAdapter(ShimAdapterBase):
 
     def supported_context_keys(self) -> List[str]:
         return ["skills", "context_files"]
+
+    def decode_transport(self, raw: str) -> AnswerTransport:
+        return decode_pi_events(raw)
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
         # Strict read-only tool allowlist: read files, search content,
