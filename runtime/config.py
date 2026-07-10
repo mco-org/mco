@@ -41,11 +41,12 @@ class ReviewPolicy:
     chain: bool = False
     debate: bool = False
     divide: str = ""
+    execution_mode: str = ""
 
 
 @dataclass(frozen=True)
 class ReviewConfig:
-    providers: List[str] = field(default_factory=lambda: ["claude", "codex", "gemini", "opencode", "qwen"])
+    providers: List[str] = field(default_factory=list)
     artifact_base: str = "reports/review"
     policy: ReviewPolicy = field(default_factory=ReviewPolicy)
 

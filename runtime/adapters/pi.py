@@ -30,6 +30,9 @@ class PiAdapter(ShimAdapterBase):
     def supported_model_keys(self) -> List[str]:
         return ["model", "provider"]
 
+    def supported_permission_keys(self) -> List[str]:
+        return ["tool_profile"]
+
     def supported_context_keys(self) -> List[str]:
         return ["skills", "context_files"]
 
@@ -66,7 +69,16 @@ class PiAdapter(ShimAdapterBase):
         # by Pi's supported_context_keys — the review_engine will reject it
         # in strict mode or drop it in best_effort.
         cmd.append("--no-extensions")
-        cmd.extend(["--tools", "read,grep,find,ls"])
+        permissions = input_task.metadata.get("provider_permissions", {})
+        tool_profile = permissions.get("tool_profile", "read_only") if isinstance(permissions, dict) else "read_only"
+        tools = {
+            "read_only": "read,grep,find,ls",
+            "write": "read,write,edit,grep,find,ls",
+            "yolo": "read,write,edit,bash,grep,find,ls",
+        }
+        if tool_profile not in tools:
+            raise ValueError("unsupported Pi tool_profile: {}".format(tool_profile))
+        cmd.extend(["--tools", tools[str(tool_profile)]])
         model = input_task.metadata.get("model")
         if isinstance(model, str) and model.strip():
             cmd.extend(["--model", model.strip()])

@@ -12,8 +12,26 @@ class ProviderRiskTests(unittest.TestCase):
             with self.subTest(provider=provider):
                 self.assertNotEqual(provider_risk(provider)["level"], "unknown")
 
-    def test_copilot_is_approval_bypass(self) -> None:
-        self.assertEqual(provider_risk("copilot")["level"], "approval_bypass")
+    def test_copilot_adapter_default_is_read_only(self) -> None:
+        self.assertEqual(provider_risk("copilot")["level"], "read_only")
+
+    def test_grok_defaults_to_approval_prompts(self) -> None:
+        self.assertEqual(provider_risk("grok")["level"], "workspace_write")
+
+    def test_cursor_defaults_to_read_only_ask_mode(self) -> None:
+        self.assertEqual(provider_risk("cursor")["level"], "read_only")
+
+    def test_grok_always_approve_override_is_visible(self) -> None:
+        risk = effective_provider_risk("grok", {"approval_mode": "always-approve"})
+        self.assertEqual(risk["level"], "approval_bypass")
+
+    def test_cursor_agent_mode_override_is_visible(self) -> None:
+        risk = effective_provider_risk("cursor", {"mode": "agent"})
+        self.assertEqual(risk["level"], "workspace_write")
+
+    def test_cursor_force_override_is_approval_bypass(self) -> None:
+        risk = effective_provider_risk("cursor", {"force": "true"})
+        self.assertEqual(risk["level"], "approval_bypass")
 
     def test_codex_read_only_override_reduces_effective_risk(self) -> None:
         risk = effective_provider_risk("codex", {"sandbox": "read-only"})

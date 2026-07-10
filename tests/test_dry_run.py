@@ -35,13 +35,13 @@ class DryRunTests(unittest.TestCase):
         self.assertFalse(payload["would_execute"])
         self.assertEqual(payload["providers"], ["codex", "pi"])
         self.assertEqual(payload["providers_detail"]["codex"]["risk"]["level"], "workspace_write")
-        self.assertEqual(payload["providers_detail"]["pi"]["risk"]["level"], "read_only")
+        self.assertEqual(payload["providers_detail"]["pi"]["risk"]["level"], "workspace_write")
         pi_policy = payload["providers_detail"]["pi"]["policy"]
         self.assertEqual(pi_policy["applied_model"], {"provider": "seal", "model": "deepseek-v4-pro"})
         self.assertEqual(pi_policy["applied_context"], {"skills": "disabled", "context_files": False})
         pi_command = payload["providers_detail"]["pi"]["command_template"]
         self.assertIn("--tools", pi_command)
-        self.assertIn("read,grep,find,ls", pi_command)
+        self.assertIn("read,write,edit,grep,find,ls", pi_command)
         self.assertIn("--model", pi_command)
         self.assertIn("deepseek-v4-pro", pi_command)
 
@@ -55,6 +55,7 @@ class DryRunTests(unittest.TestCase):
                         "--repo", tmp,
                         "--prompt", "Check policy.",
                         "--providers", "hermes",
+                        "--execution-mode", "yolo",
                         "--provider-context-json", '{"hermes":{"skills":["gh"],"context_files":false}}',
                         "--dry-run",
                         "--json",
@@ -134,7 +135,7 @@ class DryRunTests(unittest.TestCase):
         self.assertIn("--ignore-user-config", codex_command)
         self.assertIn("--ignore-rules", codex_command)
 
-    def test_copilot_dry_run_exposes_approval_bypass_command(self) -> None:
+    def test_copilot_run_defaults_to_write_without_shell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
             with patch("runtime.cli.run_review") as mock_run_review:
@@ -151,9 +152,10 @@ class DryRunTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         mock_run_review.assert_not_called()
         detail = json.loads(stdout_buf.getvalue())["providers_detail"]["copilot"]
-        self.assertEqual(detail["default_risk"]["level"], "approval_bypass")
-        self.assertEqual(detail["risk"]["level"], "approval_bypass")
-        self.assertIn("--allow-all-tools", detail["command_template"])
+        self.assertEqual(detail["default_risk"]["level"], "read_only")
+        self.assertEqual(detail["risk"]["level"], "workspace_write")
+        self.assertIn("--allow-tool=write", detail["command_template"])
+        self.assertIn("--deny-tool=shell", detail["command_template"])
         self.assertIn("--no-ask-user", detail["command_template"])
 
     def test_dry_run_reports_effective_risk_after_permission_override(self) -> None:
@@ -178,7 +180,7 @@ class DryRunTests(unittest.TestCase):
         self.assertEqual(details["codex"]["default_risk"]["level"], "workspace_write")
         self.assertEqual(details["codex"]["risk"]["level"], "read_only")
 
-    def test_acp_dry_run_marks_implicit_permissions_unknown(self) -> None:
+    def test_acp_dry_run_applies_default_write_permission(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
             with contextlib.redirect_stdout(stdout_buf):
@@ -194,10 +196,12 @@ class DryRunTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         detail = json.loads(stdout_buf.getvalue())["providers_detail"]["claude"]
-        self.assertEqual(detail["risk"]["level"], "unknown")
-        self.assertTrue(detail["policy"]["would_fail_strict"])
-        self.assertEqual(detail["policy"]["failure_reason"], "risk_classification_unknown")
-        self.assertEqual(detail["command_template"], ["claude", "code", "--transport", "stdio"])
+        self.assertEqual(detail["risk"]["level"], "workspace_write")
+        self.assertFalse(detail["policy"]["would_fail_strict"])
+        self.assertEqual(
+            detail["command_template"],
+            ["claude", "code", "--transport", "stdio", "--permission-mode", "acceptEdits"],
+        )
 
     def test_acp_dry_run_applies_explicit_read_only_permission(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -233,8 +237,9 @@ class DryRunTests(unittest.TestCase):
                         "run",
                         "--repo", tmp,
                         "--prompt", "Summarize this repo.",
-                        "--providers", "claude",
+                        "--providers", "grok",
                         "--transport", "acp",
+                        "--execution-mode", "yolo",
                         "--json",
                     ])
 

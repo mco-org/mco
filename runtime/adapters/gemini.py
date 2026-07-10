@@ -26,11 +26,18 @@ class GeminiAdapter(ShimAdapterBase):
     def _auth_check_command(self, binary: str) -> List[str]:
         return [binary, "-p", "Reply with exactly OK"]
 
+    def supported_permission_keys(self) -> List[str]:
+        return ["approval_mode"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
-        return ["gemini", "-p", input_task.prompt, "-y"]
+        permissions = input_task.metadata.get("provider_permissions", {})
+        mode = permissions.get("approval_mode", "plan") if isinstance(permissions, dict) else "plan"
+        if mode not in ("plan", "default", "auto_edit", "yolo"):
+            raise ValueError("unsupported Gemini approval_mode: {}".format(mode))
+        return ["gemini", "-p", input_task.prompt, "--approval-mode", str(mode)]
 
     def _build_command_for_record(self) -> List[str]:
-        return ["gemini", "-p", "<prompt>", "-y"]
+        return ["gemini", "-p", "<prompt>", "--approval-mode", "plan"]
 
     def _is_success(self, return_code: int, stdout_text: str, stderr_text: str) -> bool:
         if return_code != 0:
@@ -45,4 +52,3 @@ class GeminiAdapter(ShimAdapterBase):
     def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
         text = raw if isinstance(raw, str) else ""
         return normalize_findings_from_text(text, ctx, "gemini")
-

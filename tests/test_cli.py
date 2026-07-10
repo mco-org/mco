@@ -97,7 +97,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(resolved.policy.review_hard_timeout_seconds, 3000)
         self.assertEqual(resolved.policy.allow_paths, ["src", "tests"])
         self.assertEqual(resolved.policy.enforcement_mode, "best_effort")
-        self.assertEqual(resolved.policy.provider_permissions.get("codex"), {"sandbox": "read-only"})
+        self.assertEqual(
+            resolved.policy.provider_permissions.get("codex"),
+            {"sandbox": "read-only", "approval_policy": "never"},
+        )
         self.assertEqual(
             resolved.policy.provider_permissions.get("claude"),
             {"permission_mode": "accept-edits"},

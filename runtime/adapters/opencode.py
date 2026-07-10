@@ -29,8 +29,21 @@ class OpenCodeAdapter(ShimAdapterBase):
     def supported_context_keys(self) -> List[str]:
         return ["plugins"]
 
+    def supported_permission_keys(self) -> List[str]:
+        return ["agent_mode", "auto"]
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         cmd = ["opencode", "run"]
+        permissions = input_task.metadata.get("provider_permissions", {})
+        agent_mode = permissions.get("agent_mode", "plan") if isinstance(permissions, dict) else "plan"
+        auto = permissions.get("auto", "false") if isinstance(permissions, dict) else "false"
+        if agent_mode not in ("plan", "build"):
+            raise ValueError("unsupported OpenCode agent_mode: {}".format(agent_mode))
+        if auto not in ("false", "true"):
+            raise ValueError("unsupported OpenCode auto value: {}".format(auto))
+        cmd.extend(["--agent", str(agent_mode)])
+        if auto == "true":
+            cmd.append("--auto")
         # Context policy is opt-in: only apply when provider_context key is present.
         if "provider_context" in input_task.metadata:
             ctx = input_task.metadata.get("provider_context", {})
@@ -42,7 +55,10 @@ class OpenCodeAdapter(ShimAdapterBase):
         return cmd
 
     def _build_command_for_record(self) -> List[str]:
-        return ["opencode", "run", "<prompt>", "--format", "json", "--dir", "<repo_root>"]
+        return [
+            "opencode", "run", "--agent", "plan", "<prompt>",
+            "--format", "json", "--dir", "<repo_root>",
+        ]
 
     def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
         text = raw if isinstance(raw, str) else ""

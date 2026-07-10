@@ -125,7 +125,7 @@ class CliDoctorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         payload = json.loads(output.getvalue())
-        self.assertEqual(payload["providers"]["copilot"]["risk"]["level"], "approval_bypass")
+        self.assertEqual(payload["providers"]["copilot"]["risk"]["level"], "read_only")
 
 
 if __name__ == "__main__":

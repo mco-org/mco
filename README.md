@@ -23,13 +23,13 @@
   <a href="https://github.com/mco-org/mco/stargazers"><img src="https://img.shields.io/github/stars/mco-org/mco?style=flat-square&color=f59e0b" alt="GitHub stars" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/Providers-8%20supported-7c3aed?style=flat-square" alt="8 supported providers" />
+  <img src="https://img.shields.io/badge/Providers-10%20supported-7c3aed?style=flat-square" alt="10 supported providers" />
   <a href="https://pypi.org/project/evermemos-mcp/"><img src="https://img.shields.io/badge/evermemos--mcp-memory%20powered-6366f1?style=flat-square" alt="evermemos-mcp" /></a>
 </p>
 
 <p align="center"><strong>MCO — Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.</strong></p>
 
-<p align="center"><strong>MCO equips your primary agent with an agent team: dispatch Claude, Codex, Gemini, OpenCode, and Qwen in parallel by default, with Copilot, Hermes, and Pi available as explicit opt-in providers.</strong></p>
+<p align="center"><strong>MCO equips your primary agent with ten built-in agents. The user chooses the team; MCO never silently guesses a provider set.</strong></p>
 
 <p align="center">English | <a href="./README.zh-CN.md">简体中文</a></p>
 
@@ -43,6 +43,8 @@
     <td align="center"><strong>Copilot</strong></td>
     <td align="center"><strong>Hermes</strong></td>
     <td align="center"><strong>Pi</strong></td>
+    <td align="center"><strong>Grok</strong></td>
+    <td align="center"><strong>Cursor</strong></td>
   </tr>
   <tr>
     <td align="center"><strong>Claude Code</strong></td>
@@ -53,6 +55,8 @@
     <td align="center"><strong>Copilot CLI</strong></td>
     <td align="center"><strong>Hermes</strong></td>
     <td align="center"><strong>Pi</strong></td>
+    <td align="center"><strong>Grok Build</strong></td>
+    <td align="center"><strong>Cursor CLI</strong></td>
   </tr>
   <tr>
     <td align="center"><code>claude</code></td>
@@ -63,6 +67,8 @@
     <td align="center"><code>copilot</code></td>
     <td align="center"><code>hermes</code></td>
     <td align="center"><code>pi</code></td>
+    <td align="center"><code>grok</code></td>
+    <td align="center"><code>cursor</code></td>
   </tr>
 </table>
 
@@ -70,7 +76,7 @@
 >
 > Work like a Tech Lead: assign one task to multiple agents, run in parallel, and compare outcomes before acting.
 >
-> One command. Five default agents working at once.
+> One explicit choice. The agents you selected working at once.
 
 ### Works with OpenClaw
 
@@ -78,7 +84,7 @@ Running [OpenClaw](https://github.com/open-claw/open-claw) on your machine? It c
 
 > "Use mco to run a security review on this repo with Claude, Codex, and Gemini. Synthesize the results."
 
-OpenClaw reads `mco -h`, learns the CLI, and orchestrates the entire workflow autonomously. Your local machine becomes a multi-agent review team — OpenClaw is the manager, MCO is the dispatcher, and Claude/Codex/Gemini/OpenCode/Qwen are the default team members. Copilot, Hermes, and Pi can be selected explicitly when installed.
+OpenClaw reads `mco -h`, asks which installed agents you want, and passes that explicit selection to MCO. Your local machine becomes a multi-agent review team without an invisible provider default.
 
 This works the same way from **Claude Code, Cursor, Trae, Copilot, Windsurf**, or any agent that can run shell commands.
 
@@ -94,12 +100,12 @@ MCO is designed to be called by any orchestrating agent or AI-powered IDE — Cl
 
 ## AI Agent Quick Start
 
-When another coding agent calls MCO, start with the health check and a dry run before executing. The default five-provider set means compatibility-audited, not read-only: Codex defaults to workspace write, Gemini and Qwen bypass interactive approvals, and OpenCode permissions remain provider-controlled. For a read-only first run, explicitly select Claude (plan mode) and Pi (read-only tool allowlist):
+When another coding agent calls MCO, it must first ask the user which agents to use, then pass that choice with `--providers`. If the choice is missing, MCO returns `provider_selection_required` without dispatching. Start with the health check and a dry run before execution. For a read-only first run, select Claude (plan mode), Pi (read-only tool allowlist), or Cursor (ask mode):
 
 ```bash
 mco doctor --providers claude,pi --json
-mco run --repo . --prompt "Summarize this repo." --providers claude,pi --dry-run --json
-mco run --repo . --prompt "Summarize this repo." --providers claude,pi --json
+mco run --repo . --prompt "Summarize this repo." --providers claude,pi --execution-mode read_only --dry-run --json
+mco run --repo . --prompt "Summarize this repo." --providers claude,pi --execution-mode read_only --json
 ```
 
 For review workflows:
@@ -111,7 +117,7 @@ mco review --repo . --prompt "Review for bugs." --providers claude,codex,pi --js
 
 `--dry-run` resolves providers, default/effective risk metadata, policy, prompt hash, artifact settings, and command templates without starting any agent process. Use it when an orchestrating agent needs to show the user what will run before fan-out. With `--json`, parse/input/config failures return the stable envelope documented in [`docs/contracts/errors-v0.1.x.md`](./docs/contracts/errors-v0.1.x.md).
 
-## One Agent is a Tool. Five Agents are a Team.
+## One Agent is a Tool. Selected Agents are a Team.
 
 No single AI model sees everything. Each model has its own training data, reasoning style, and blind spots. Using just one agent is like having a team of five engineers and only asking one for their opinion.
 
@@ -152,7 +158,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Debate mode** — `--debate` adds a second challenge round where agents critique the merged findings before final ranking
 - **Divide mode** — `--divide files|dimensions` splits review work by file slices or review dimensions while preserving the existing merge + consensus pipeline
 - **CI/CD integration** — `--format sarif` for GitHub Code Scanning, `--format markdown-pr` for PR comments
-- **Environment health check** — `mco doctor` probes binary presence, version, and auth status for the default provider set, or any explicitly selected providers
+- **Environment health check** — `mco doctor` probes binary presence, version, auth status, and risk for all built-in or explicitly selected providers
 - **Dry-run execution preview** — `--dry-run --json` shows resolved providers, risk levels, policies, and command templates without running agents
 - **Token usage tracking** — `--include-token-usage` for best-effort per-agent and aggregate token consumption
 - **Progress-driven timeouts** — agents run freely until completion; cancel only when output goes idle
@@ -176,8 +182,8 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 
 ## What's New in v0.10
 
-- **Copilot, Hermes, and Pi adapters** — `copilot`, `hermes`, and `pi` are supported through explicit `--providers copilot,hermes,pi` selection.
-- **Safe default provider set** — default runs remain on the audited five providers: `claude,codex,gemini,opencode,qwen`.
+- **Ten built-in adapters** — Claude, Codex, Gemini, OpenCode, Qwen, Copilot, Hermes, Pi, Grok Build, and Cursor CLI.
+- **Explicit provider selection** — callers ask the user which agents to use; no provider set is silently selected.
 - **Read-only Pi review mode** — Pi runs with `read,grep,find,ls` enabled so it can inspect code without shell, edit, or write tools.
 - **Per-provider model selection** — `--provider-models-json` can pin a model per selected provider while the default remains each CLI's configured model.
 - **Model discovery** — `mco agent models --providers codex,hermes,pi --json` lists known local model choices when the underlying CLI exposes them.
@@ -205,16 +211,23 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 | Gemini CLI | `gemini` | Supported |
 | OpenCode | `opencode` | Supported |
 | Qwen Code | `qwen` | Supported |
+| GitHub Copilot CLI | `copilot` | Supported |
+| Hermes | `hermes` | Supported |
+| Pi | `pi` | Supported |
+| [Grok Build](https://docs.x.ai/build/overview) | `grok` | Supported |
+| [Cursor CLI](https://cursor.com/docs/cli/overview) | `cursor` | Supported |
 
-These five providers are the default set for `mco run` and `mco review`. `mco doctor` checks all eight supported providers by default.
+`mco run` and `mco review` have no implicit provider set. Ask the user and pass `--providers`, or persist an explicit selection in configuration. `mco doctor` checks all ten supported providers by default.
 
-## Explicit Opt-in Providers
+## Permission-sensitive Providers
 
-| Provider | CLI | Status | Default permission model |
-|----------|-----|--------|--------------------------|
-| GitHub Copilot CLI | `copilot` | Explicit opt-in | Non-interactive Copilot CLI run with `--allow-all-tools --no-ask-user`; not included in defaults |
-| Hermes | `hermes` | Explicit opt-in | Elevated oneshot mode: approvals are auto-bypassed by Hermes; not included in defaults |
-| Pi | `pi` | Explicit opt-in | Read-only tools only: `read,grep,find,ls` |
+| Provider | CLI | Execution-mode mapping |
+|----------|-----|--------------------------|
+| GitHub Copilot CLI | `copilot` | Read-only, file-write, or allow-all access |
+| Hermes | `hermes` | Elevated oneshot mode; approvals are auto-bypassed |
+| Pi | `pi` | Tool allowlist expands from read-only to write/edit and then bash |
+| Grok Build | `grok` | Plan, accept-edits, or bypass permission mode |
+| Cursor CLI | `cursor` | Ask, sandboxed-agent, or unsandboxed-agent profile |
 
 Use them by naming them explicitly:
 
@@ -222,7 +235,7 @@ Use them by naming them explicitly:
 mco review --providers claude,codex,copilot --prompt "Review this repository for bugs."
 ```
 
-Copilot and Hermes are available for explicit selection when you accept their non-interactive approval-bypass semantics. Pi can read repository files through its read-only tool allowlist. It does not enable `bash`, `edit`, `write`, or `--approve` by default.
+Copilot and Pi follow the selected execution mode. Hermes is different: its oneshot mode inherently bypasses approvals, so selecting Hermes also requires explicit `--execution-mode yolo`.
 
 By default MCO does not choose a model for you; it lets each provider CLI use its own configured default. To pin models for one run:
 
@@ -245,38 +258,38 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 
 | Scenario | Command | What happens |
 |----------|---------|--------------|
-| PR code review | `mco review --format markdown-pr` | Multiple agents review in parallel, output a PR-ready comment |
-| Security scan in CI | `mco review --format sarif` | Results upload directly to GitHub Code Scanning |
+| PR code review | `mco review --providers claude,codex --format markdown-pr` | Multiple agents review in parallel, output a PR-ready comment |
+| Security scan in CI | `mco review --providers claude,codex --format sarif` | Results upload directly to GitHub Code Scanning |
 | Architecture analysis | `mco run --providers claude,gemini,qwen` | Multi-perspective architecture assessment |
 | Pre-deploy health check | `mco doctor --json` | Verify all agents are installed and authenticated |
-| Execution preview | `mco review --dry-run --json` | Resolve providers, policy, risk, and commands without running agents |
-| Consensus decision | `mco review --synthesize` | Summarize what agents agree on and where they diverge |
+| Execution preview | `mco review --providers claude,pi --dry-run --json` | Resolve providers, policy, risk, and commands without running agents |
+| Consensus decision | `mco review --providers claude,codex --synthesize` | Summarize what agents agree on and where they diverge |
 | Debate findings | `mco review --debate --providers claude,codex,gemini` | Run an extra challenge round before final ranking |
-| File division review | `mco review --divide files` | Split changed files across providers, balanced by file size |
-| Dimension division review | `mco review --divide dimensions` | Give each provider a dedicated review dimension |
-| Persistent code review | `mco review --memory` | Findings accumulate across runs; agents learn what's already been flagged |
-| Diff-only review | `mco review --diff` | Review only changed files vs main branch |
-| Staged changes review | `mco review --staged` | Review only git staged changes |
-| Real-time event stream | `mco review --stream jsonl` | JSONL events to stdout as providers execute |
-| Live terminal stream | `mco review --stream live` | Rich terminal progress view for interactive TTY sessions |
+| File division review | `mco review --providers claude,codex --divide files` | Split changed files across providers, balanced by file size |
+| Dimension division review | `mco review --providers claude,codex --divide dimensions` | Give each provider a dedicated review dimension |
+| Persistent code review | `mco review --providers claude,codex --memory` | Findings accumulate across runs; agents learn what's already been flagged |
+| Diff-only review | `mco review --providers claude,codex --diff` | Review only changed files vs main branch |
+| Staged changes review | `mco review --providers claude,codex --staged` | Review only git staged changes |
+| Real-time event stream | `mco review --providers claude,codex --stream jsonl` | JSONL events to stdout as providers execute |
+| Live terminal stream | `mco review --providers claude,codex --stream live` | Rich terminal progress view for interactive TTY sessions |
 | Multi-turn session | `mco session start --provider claude` | Persistent session with conversation history |
 | Cancel running prompt | `mco session cancel my-review` | Interrupt running + queued prompts immediately |
 | Queue status | `mco session queue my-review` | Show running request ID and queue depth |
 | Multi-session broadcast | `mco session broadcast "prompt"` | Fan out to all active sessions, aggregate results |
 | ACP transport | `mco run --transport acp --providers claude` | Structured JSON-RPC communication with ACP agents |
-| Custom ACP agent | `mco run --agent mybot "mybot --acp"` | Register a temporary ACP-compatible agent; works with `shim` or `acp` transport |
+| Custom ACP agent | `mco run --agent mybot "mybot --acp" --providers mybot` | Register and explicitly select a temporary ACP-compatible agent |
 | Prompt from file | `mco review --file prompt.md --providers claude` | Read prompt from a file instead of inline |
 | Piped prompt | `cat prompt.md \| mco run --providers claude` | Read prompt from stdin pipe |
 | Quiet output | `mco run --quiet --providers claude --prompt "..."` | Print only final text, no headers |
-| Pin provider models | `mco run --provider-models-json '{"codex":"gpt-5.4"}'` | Override selected providers' CLI default model |
-| Provider context policy | `mco run --provider-context-json '{"pi":{"skills":"disabled","context_files":false}}'` | Opt-in skills/context/plugin controls per provider |
+| Pin provider models | `mco run --providers codex --provider-models-json '{"codex":"gpt-5.4"}'` | Override selected providers' CLI default model |
+| Provider context policy | `mco run --providers pi --provider-context-json '{"pi":{"skills":"disabled","context_files":false}}'` | Opt-in skills/context/plugin controls per provider |
 | List provider models | `mco agent models --providers codex,pi --json` | Show discoverable model choices and configured defaults |
 | Config-driven run | (uses `.mcorc.json`) | Persistent project defaults without CLI flags |
 | Idempotent session | `mco session ensure --provider claude --name dev` | Create or return existing session |
 | Async prompt | `mco session send dev "task" --no-wait` | Queue prompt and return immediately |
 | Retrieve async result | `mco session result dev 42` | Get result of a previously queued nowait request |
 | Chain analysis | `mco review --chain --providers claude,codex` | Claude analyzes first, Codex challenges and supplements |
-| Perspective assignment | `mco review --perspectives-json '{"claude":"security","codex":"performance"}'` | Each provider focuses on a different review area |
+| Perspective assignment | `mco review --providers claude,codex --perspectives-json '{"claude":"security","codex":"performance"}'` | Each provider focuses on a different review area |
 | List custom agents | `mco agent list` | Show built-in + configured custom agents |
 | Check one custom agent | `mco agent check my-ollama` | Validate one configured agent or Ollama model wrapper |
 
@@ -447,7 +460,7 @@ mco run \
 
 ## Defaults and Overrides
 
-MCO is zero-config by default. You can also persist defaults in config files:
+MCO requires an explicit provider choice, but otherwise needs no configuration. You can persist that choice in config files:
 
 - **Project config**: `.mcorc.json` in the repo root
 - **Global config**: `~/.mco/config.json`
@@ -458,7 +471,8 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--providers` | `claude,codex,gemini,opencode,qwen` | Comma-separated provider list |
+| `--providers` | required selection | Comma-separated provider list; ask the user if absent |
+| `--execution-mode` | `write` for run; `read_only` for review | Unified capability profile: `read_only`, `write`, or explicit `yolo` |
 | `--stall-timeout` | `900` | Cancel when no output progress for this duration (seconds) |
 | `--review-hard-timeout` | `1800` | Hard deadline for review mode; `0` disables |
 | `--max-provider-parallelism` | `0` | `0` = full parallelism across selected providers |
@@ -483,7 +497,7 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | `--diff-base` | auto | Git ref for branch diff (e.g. `origin/main`, `HEAD~3`). Implies `--diff` |
 | `--stream` | off | `jsonl` for machine-readable events, `live` for interactive terminal rendering |
 | `--transport` | `shim` | `shim` (stdout parsing) or `acp` (Agent Client Protocol JSON-RPC) |
-| `--agent` | unset | Temporary custom ACP agent: `--agent NAME "command"`. Works with `shim` or `acp` transport |
+| `--agent` | unset | Register a temporary ACP agent; execution still requires `--providers NAME` |
 | `--file` | unset | Read prompt from file path, or `-` for stdin. Mutually exclusive with `--prompt` |
 | `--quiet` | off | Output only final text, no headers or formatting. Mutually exclusive with `--json`/`--stream` |
 | `--chain` | off | Run providers sequentially, feeding each output as context to the next |
@@ -491,12 +505,27 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | `--divide` | off | `files` or `dimensions` task division across providers |
 | `--perspectives-json` | unset | Per-provider review perspective JSON (e.g. `'{"claude":"security","codex":"performance"}'`) |
 
-Default provider permissions:
+### Execution modes
 
-| Provider | Key | Default |
-|----------|-----|---------|
-| `claude` | `permission_mode` | `plan` |
-| `codex` | `sandbox` | `workspace-write` |
+MCO translates one execution mode into each selected agent's native launch flags:
+
+| Mode | Meaning | Default use |
+|------|---------|-------------|
+| `read_only` | Inspect and reason without file or shell mutation | `mco review` |
+| `write` | Read, create, and edit workspace files without unrestricted shell/system access where the CLI can express that boundary | `mco run` |
+| `yolo` | Bypass approvals and enable the agent's broadest available execution profile | Explicit opt-in only |
+
+For example, `write` becomes Claude `acceptEdits`, Codex `workspace-write`, Pi's `write/edit` tool set, and Copilot write access with shell denied. `yolo` becomes each provider's native bypass flag. Hermes oneshot already bypasses approvals, so MCO rejects Hermes under `read_only` or `write`; select `--execution-mode yolo` explicitly when using Hermes.
+
+Provider-specific `--provider-permissions-json` remains available as an expert override and is applied on top of the selected execution profile. `allow_paths` validates MCO's requested scope; it is not an operating-system sandbox.
+
+```bash
+mco run \
+  --repo . \
+  --prompt "Implement the requested change and run tests." \
+  --providers claude,codex,pi \
+  --execution-mode write
+```
 
 Override example:
 

@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 import unittest
+import contextlib
+import io
+import json
+import tempfile
+from unittest.mock import patch
 
-from runtime.cli import build_parser
+from runtime.cli import build_parser, main
 from runtime.adapters import adapter_registry
 
 
 class TestAgentFlag(unittest.TestCase):
+    def test_agent_registration_does_not_implicitly_select_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout_buf = io.StringIO()
+            with patch("runtime.cli.run_review") as mock_run:
+                with contextlib.redirect_stdout(stdout_buf):
+                    exit_code = main([
+                        "run", "--repo", tmp, "--prompt", "test",
+                        "--agent", "mybot", "mybot --acp", "--json",
+                    ])
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(json.loads(stdout_buf.getvalue())["error"]["subtype"], "provider_selection_required")
+        mock_run.assert_not_called()
+
     def test_agent_flag_accepted(self) -> None:
         parser = build_parser()
         args = parser.parse_args([

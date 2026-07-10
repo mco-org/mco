@@ -45,6 +45,24 @@ def _validate_repo(repo: str, require_git: bool = False) -> Optional[Dict[str, A
     return None
 
 
+def _resolve_provider_selection(providers_csv: str) -> tuple[List[str], Optional[Dict[str, Any]]]:
+    """Validate an explicit built-in provider selection without dropping entries."""
+    from .cli import SUPPORTED_PROVIDER_LIST, SUPPORTED_PROVIDERS
+
+    providers = [provider.strip() for provider in providers_csv.split(",") if provider.strip()]
+    if not providers:
+        return [], _err(
+            "provider_selection_required",
+            "Ask the user which agents MCO should use, then provide one or more of: {}".format(
+                SUPPORTED_PROVIDER_LIST,
+            ),
+        )
+    invalid = [provider for provider in providers if provider not in SUPPORTED_PROVIDERS]
+    if invalid:
+        return [], _err("invalid_providers", "Unknown providers: {}".format(", ".join(invalid)))
+    return providers, None
+
+
 # ── Sync helpers (called via asyncio.to_thread from async tool handlers) ──
 
 def _sync_doctor(providers_csv: Optional[str]) -> Dict[str, Any]:
@@ -89,11 +107,12 @@ def _sync_review(
     diff_base: Optional[str] = None,
     memory: bool = False,
     space: Optional[str] = None,
+    execution_mode: str = "read_only",
 ) -> Dict[str, Any]:
     """Run structured multi-agent code review."""
     from .review_engine import ReviewRequest, run_review
     from .config import ReviewPolicy
-    from .cli import SUPPORTED_PROVIDERS
+    from .execution_modes import EXECUTION_MODES, execution_permissions
 
     require_git = bool(diff_mode or diff_base)
     err = _validate_repo(repo, require_git=require_git)
@@ -101,10 +120,23 @@ def _sync_review(
         return err
     repo_path = Path(repo).resolve()
 
-    provider_list = [p.strip() for p in providers.split(",") if p.strip()]
-    valid_providers = [p for p in provider_list if p in SUPPORTED_PROVIDERS]
-    if not valid_providers:
-        return _err("invalid_providers", "No valid providers in: {}".format(providers))
+    valid_providers, provider_error = _resolve_provider_selection(providers)
+    if provider_error:
+        return provider_error
+    if execution_mode not in EXECUTION_MODES:
+        return _err("invalid_execution_mode", "Unknown execution mode: {}".format(execution_mode))
+
+    provider_permissions = {}
+    for provider in valid_providers:
+        permissions = execution_permissions(provider, execution_mode)
+        if permissions is None:
+            return _err(
+                "unsupported_execution_mode",
+                "{} does not support execution mode {}; use yolo or choose another provider".format(
+                    provider, execution_mode,
+                ),
+            )
+        provider_permissions[provider] = permissions
 
     effective_diff_mode = diff_mode
     if diff_base and not effective_diff_mode:
@@ -116,7 +148,10 @@ def _sync_review(
             prompt=prompt,
             providers=valid_providers,
             artifact_base=str(repo_path / "reports" / "review"),
-            policy=ReviewPolicy(),
+            policy=ReviewPolicy(
+                provider_permissions=provider_permissions,
+                execution_mode=execution_mode,
+            ),
             target_paths=[p.strip() for p in target_paths.split(",") if p.strip()],
             memory_enabled=memory,
             memory_space=space or None,
@@ -141,21 +176,35 @@ def _sync_run(
     prompt: str,
     providers: str,
     target_paths: str = ".",
+    execution_mode: str = "write",
 ) -> Dict[str, Any]:
     """General-purpose multi-agent task execution."""
     from .review_engine import ReviewRequest, run_review
     from .config import ReviewPolicy
-    from .cli import SUPPORTED_PROVIDERS
+    from .execution_modes import EXECUTION_MODES, execution_permissions
 
     err = _validate_repo(repo)
     if err:
         return err
     repo_path = Path(repo).resolve()
 
-    provider_list = [p.strip() for p in providers.split(",") if p.strip()]
-    valid_providers = [p for p in provider_list if p in SUPPORTED_PROVIDERS]
-    if not valid_providers:
-        return _err("invalid_providers", "No valid providers in: {}".format(providers))
+    valid_providers, provider_error = _resolve_provider_selection(providers)
+    if provider_error:
+        return provider_error
+    if execution_mode not in EXECUTION_MODES:
+        return _err("invalid_execution_mode", "Unknown execution mode: {}".format(execution_mode))
+
+    provider_permissions = {}
+    for provider in valid_providers:
+        permissions = execution_permissions(provider, execution_mode)
+        if permissions is None:
+            return _err(
+                "unsupported_execution_mode",
+                "{} does not support execution mode {}; use yolo or choose another provider".format(
+                    provider, execution_mode,
+                ),
+            )
+        provider_permissions[provider] = permissions
 
     try:
         req = ReviewRequest(
@@ -163,7 +212,10 @@ def _sync_run(
             prompt=prompt,
             providers=valid_providers,
             artifact_base=str(repo_path / "reports" / "review"),
-            policy=ReviewPolicy(),
+            policy=ReviewPolicy(
+                provider_permissions=provider_permissions,
+                execution_mode=execution_mode,
+            ),
             target_paths=[p.strip() for p in target_paths.split(",") if p.strip()],
         )
         result = run_review(req, review_mode=False, write_artifacts=False)
@@ -271,22 +323,24 @@ async def run_server() -> None:
         diff_base: str = "",
         memory: bool = False,
         space: str = "",
+        execution_mode: str = "read_only",
     ) -> dict:
         """Run structured multi-agent code review.
 
         Args:
             repo: Path to repository root.
             prompt: Review instructions.
-            providers: Comma-separated provider list (e.g. "claude,codex,gemini").
+            providers: User-confirmed comma-separated provider list (e.g. "claude,codex,gemini").
             target_paths: Comma-separated scope paths (default: ".").
             diff_mode: "branch", "staged", or "unstaged" (default: disabled).
             diff_base: Git ref for branch diff (implies diff_mode="branch").
             memory: Enable evermemos memory layer.
             space: Memory space slug (auto-inferred if empty).
+            execution_mode: "read_only", "write", or "yolo" (default: "read_only").
         """
         return await asyncio.to_thread(
             _sync_review, repo, prompt, providers, target_paths,
-            diff_mode or None, diff_base or None, memory, space or None,
+            diff_mode or None, diff_base or None, memory, space or None, execution_mode,
         )
 
     @mcp.tool()
@@ -295,17 +349,19 @@ async def run_server() -> None:
         prompt: str,
         providers: str,
         target_paths: str = ".",
+        execution_mode: str = "write",
     ) -> dict:
         """General-purpose multi-agent task execution.
 
         Args:
             repo: Path to repository root.
             prompt: Task instructions.
-            providers: Comma-separated provider list.
+            providers: User-confirmed comma-separated provider list.
             target_paths: Comma-separated scope paths (default: ".").
+            execution_mode: "read_only", "write", or "yolo" (default: "write").
         """
         return await asyncio.to_thread(
-            _sync_run, repo, prompt, providers, target_paths,
+            _sync_run, repo, prompt, providers, target_paths, execution_mode,
         )
 
     @mcp.tool()

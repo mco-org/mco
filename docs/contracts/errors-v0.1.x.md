@@ -19,7 +19,7 @@ When `--json` is requested and command parsing, input validation, or configurati
   "ok": false,
   "error": {
     "category": "input|configuration|runtime",
-    "subtype": "parse_error|input_error|invalid_providers|config_error|invalid_config|runtime_error",
+    "subtype": "parse_error|input_error|provider_selection_required|invalid_providers|config_error|invalid_config|runtime_error",
     "message": "...",
     "hint": "...",
     "provider": null,
@@ -46,6 +46,10 @@ Known `code` values include:
 - `invalid_config`
 - `invalid_providers`
 - `input_error`
+- `provider_selection_required`
+
+When neither `--providers` nor a persisted provider selection is present, MCO returns `provider_selection_required` without dispatching. Calling agents should ask the user which installed agents to use, then retry with the explicit selection.
+The MCP `mco_run` and `mco_review` tools use the same fail-closed rule and reject a mixed valid/unknown list instead of silently dropping unknown names.
 
 ## Provider Result Failure Reasons
 

@@ -29,15 +29,18 @@ class HermesAdapter(ShimAdapterBase):
     def supported_model_keys(self) -> List[str]:
         return ["model", "provider"]
 
+    def supported_permission_keys(self) -> List[str]:
+        return ["yolo"]
+
     def supported_context_keys(self) -> List[str]:
         return ["skills", "context_files"]
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
         # Hermes oneshot mode auto-bypasses approval prompts by design.
-        # This adapter is explicit opt-in and intentionally not part of
-        # the default provider set.
         cmd = ["hermes"]
-        if input_task.metadata.get("yolo") is True:
+        permissions = input_task.metadata.get("provider_permissions", {})
+        yolo = permissions.get("yolo") if isinstance(permissions, dict) else None
+        if yolo == "true" or input_task.metadata.get("yolo") is True:
             cmd.append("--yolo")
         if input_task.metadata.get("accept_hooks") is True:
             cmd.append("--accept-hooks")

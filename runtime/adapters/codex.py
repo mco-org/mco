@@ -27,7 +27,7 @@ class CodexAdapter(ShimAdapterBase):
         return [binary, "login", "status"]
 
     def supported_permission_keys(self) -> List[str]:
-        return ["sandbox"]
+        return ["sandbox", "approval_policy", "bypass"]
 
     def supported_model_keys(self) -> List[str]:
         return ["model"]
@@ -42,16 +42,20 @@ class CodexAdapter(ShimAdapterBase):
             value = raw_permissions.get("sandbox")
             if isinstance(value, str) and value.strip():
                 sandbox = value.strip()
+        approval_policy = raw_permissions.get("approval_policy") if isinstance(raw_permissions, dict) else None
+        bypass = raw_permissions.get("bypass") if isinstance(raw_permissions, dict) else None
         cmd = [
             "codex",
-            "exec",
-            "--skip-git-repo-check",
-            "-C",
-            input_task.repo_root,
-            "--sandbox",
-            sandbox,
-            "--json",
         ]
+        if bypass == "true":
+            cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            if isinstance(approval_policy, str) and approval_policy.strip():
+                cmd.extend(["--ask-for-approval", approval_policy.strip()])
+        cmd.extend(["exec", "--skip-git-repo-check", "-C", input_task.repo_root])
+        if bypass != "true":
+            cmd.extend(["--sandbox", sandbox])
+        cmd.append("--json")
         # Context policy is opt-in: only apply when provider_context key is present.
         if "provider_context" in input_task.metadata:
             ctx = input_task.metadata.get("provider_context", {})

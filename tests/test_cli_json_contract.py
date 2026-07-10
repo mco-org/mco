@@ -33,6 +33,26 @@ EXPECTED_DETAILED_JSON_KEYS = EXPECTED_JSON_KEYS + (
 
 
 class CliJsonContractTests(unittest.TestCase):
+    def test_missing_provider_selection_returns_clarification_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with patch("runtime.cli.run_review") as mock_run_review:
+                with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                    exit_code = main([
+                        "run", "--repo", tmpdir, "--prompt", "Summarize this repo.", "--json",
+                    ])
+
+        self.assertEqual(exit_code, 2)
+        mock_run_review.assert_not_called()
+        self.assertEqual(stderr_buf.getvalue(), "")
+        error = json.loads(stdout_buf.getvalue())["error"]
+        self.assertEqual(error["category"], "input")
+        self.assertEqual(error["subtype"], "provider_selection_required")
+        self.assertIn("Ask the user", error["message"])
+        self.assertIn("grok", error["message"])
+        self.assertIn("cursor", error["message"])
+
     def _invoke_json(self, argv: list[str], result: ReviewResult) -> tuple[int, dict]:
         output = io.StringIO()
         with patch("runtime.cli.run_review", return_value=result):

@@ -13,28 +13,36 @@ _PROVIDER_RISKS: Dict[str, Dict[str, str]] = {
         "reason": "default command uses Codex workspace-write sandbox",
     },
     "gemini": {
-        "level": "approval_bypass",
-        "reason": "default command passes Gemini -y non-interactive approval flag",
+        "level": "read_only",
+        "reason": "default adapter command uses Gemini plan approval mode",
     },
     "opencode": {
-        "level": "workspace_write",
-        "reason": "default command runs OpenCode in the repository working tree",
+        "level": "read_only",
+        "reason": "default adapter command uses OpenCode plan agent mode",
     },
     "qwen": {
-        "level": "approval_bypass",
-        "reason": "default command passes Qwen -y non-interactive approval flag",
+        "level": "read_only",
+        "reason": "default adapter command uses Qwen plan approval mode",
     },
     "hermes": {
         "level": "approval_bypass",
-        "reason": "explicit opt-in provider; Hermes oneshot approval semantics are provider-controlled",
+        "reason": "Hermes oneshot approval semantics are provider-controlled and bypass interactive approval",
     },
     "pi": {
         "level": "read_only",
         "reason": "default command locks Pi tools to read,grep,find,ls and disables extensions",
     },
     "copilot": {
-        "level": "approval_bypass",
-        "reason": "default command enables all Copilot tools and disables interactive questions",
+        "level": "read_only",
+        "reason": "default adapter command denies Copilot write and shell tools",
+    },
+    "grok": {
+        "level": "workspace_write",
+        "reason": "default headless command keeps Grok approval prompts enabled; granted tools may modify the workspace",
+    },
+    "cursor": {
+        "level": "read_only",
+        "reason": "default headless command uses Cursor ask mode without --force",
     },
 }
 
@@ -72,6 +80,11 @@ def effective_provider_risk(
             "level": level,
             "reason": "effective Claude permission_mode={}".format(permission_mode),
         }
+    if provider == "codex" and permissions.get("bypass") == "true":
+        return {
+            "level": "elevated",
+            "reason": "effective Codex bypass=true disables approvals and sandboxing",
+        }
     if provider == "codex" and "sandbox" in permissions:
         sandbox = str(permissions["sandbox"]).strip()
         levels = {
@@ -83,5 +96,93 @@ def effective_provider_risk(
         return {
             "level": level,
             "reason": "effective Codex sandbox={}".format(sandbox),
+        }
+    if provider in ("gemini", "qwen") and "approval_mode" in permissions:
+        approval_mode = str(permissions["approval_mode"]).strip()
+        levels = {
+            "plan": "read_only",
+            "default": "workspace_write",
+            "auto_edit": "workspace_write",
+            "auto-edit": "workspace_write",
+            "auto": "workspace_write",
+            "yolo": "approval_bypass",
+        }
+        return {
+            "level": levels.get(approval_mode, "unknown"),
+            "reason": "effective {} approval_mode={}".format(provider, approval_mode),
+        }
+    if provider == "opencode" and "agent_mode" in permissions:
+        agent_mode = str(permissions["agent_mode"]).strip()
+        auto = str(permissions.get("auto", "false")).strip()
+        if auto == "true":
+            level = "approval_bypass"
+        else:
+            level = {"plan": "read_only", "build": "workspace_write"}.get(agent_mode, "unknown")
+        return {
+            "level": level,
+            "reason": "effective OpenCode agent_mode={} auto={}".format(agent_mode, auto),
+        }
+    if provider == "pi" and "tool_profile" in permissions:
+        tool_profile = str(permissions["tool_profile"]).strip()
+        levels = {"read_only": "read_only", "write": "workspace_write", "yolo": "approval_bypass"}
+        return {
+            "level": levels.get(tool_profile, "unknown"),
+            "reason": "effective Pi tool_profile={}".format(tool_profile),
+        }
+    if provider == "copilot" and "access" in permissions:
+        access = str(permissions["access"]).strip()
+        levels = {"read_only": "read_only", "write": "workspace_write", "yolo": "approval_bypass"}
+        return {
+            "level": levels.get(access, "unknown"),
+            "reason": "effective Copilot access={}".format(access),
+        }
+    if provider == "hermes" and permissions.get("yolo") == "true":
+        return {
+            "level": "approval_bypass",
+            "reason": "effective Hermes yolo=true bypasses approval prompts",
+        }
+    if provider == "grok" and "permission_mode" in permissions:
+        permission_mode = str(permissions["permission_mode"]).strip()
+        levels = {
+            "plan": "read_only",
+            "acceptEdits": "workspace_write",
+            "bypassPermissions": "approval_bypass",
+        }
+        return {
+            "level": levels.get(permission_mode, "unknown"),
+            "reason": "effective Grok permission_mode={}".format(permission_mode),
+        }
+    if provider == "grok" and "approval_mode" in permissions:
+        approval_mode = str(permissions["approval_mode"]).strip()
+        levels = {"ask": "workspace_write", "always-approve": "approval_bypass"}
+        return {
+            "level": levels.get(approval_mode, "unknown"),
+            "reason": "effective Grok approval_mode={}".format(approval_mode),
+        }
+    if provider == "cursor":
+        sandbox = str(permissions.get("sandbox", "enabled")).strip()
+        if sandbox == "disabled":
+            return {
+                "level": "elevated",
+                "reason": "effective Cursor sandbox=disabled permits access outside the workspace boundary",
+            }
+        force = str(permissions.get("force", "false")).strip()
+        if force == "true":
+            return {
+                "level": "approval_bypass",
+                "reason": "effective Cursor force=true bypasses interactive approvals",
+            }
+        if force not in ("", "false"):
+            return {
+                "level": "unknown",
+                "reason": "effective Cursor force={}".format(force),
+            }
+        if "mode" not in permissions:
+            return provider_risk(provider, transport=transport)
+        mode = str(permissions["mode"]).strip()
+        levels = {"ask": "read_only", "plan": "read_only", "agent": "workspace_write"}
+        return {
+            "level": levels.get(mode, "unknown"),
+            "reason": "effective Cursor mode={}".format(mode),
         }
     return provider_risk(provider, transport=transport)

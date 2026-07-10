@@ -13,8 +13,7 @@ class TestCopilotAdapterBuildCommand(unittest.TestCase):
     def setUp(self) -> None:
         self.adapter = CopilotAdapter()
 
-    def test_build_command_one_shot_autonomous_flags(self) -> None:
-        """One-shot run must be non-interactive and never block on prompts."""
+    def test_build_command_defaults_to_read_only_access(self) -> None:
         task = TaskInput(
             task_id="test-1",
             prompt="Review for bugs",
@@ -26,9 +25,22 @@ class TestCopilotAdapterBuildCommand(unittest.TestCase):
         self.assertIn("-p", cmd)
         self.assertEqual(cmd[cmd.index("-p") + 1], "Review for bugs")
         self.assertIn("-s", cmd)
-        self.assertIn("--allow-all-tools", cmd)
         self.assertIn("--no-ask-user", cmd)
+        self.assertIn("--deny-tool=write", cmd)
+        self.assertIn("--deny-tool=shell", cmd)
         self.assertNotIn("--model", cmd)
+
+    def test_build_command_yolo_allows_all_tools(self) -> None:
+        task = TaskInput(
+            task_id="test-yolo",
+            prompt="Implement the change",
+            repo_root="/tmp",
+            target_paths=["."],
+            metadata={"provider_permissions": {"access": "yolo"}},
+        )
+        cmd = self.adapter._build_command(task)
+        self.assertIn("--allow-all", cmd)
+        self.assertNotIn("--deny-tool=shell", cmd)
 
     def test_build_command_with_model(self) -> None:
         task = TaskInput(
@@ -59,7 +71,8 @@ class TestCopilotAdapterBuildCommand(unittest.TestCase):
     def test_build_command_for_record_is_redacted(self) -> None:
         record = self.adapter._build_command_for_record()
         self.assertIn("<prompt>", record)
-        self.assertIn("--allow-all-tools", record)
+        self.assertIn("--deny-tool=write", record)
+        self.assertIn("--deny-tool=shell", record)
         self.assertIn("--no-ask-user", record)
 
 

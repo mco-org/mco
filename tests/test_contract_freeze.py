@@ -9,7 +9,9 @@ from runtime.adapters import (
     ClaudeAdapter,
     CodexAdapter,
     CopilotAdapter,
+    CursorAdapter,
     GeminiAdapter,
+    GrokAdapter,
     HermesAdapter,
     OpenCodeAdapter,
     PiAdapter,
@@ -22,7 +24,7 @@ from runtime.types import RUN_RESULT_FIELDS, RUN_RESULT_SCHEMA_VERSION, RunResul
 
 class ContractFreezeTests(unittest.TestCase):
     def test_provider_and_capability_sets_are_frozen(self) -> None:
-        self.assertEqual(tuple(PROVIDER_IDS), ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot"))
+        self.assertEqual(tuple(PROVIDER_IDS), ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor"))
         self.assertEqual(tuple(CAPABILITY_TIERS), ("C0", "C1", "C2", "C3", "C4", "C5", "C6"))
 
     def test_provider_adapter_protocol_shape(self) -> None:
@@ -46,13 +48,15 @@ class ContractFreezeTests(unittest.TestCase):
 
     def test_provider_permission_key_matrix_contract(self) -> None:
         self.assertEqual(ClaudeAdapter().supported_permission_keys(), ["permission_mode"])
-        self.assertEqual(CodexAdapter().supported_permission_keys(), ["sandbox"])
-        self.assertEqual(GeminiAdapter().supported_permission_keys(), [])
-        self.assertEqual(OpenCodeAdapter().supported_permission_keys(), [])
-        self.assertEqual(QwenAdapter().supported_permission_keys(), [])
-        self.assertEqual(HermesAdapter().supported_permission_keys(), [])
-        self.assertEqual(PiAdapter().supported_permission_keys(), [])
-        self.assertEqual(CopilotAdapter().supported_permission_keys(), [])
+        self.assertEqual(CodexAdapter().supported_permission_keys(), ["sandbox", "approval_policy", "bypass"])
+        self.assertEqual(GeminiAdapter().supported_permission_keys(), ["approval_mode"])
+        self.assertEqual(OpenCodeAdapter().supported_permission_keys(), ["agent_mode", "auto"])
+        self.assertEqual(QwenAdapter().supported_permission_keys(), ["approval_mode"])
+        self.assertEqual(HermesAdapter().supported_permission_keys(), ["yolo"])
+        self.assertEqual(PiAdapter().supported_permission_keys(), ["tool_profile"])
+        self.assertEqual(CopilotAdapter().supported_permission_keys(), ["access"])
+        self.assertEqual(GrokAdapter().supported_permission_keys(), ["permission_mode", "approval_mode"])
+        self.assertEqual(CursorAdapter().supported_permission_keys(), ["mode", "force", "sandbox"])
 
     def test_provider_contract_docs_list_all_builtin_providers(self) -> None:
         repo_root = Path(__file__).resolve().parent.parent
