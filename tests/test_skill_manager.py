@@ -26,7 +26,7 @@ class SkillManagerContractTests(unittest.TestCase):
             [
                 "npx",
                 "-y",
-                "skills@1",
+                "skills@1.5.15",
                 "add",
                 "/pkg/mco",
                 "--skill",

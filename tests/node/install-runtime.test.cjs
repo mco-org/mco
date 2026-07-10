@@ -5,10 +5,10 @@ const path = require("node:path");
 const runtime = require("../../scripts/install-runtime.js");
 
 test("buildNpmInstallArgv pins exact package version", () => {
-  assert.deepEqual(runtime.buildNpmInstallArgv("0.10.8"), [
+  assert.deepEqual(runtime.buildNpmInstallArgv("0.10.9"), [
     "install",
     "-g",
-    "@tt-a1i/mco@0.10.8",
+    "@tt-a1i/mco@0.10.9",
   ]);
 });
 
@@ -34,6 +34,29 @@ test("resolveGlobalMcoScript returns null when entry is missing", () => {
     return { status: 1, stdout: "", stderr: "", error: null };
   };
   assert.equal(runtime.resolveGlobalMcoScript(runner, { existsSync: () => false }), null);
+});
+
+test("resolveGlobalMcoScript uses Windows npm prefix fallback", () => {
+  const prefix = "C:\\Users\\dev\\AppData\\Roaming\\npm";
+  const expected = path.win32.join(prefix, "node_modules", "@tt-a1i", "mco", "bin", "mco.js");
+  const runner = (command, args) => {
+    if (command === "npm" && args[0] === "root") {
+      return { status: 1, stdout: "", stderr: "", error: null };
+    }
+    if (command === "npm" && args[0] === "prefix") {
+      return { status: 0, stdout: `${prefix}\r\n`, stderr: "", error: null };
+    }
+    return { status: 1, stdout: "", stderr: "", error: null };
+  };
+  assert.equal(runtime.resolveGlobalMcoScript(runner, {
+    platform: "win32",
+    existsSync: (candidate) => candidate === expected,
+  }), expected);
+});
+
+test("skills CLI dependency is pinned to the tested version", () => {
+  assert.equal(runtime.SKILLS_CLI_PACKAGE, "skills@1.5.15");
+  assert.equal(runtime.buildSkillsCliAddArgv("/pkg/mco", ["codex"])[2], "skills@1.5.15");
 });
 
 test("resolveGlobalMcoScript allows dry-run placeholder", () => {

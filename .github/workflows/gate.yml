@@ -87,3 +87,59 @@ jobs:
           name: capability-probes-${{ github.run_id }}
           path: docs/probes/**
           if-no-files-found: ignore
+
+  packaging-smoke-macos:
+    name: Packaging smoke (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run packaging smoke
+        run: ./scripts/run_npm_packaging_smoke.sh
+
+  installer-smoke-windows:
+    name: Installer smoke (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies and run contracts
+        run: |
+          npm ci
+          npm test
+          python scripts/check_skill_format.py skills/mco-cli
+          python scripts/check_package_version.py
+
+      - name: Pack and install npm artifact
+        shell: pwsh
+        run: |
+          $tarball = (npm pack --silent).Trim()
+          $installDir = Join-Path $env:RUNNER_TEMP "mco-npm-install"
+          npm install $tarball --prefix $installDir --no-audit --no-fund
+          $mco = Join-Path $installDir "node_modules/.bin/mco.cmd"
+          & $mco --help | Out-Null
+          & $mco --version | Out-Null
+          & $mco skills read | Out-Null
+          & $mco install --agent codex --dry-run --json | Out-Null

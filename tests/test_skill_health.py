@@ -27,7 +27,7 @@ class SkillHealthTests(unittest.TestCase):
             skill_path = skill_dir / "SKILL.md"
             skill_path.write_text("---\nname: mco-cli\n---\n", encoding="utf-8")
 
-            install_dir = root / ".cursor" / "skills" / "mco-cli"
+            install_dir = root / ".agents" / "skills" / "mco-cli"
             install_dir.mkdir(parents=True)
             install_path = install_dir / "SKILL.md"
             install_path.write_text(skill_path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -64,7 +64,117 @@ class SkillHealthTests(unittest.TestCase):
 
         self.assertEqual(health["status"], "drift")
         self.assertEqual(drift["status"], "drift")
-        self.assertIn("project-claude", drift["drifted"])
+        self.assertIn("project-claude-code", drift["drifted"])
+
+    def test_reference_supporting_file_drift_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_root = root / "package"
+            reference_dir = package_root / "skills" / "mco-cli"
+            (reference_dir / "references").mkdir(parents=True)
+            (reference_dir / "SKILL.md").write_text("skill\n", encoding="utf-8")
+            (reference_dir / "references" / "installation.md").write_text(
+                "current\n", encoding="utf-8"
+            )
+
+            home = root / "home"
+            install_dir = home / ".agents" / "skills" / "mco-cli"
+            (install_dir / "references").mkdir(parents=True)
+            (install_dir / "SKILL.md").write_text("skill\n", encoding="utf-8")
+            (install_dir / "references" / "installation.md").write_text(
+                "stale\n", encoding="utf-8"
+            )
+
+            with patch("runtime.skill_health.Path.home", return_value=home):
+                health, drift = check_skill_health(
+                    enabled=True,
+                    package_root=package_root,
+                    cwd=root / "repo",
+                    reference_preference="bundled_only",
+                )
+
+        self.assertEqual(health["status"], "drift")
+        self.assertIn("codex-global", drift["drifted"])
+        codex = next(item for item in health["installations"] if item["label"] == "codex-global")
+        self.assertIn("references/installation.md", codex["changed_files"])
+
+    def test_extra_installed_file_drift_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_root = root / "package"
+            reference_dir = package_root / "skills" / "mco-cli"
+            reference_dir.mkdir(parents=True)
+            (reference_dir / "SKILL.md").write_text("skill\n", encoding="utf-8")
+
+            home = root / "home"
+            install_dir = home / ".agents" / "skills" / "mco-cli"
+            install_dir.mkdir(parents=True)
+            (install_dir / "SKILL.md").write_text("skill\n", encoding="utf-8")
+            (install_dir / "obsolete.md").write_text("stale\n", encoding="utf-8")
+
+            with patch("runtime.skill_health.Path.home", return_value=home):
+                health, _ = check_skill_health(
+                    enabled=True,
+                    package_root=package_root,
+                    cwd=root / "repo",
+                    reference_preference="bundled_only",
+                )
+
+        self.assertEqual(health["status"], "drift")
+        codex = next(item for item in health["installations"] if item["label"] == "codex-global")
+        self.assertIn("obsolete.md", codex["extra_files"])
+
+    def test_no_installations_reports_not_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_root = root / "package"
+            reference_dir = package_root / "skills" / "mco-cli"
+            reference_dir.mkdir(parents=True)
+            (reference_dir / "SKILL.md").write_text("skill\n", encoding="utf-8")
+
+            with patch("runtime.skill_health.Path.home", return_value=root / "home"):
+                health, drift = check_skill_health(
+                    enabled=True,
+                    package_root=package_root,
+                    cwd=root / "repo",
+                    reference_preference="bundled_only",
+                )
+
+        self.assertEqual(health["status"], "not_installed")
+        self.assertEqual(health["reason"], "no_local_skill_installations")
+        self.assertEqual(drift["status"], "ok")
+
+    def test_installation_candidates_cover_every_known_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_root = root / "package"
+            reference_dir = package_root / "skills" / "mco-cli"
+            reference_dir.mkdir(parents=True)
+            (reference_dir / "SKILL.md").write_text("skill\n", encoding="utf-8")
+
+            with patch("runtime.skill_health.Path.home", return_value=root / "home"):
+                health, _ = check_skill_health(
+                    enabled=True,
+                    package_root=package_root,
+                    cwd=root / "repo",
+                    reference_preference="bundled_only",
+                )
+
+        labels = {item["label"] for item in health["installations"]}
+        for agent_id in (
+            "claude-code",
+            "codex",
+            "cursor",
+            "gemini-cli",
+            "opencode",
+            "pi",
+            "hermes-agent",
+            "github-copilot",
+            "qwen-code",
+            "windsurf",
+            "cline",
+        ):
+            self.assertIn(f"{agent_id}-global", labels)
 
     def test_missing_reference_is_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -164,7 +274,7 @@ class CliDoctorSkillTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         text = output.getvalue()
         self.assertIn("Skill Check", text)
-        self.assertIn("status: ok", text)
+        self.assertIn("status: not_installed", text)
         self.assertIn("reference:", text)
 
 

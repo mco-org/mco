@@ -22,7 +22,7 @@ Examples:
 
 ```bash
 npx @tt-a1i/mco@latest install --agent claude-code --agent codex --yes
-npx @tt-a1i/mco@latest install --dry-run --json
+npx @tt-a1i/mco@latest install --agent codex --dry-run --json
 ```
 
 ## Runtime Skill commands
@@ -36,6 +36,7 @@ mco skills sync --agent AGENT [--agent AGENT ...] [--dry-run] [--json]
 Rules:
 
 - `skills sync` requires at least one explicit `--agent`.
+- Non-interactive and dry-run installer flows require explicit `--agent` selection unless `--yes` accepts detected agents; selection failures happen before global installation.
 - Installer `--agent` selects calling agents that receive the `mco-cli` Skill.
 - Runtime `--providers` selects agents that execute an MCO task.
 - `--yes` accepts only detected agents; it does not mean “all possible agents”.
@@ -97,7 +98,7 @@ Re-running the installer should:
 `--dry-run` must not:
 
 - Run `npm install`
-- Invoke `npx skills@1`
+- Invoke the tested `npx skills@1.5.15`
 - Invoke global `mco`
 - Write files
 

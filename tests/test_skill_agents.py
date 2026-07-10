@@ -1,7 +1,12 @@
 import unittest
 from importlib.resources import files
 
-from runtime.skill_agents import calling_agent_binaries, known_skill_agents
+from runtime.skill_agents import (
+    calling_agent_binaries,
+    calling_agent_skill_directories,
+    known_skill_agents,
+    skills_cli_package,
+)
 
 
 class SkillAgentsTests(unittest.TestCase):
@@ -17,6 +22,20 @@ class SkillAgentsTests(unittest.TestCase):
     def test_cursor_maps_agent_binary(self) -> None:
         pairs = dict(calling_agent_binaries())
         self.assertEqual(pairs.get("agent"), "cursor")
+
+    def test_skill_directories_match_pinned_skills_cli_contract(self) -> None:
+        self.assertEqual(skills_cli_package(), "skills@1.5.15")
+        locations = set(calling_agent_skill_directories())
+        self.assertIn(("codex", "global", ".agents/skills", None), locations)
+        self.assertIn(("codex", "legacy-global", ".codex/skills", None), locations)
+        self.assertIn(("pi", "global", ".pi/agent/skills", None), locations)
+        self.assertIn(("hermes-agent", "global", ".hermes/skills", "HERMES_HOME"), locations)
+        self.assertIn(("github-copilot", "global", ".agents/skills", None), locations)
+        self.assertIn(
+            ("github-copilot", "legacy-global", ".copilot/skills", None),
+            locations,
+        )
+        self.assertIn(("qwen-code", "global", ".qwen/skills", None), locations)
 
 
 if __name__ == "__main__":

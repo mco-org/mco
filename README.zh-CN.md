@@ -1,11 +1,8 @@
-> ### 🐝 后续：Hive
+> ### MCO 正在积极维护
 >
-> MCO 的"一条 prompt 调度多个 agent"的思路，现在在
-> **[Hive](https://hivehq.dev)** 里走得更远——浏览器里的多 agent
-> 协作工作台，带稳定 agent 身份、共享任务图、一键重启全队。
->
-> 想找多 CLI 协作工具，**从 [Hive](https://hivehq.dev) 开始**
-> （`npm i -g @tt-a1i/hive`）。MCO 当前用户仍可继续使用。
+> 需要融入现有终端、脚本和 AI 编程 Agent 的轻量 CLI 编排时，选择
+> **MCO**。需要稳定 Agent 身份、共享任务图和团队控制的浏览器工作台时，
+> 选择互补产品 **[Hive](https://hivehq.dev)**。
 
 ---
 
@@ -388,7 +385,7 @@ mco doctor --json
 mco doctor --skill-health --json
 ```
 
-可选 `--skill-health` 会对 bundled `skills/mco-cli/SKILL.md` 与常见本地 skill 安装路径（例如 `~/.claude/skills/mco-cli/SKILL.md`、`~/.cursor/skills/mco-cli/SKILL.md`）做 best-effort 漂移检查。默认关闭；缺少本地安装不会导致 doctor 失败；启用后 `--json` 输出会包含 `skill_health` / `skill_drift` 字段。
+可选 `--skill-health` 会对 bundled `skills/mco-cli` 整个目录与所有受支持调用 Agent 声明的全局、项目安装路径做 best-effort 漂移检查，并明确区分 `not_installed` 与 `ok`。默认关闭；缺少本地安装不会导致 doctor 失败；启用后 `--json` 输出会包含 `skill_health` / `skill_drift` 字段。
 
 ### 输出格式（Review 模式）
 

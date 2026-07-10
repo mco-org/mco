@@ -1,13 +1,9 @@
-> ### 🐝 Next chapter: Hive
+> ### MCO is actively maintained
 >
-> MCO's "one prompt, many agents" idea now lives — and goes further — in
-> **[Hive](https://hivehq.dev)**, a browser-based multi-agent workbench
-> with persistent agent identity, a shared task graph, and one-click
-> team restart.
->
-> Looking for multi-CLI orchestration today? **Start with
-> [Hive](https://hivehq.dev)** (`npm i -g @tt-a1i/hive`). MCO remains
-> available for existing users.
+> Choose **MCO** for lightweight, CLI-first multi-agent orchestration that
+> fits existing terminals, scripts, and AI coding agents. Choose
+> **[Hive](https://hivehq.dev)** for a complementary browser workbench with
+> persistent agent identity, a shared task graph, and team controls.
 
 ---
 
@@ -413,7 +409,7 @@ mco doctor --json
 mco doctor --skill-health --json
 ```
 
-Optional `--skill-health` runs a best-effort drift check for the bundled `skills/mco-cli/SKILL.md` against common local skill install paths (for example `~/.claude/skills/mco-cli/SKILL.md`, `~/.cursor/skills/mco-cli/SKILL.md`). It is disabled by default, never fails doctor when installs are missing, and adds `skill_health` / `skill_drift` fields to `--json` output when enabled.
+Optional `--skill-health` runs a best-effort whole-directory drift check for the bundled `skills/mco-cli` Skill against the global and project install paths declared for every supported calling agent. It distinguishes `not_installed` from `ok`, is disabled by default, never fails doctor when installs are missing, and adds `skill_health` / `skill_drift` fields to `--json` output when enabled.
 
 ### Output Formats (Review Mode)
 
