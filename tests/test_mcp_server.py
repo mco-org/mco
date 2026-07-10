@@ -113,6 +113,20 @@ class TestSyncDoctor(unittest.TestCase):
 
 class TestSyncReview(unittest.TestCase):
     @patch("runtime.review_engine.run_review")
+    def test_empty_provider_selection_requires_clarification(self, mock_run) -> None:
+        result = _sync_review(repo=".", prompt="Review", providers="")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "provider_selection_required")
+        mock_run.assert_not_called()
+
+    @patch("runtime.review_engine.run_review")
+    def test_mixed_unknown_provider_fails_closed(self, mock_run) -> None:
+        result = _sync_review(repo=".", prompt="Review", providers="claude,typo")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "invalid_providers")
+        mock_run.assert_not_called()
+
+    @patch("runtime.review_engine.run_review")
     def test_returns_findings_envelope(self, mock_run) -> None:
         mock_result = MagicMock()
         mock_result.task_id = "test-123"
@@ -165,6 +179,20 @@ class TestSyncReview(unittest.TestCase):
 
 
 class TestSyncRun(unittest.TestCase):
+    @patch("runtime.review_engine.run_review")
+    def test_empty_provider_selection_requires_clarification(self, mock_run) -> None:
+        result = _sync_run(repo=".", prompt="Summarize", providers="")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "provider_selection_required")
+        mock_run.assert_not_called()
+
+    @patch("runtime.review_engine.run_review")
+    def test_mixed_unknown_provider_fails_closed(self, mock_run) -> None:
+        result = _sync_run(repo=".", prompt="Summarize", providers="claude,typo")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "invalid_providers")
+        mock_run.assert_not_called()
+
     @patch("runtime.review_engine.run_review")
     def test_returns_final_text_only(self, mock_run) -> None:
         mock_result = MagicMock()

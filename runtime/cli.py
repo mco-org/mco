@@ -23,7 +23,7 @@ from .skill_health import check_skill_health
 from . import __version__
 from .review_engine import REVIEW_FINDINGS_SCHEMA_PATH, ReviewRequest, provider_policy_preview, run_review
 
-SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "gemini", "hermes", "opencode", "pi", "qwen")
+SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "cursor", "gemini", "grok", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
 DEFAULT_DOCTOR_PROVIDERS = SUPPORTED_PROVIDERS
 DEFAULT_CONFIG = ReviewConfig()
@@ -33,6 +33,7 @@ DEFAULT_POLICY = DEFAULT_CONFIG.policy
 _ERROR_DETAILS = {
     "parse_error": ("input", "Check command syntax with `mco <command> --help`."),
     "input_error": ("input", "Correct the input and retry the command."),
+    "provider_selection_required": ("input", "Ask the user which agents to use, then retry with --providers."),
     "invalid_providers": ("input", "Select providers shown by `mco agent list --json`."),
     "config_error": ("configuration", "Correct the project/global configuration and retry."),
     "invalid_config": ("configuration", "Remove the incompatible flags or configuration values and retry."),
@@ -1113,9 +1114,9 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--providers",
         default=argparse.SUPPRESS,
         help=(
-            "Comma-separated providers (default from config or: {}). "
+            "Comma-separated providers. Required unless configured explicitly. "
             "Supported: {}"
-        ).format(",".join(DEFAULT_CONFIG.providers), SUPPORTED_PROVIDER_LIST),
+        ).format(SUPPORTED_PROVIDER_LIST),
     )
     scope.add_argument("--target-paths", default=".", help="Comma-separated task scope paths")
     scope.add_argument("--task-id", default="", help="Optional stable task id")
@@ -1130,7 +1131,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         nargs=2,
         metavar=("NAME", "COMMAND"),
         default=None,
-        help='Temporary custom ACP agent: --agent mybot "mybot --acp". Works with shim or acp transport',
+        help='Register a temporary ACP agent; select it separately with --providers mybot',
     )
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
@@ -2231,14 +2232,7 @@ def main(argv: List[str] | None = None) -> int:
             "Unknown providers: {}".format(", ".join(invalid_providers)),
         )
     providers = list(cfg.providers)
-    # Auto-add custom agent to providers if not already listed
-    if extra_agents:
-        for name in extra_agents:
-            if name not in providers:
-                providers.append(name)
 
-    if not providers:
-        return _stream_error_exit("invalid_providers", "No valid providers selected.")
     synth_provider = args.synth_provider.strip() if isinstance(args.synth_provider, str) else ""
     synthesize = bool(args.synthesize or synth_provider)
     if synth_provider and synth_provider not in providers:
@@ -2252,6 +2246,12 @@ def main(argv: List[str] | None = None) -> int:
             "invalid_config",
             "--space takes a slug (e.g. 'my-repo'), not a full space_id.\n"
             "The 'coding:' prefix and '--findings'/'--context' suffixes are added automatically.",
+        )
+    if not providers:
+        return _stream_error_exit(
+            "provider_selection_required",
+            "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
+            "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
         )
 
     # Normalize diff flags

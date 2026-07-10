@@ -126,6 +126,16 @@ agents:
 
 
 class TestAgentRegistry(unittest.TestCase):
+    def test_registry_includes_grok_and_cursor(self) -> None:
+        registry = adapter_registry()
+        self.assertIn("grok", registry)
+        self.assertIn("cursor", registry)
+
+    def test_acp_registry_uses_official_grok_and_cursor_commands(self) -> None:
+        registry = adapter_registry(transport="acp")
+        self.assertEqual(registry["grok"].preview_command(), ["grok", "--no-auto-update", "agent", "stdio"])
+        self.assertEqual(registry["cursor"].preview_command(), ["agent", "acp"])
+
     def test_registry_merges_builtin_cli_and_config_agents(self) -> None:
         registrations = [
             {"name": "my-lint-bot", "command": "my-lint-bot --acp", "transport": "acp"},

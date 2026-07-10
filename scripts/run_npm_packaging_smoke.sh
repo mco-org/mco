@@ -16,6 +16,8 @@ for required_path in \
   package/bin/mco.js \
   package/mco \
   package/runtime/adapters/copilot.py \
+  package/runtime/adapters/cursor.py \
+  package/runtime/adapters/grok.py \
   package/runtime/provider_risk.py \
   package/runtime/skill_health.py \
   package/runtime/schemas/review_findings.schema.json \

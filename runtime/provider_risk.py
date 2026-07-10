@@ -26,7 +26,7 @@ _PROVIDER_RISKS: Dict[str, Dict[str, str]] = {
     },
     "hermes": {
         "level": "approval_bypass",
-        "reason": "explicit opt-in provider; Hermes oneshot approval semantics are provider-controlled",
+        "reason": "Hermes oneshot approval semantics are provider-controlled and bypass interactive approval",
     },
     "pi": {
         "level": "read_only",
@@ -35,6 +35,14 @@ _PROVIDER_RISKS: Dict[str, Dict[str, str]] = {
     "copilot": {
         "level": "approval_bypass",
         "reason": "default command enables all Copilot tools and disables interactive questions",
+    },
+    "grok": {
+        "level": "workspace_write",
+        "reason": "default headless command keeps Grok approval prompts enabled; granted tools may modify the workspace",
+    },
+    "cursor": {
+        "level": "read_only",
+        "reason": "default headless command uses Cursor ask mode without --force",
     },
 }
 
@@ -83,5 +91,32 @@ def effective_provider_risk(
         return {
             "level": level,
             "reason": "effective Codex sandbox={}".format(sandbox),
+        }
+    if provider == "grok" and "approval_mode" in permissions:
+        approval_mode = str(permissions["approval_mode"]).strip()
+        levels = {"ask": "workspace_write", "always-approve": "approval_bypass"}
+        return {
+            "level": levels.get(approval_mode, "unknown"),
+            "reason": "effective Grok approval_mode={}".format(approval_mode),
+        }
+    if provider == "cursor":
+        force = str(permissions.get("force", "false")).strip()
+        if force == "true":
+            return {
+                "level": "approval_bypass",
+                "reason": "effective Cursor force=true bypasses interactive approvals",
+            }
+        if force not in ("", "false"):
+            return {
+                "level": "unknown",
+                "reason": "effective Cursor force={}".format(force),
+            }
+        if "mode" not in permissions:
+            return provider_risk(provider, transport=transport)
+        mode = str(permissions["mode"]).strip()
+        levels = {"ask": "read_only", "plan": "read_only", "agent": "workspace_write"}
+        return {
+            "level": levels.get(mode, "unknown"),
+            "reason": "effective Cursor mode={}".format(mode),
         }
     return provider_risk(provider, transport=transport)

@@ -34,8 +34,6 @@ class HermesAdapter(ShimAdapterBase):
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
         # Hermes oneshot mode auto-bypasses approval prompts by design.
-        # This adapter is explicit opt-in and intentionally not part of
-        # the default provider set.
         cmd = ["hermes"]
         if input_task.metadata.get("yolo") is True:
             cmd.append("--yolo")

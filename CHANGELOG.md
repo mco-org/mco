@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+- Added built-in xAI Grok Build (`grok`) and Cursor CLI (`cursor`) adapters, including their official headless and ACP launch commands.
+
+### Changed
+- Removed the implicit run/review provider set. Callers must use an explicit CLI or persisted configuration selection; otherwise MCO returns `provider_selection_required` so the orchestrating agent can ask the user.
+
 ## [0.10.7] - 2026-07-07
 ### Added
 - Added agent-safe `--dry-run` previews with default and effective provider risk, resolved policies, and command templates.

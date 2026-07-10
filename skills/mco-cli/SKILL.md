@@ -16,6 +16,8 @@ Use this skill when you need to:
 
 ## Core commands
 
+Before running `mco run` or `mco review`, ask the user in natural language which agents they want to use. Do not infer a provider set from availability alone. Pass the confirmed choice through `--providers`. If MCO returns `provider_selection_required`, pause and ask the user before retrying.
+
 ### 1) General execution
 
 ```bash
@@ -79,6 +81,7 @@ When returning to end users:
 
 ## Recommended defaults
 
+- There is no implicit provider set. Ask the user and pass `--providers` explicitly.
 - `--result-mode stdout` for interactive agents.
 - `--result-mode artifact --json` for CI pipelines.
 - `--strict-contract` only for gate workflows.

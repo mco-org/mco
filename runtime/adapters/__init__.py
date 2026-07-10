@@ -6,8 +6,10 @@ from typing import Any, Dict, List, Mapping, Optional
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
 from .copilot import CopilotAdapter
+from .cursor import CursorAdapter
 from .custom import CommandShimAdapter
 from .gemini import GeminiAdapter
+from .grok import GrokAdapter
 from .hermes import HermesAdapter
 from .ollama import OllamaAdapter
 from .opencode import OpenCodeAdapter
@@ -112,7 +114,9 @@ def adapter_registry(
         shim_fallbacks = {
             "claude": ClaudeAdapter,
             "codex": CodexAdapter,
+            "cursor": CursorAdapter,
             "gemini": GeminiAdapter,
+            "grok": GrokAdapter,
             "hermes": HermesAdapter,
             "opencode": OpenCodeAdapter,
             "pi": PiAdapter,
@@ -134,6 +138,8 @@ def adapter_registry(
         "pi": PiAdapter(),
         "qwen": QwenAdapter(),
         "copilot": CopilotAdapter(),
+        "cursor": CursorAdapter(),
+        "grok": GrokAdapter(),
     }
     for agent in configured:
         name = str(agent.get("name", "")).strip()
@@ -161,7 +167,9 @@ __all__ = [
     "CodexAdapter",
     "CommandShimAdapter",
     "CopilotAdapter",
+    "CursorAdapter",
     "GeminiAdapter",
+    "GrokAdapter",
     "HermesAdapter",
     "OllamaAdapter",
     "OpenCodeAdapter",

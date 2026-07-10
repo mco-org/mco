@@ -43,6 +43,8 @@ _ACP_COMMANDS: Dict[str, List[str]] = {
     "codex": ["codex", "--acp"],
     "gemini": ["gemini", "--acp"],
     "copilot": ["copilot", "--acp"],
+    "grok": ["grok", "--no-auto-update", "agent", "stdio"],
+    "cursor": ["agent", "acp"],
 }
 
 

@@ -39,6 +39,7 @@ Top-level JSON object with required fields:
 - `findings_count` is retained canonical findings count.
 - `parse_success_count` / `parse_failure_count` are review parsing health counters.
 - Failures before a normal result is available use the envelope frozen in `docs/contracts/errors-v0.1.x.md`.
+- If no provider selection is supplied, `provider_selection_required` tells the calling agent to ask the user and retry with `--providers`; no provider process starts.
 
 ## Exit Code Notes
 
