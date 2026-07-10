@@ -4,10 +4,10 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
-from .skill_agents import known_skill_agents
+from .skill_agents import known_skill_agents, skills_cli_package
 from .skill_health import SKILL_FILENAME, SKILL_NAME, check_skill_health
 
-SKILLS_CLI_PACKAGE = "skills@1"
+SKILLS_CLI_PACKAGE = skills_cli_package()
 SKILL_SYNC_TIMEOUT_SECONDS = 600
 
 

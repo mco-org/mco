@@ -103,6 +103,20 @@ npm publish --access public --auth-type=web
 
 ## 4. npm web auth and 2FA
 
+The repository `NPM_TOKEN` must identify an npm account or granular automation
+token with write access to `@tt-a1i/mco`. The publish workflow runs `npm whoami`
+before `npm publish`; if that check fails, replace the secret before retrying.
+An existing package may return `E404 Not Found` when the token is valid but lacks
+scope or package permission, so also verify the token owner appears here:
+
+```bash
+npm view @tt-a1i/mco maintainers --json
+```
+
+Keep a GitHub release as Draft until npm publish succeeds. Publishing the Draft
+triggers the npm workflow; if the workflow fails, return the release to Draft so
+GitHub and npm never advertise different latest versions.
+
 Use a real TTY for npm web-auth publish prompts. Do not pipe `npm publish`
 through `tee`, and do not run it through a non-interactive command runner for the
 final publish step. In non-TTY mode npm may print

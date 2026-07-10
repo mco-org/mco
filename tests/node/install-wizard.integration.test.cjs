@@ -39,7 +39,7 @@ test("dry-run without agents returns agent_selection_required", async () => {
     await wizard.main(["--dry-run", "--json"], {
       runner: () => ({ status: 0, stdout: "", stderr: "", error: null }),
       packageRoot: PACKAGE_ROOT,
-      version: "0.10.8",
+      version: "0.10.9",
       isTTY: false,
       detectCallingAgents: () => [],
     });
@@ -72,7 +72,7 @@ test("dry-run json returns planned commands without executing", async () => {
     await wizard.main(["--dry-run", "--json", "--agent", "codex"], {
       runner,
       packageRoot: PACKAGE_ROOT,
-      version: "0.10.8",
+      version: "0.10.9",
       isTTY: false,
     });
   } catch (err) {
@@ -86,13 +86,43 @@ test("dry-run json returns planned commands without executing", async () => {
   const payload = JSON.parse(stdoutChunks.join("\n"));
   assert.equal(payload.ok, true);
   assert.equal(payload.dry_run, true);
-  assert.deepEqual(payload.cli.argv, ["npm", "install", "-g", "@tt-a1i/mco@0.10.8"]);
+  assert.deepEqual(payload.cli.argv, ["npm", "install", "-g", "@tt-a1i/mco@0.10.9"]);
   assert.match(payload.skills.underlying_argv.join(" "), /--copy/);
   assert.equal(records.length, 0);
 });
 
+test("dry-run does not auto-select detected agents", async () => {
+  const stdoutChunks = [];
+  const exit = mock.method(process, "exit", (code) => {
+    throw new Error(`process.exit:${code}`);
+  });
+  mock.method(console, "log", (...args) => {
+    stdoutChunks.push(args.join(" "));
+  });
+  try {
+    await wizard.main(["--dry-run", "--json"], {
+      runner: () => ({ status: 0, stdout: "", stderr: "", error: null }),
+      packageRoot: PACKAGE_ROOT,
+      version: "0.10.9",
+      isTTY: false,
+      detectCallingAgents: () => ["codex", "pi"],
+    });
+  } catch (err) {
+    if (!String(err.message).startsWith("process.exit:")) {
+      throw err;
+    }
+  } finally {
+    mock.restoreAll();
+  }
+  assert.equal(String(exit.mock.calls[0].arguments[0]), "2");
+  const payload = JSON.parse(stdoutChunks.join("\n"));
+  assert.equal(payload.error.subtype, "agent_selection_required");
+});
+
 test("yes with no detected agents returns agent_selection_required", async () => {
+  const records = [];
   const runner = (command) => {
+    records.push(command);
     if (command === "which" || command === "where") {
       return { status: 1, stdout: "", stderr: "", error: null };
     }
@@ -112,7 +142,7 @@ test("yes with no detected agents returns agent_selection_required", async () =>
     await wizard.main(["--yes", "--json"], {
       runner,
       packageRoot: PACKAGE_ROOT,
-      version: "0.10.8",
+      version: "0.10.9",
       isTTY: false,
       detectCallingAgents: () => [],
     });
@@ -127,7 +157,8 @@ test("yes with no detected agents returns agent_selection_required", async () =>
   const payload = JSON.parse(stdoutChunks.join("\n"));
   assert.equal(payload.ok, false);
   assert.equal(payload.error.subtype, "agent_selection_required");
-  assert.equal(payload.cli.status, "installed");
+  assert.equal(payload.cli.status, "not_started");
+  assert.equal(records.filter((command) => command === "npm").length, 0);
 });
 
 test("failed cli install and failed skill sync expose distinct stages", async () => {
@@ -148,7 +179,7 @@ test("failed cli install and failed skill sync expose distinct stages", async ()
     await wizard.main(["--agent", "codex", "--yes", "--json"], {
       runner,
       packageRoot: PACKAGE_ROOT,
-      version: "0.10.8",
+      version: "0.10.9",
       isTTY: false,
     });
   } catch (err) {
@@ -181,7 +212,7 @@ test("failed cli install and failed skill sync expose distinct stages", async ()
     await wizard.main(["--agent", "codex", "--yes", "--json"], {
       runner: runner2,
       packageRoot: PACKAGE_ROOT,
-      version: "0.10.8",
+      version: "0.10.9",
       isTTY: false,
       globalMcoScript: "/tmp/npm-global/node_modules/@tt-a1i/mco/bin/mco.js",
     });

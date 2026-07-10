@@ -7,11 +7,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+- Restored MCO's active-maintenance positioning, with Hive documented as a complementary browser workbench.
+- Made installer agent selection fail before global mutation in non-interactive and dry-run flows.
+- Pinned the tested Skill installer dependency to `skills@1.5.15`.
+
+### Fixed
+- Expanded Skill health checks to every supported calling agent and the complete bundled Skill tree.
+- Added explicit `not_installed` health and Windows npm-prefix handling.
+- Added macOS packaging and Windows installer validation to CI.
+
 ## [0.10.8] - 2026-07-10
 ### Added
 - Added one-command installer: `npx @tt-a1i/mco@latest install`.
 - Added `mco skills read`, `mco skills status`, and `mco skills sync` for bundled Skill management.
-- Added version-matched Skill installation through `skills@1` with mandatory `--copy`.
+- Added version-matched Skill installation through `skills@1.5.15` with mandatory `--copy`.
 - Added installer and Skill-sync contract documentation.
 
 ### Changed

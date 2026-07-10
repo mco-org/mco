@@ -45,7 +45,7 @@ function printResult(payload, json) {
     }
     console.log("");
     console.log("Dry-run example:");
-    console.log("  npx @tt-a1i/mco@latest install --dry-run --json");
+    console.log("  npx @tt-a1i/mco@latest install --agent codex --dry-run --json");
     return;
   }
   const message = payload.error?.message || payload.message || "Installation failed.";
@@ -141,7 +141,7 @@ async function main(argv, deps = {}) {
   let agents = [...options.agents];
   if (agents.length === 0 && !options.skipSkills) {
     const detected = detectCallingAgents();
-    if (options.yes || options.dryRun) {
+    if (options.yes) {
       agents = detected;
     } else if (isTTY && !options.dryRun) {
       if (!runtime.promptsAvailable()) {
@@ -211,13 +211,11 @@ async function main(argv, deps = {}) {
   }
 
   if (!options.skipSkills && agents.length === 0) {
-    const cliResult = runner("npm", runtime.buildNpmInstallArgv(version), { env });
-    const cliInstalled = cliResult.status === 0;
     const payload = agentSelectionError(
       "Choose one or more calling agents for the mco-cli Skill.",
       {
         cli: {
-          status: cliInstalled ? "installed" : "failed",
+          status: "not_started",
           version,
         },
         skills: { status: "skipped", reason: "agent_selection_required" },
@@ -225,7 +223,7 @@ async function main(argv, deps = {}) {
       },
     );
     printResult(payload, options.json);
-    process.exit(cliInstalled ? 2 : 1);
+    process.exit(2);
     return;
   }
 

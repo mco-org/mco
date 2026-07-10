@@ -5,11 +5,14 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const PACKAGE_NAME = "@tt-a1i/mco";
-const SKILLS_CLI_PACKAGE = "skills@1";
 const SKILL_NAME = "mco-cli";
 const DRY_RUN_MCO_PLACEHOLDER = "mco";
 
 const manifest = require("../runtime/data/skill_calling_agents.json");
+const SKILLS_CLI_PACKAGE = String(manifest.skills_cli_package || "").trim();
+if (!SKILLS_CLI_PACKAGE) {
+  throw new Error("skill calling agent manifest is missing skills_cli_package");
+}
 const KNOWN_SKILL_AGENTS = new Set(Object.keys(manifest.agents || {}));
 const CALLING_AGENT_BINARIES = Object.entries(manifest.agents || {}).flatMap(
   ([agent, spec]) => (spec.binaries || []).map((binary) => ({ binary, agent })),
@@ -87,8 +90,9 @@ function buildDoctorArgv(globalMcoScript) {
   return [globalMcoScript, "doctor", "--skill-health", "--json"];
 }
 
-function globalMcoScriptPathFromRoot(globalRoot) {
-  return path.join(globalRoot, "@tt-a1i", "mco", "bin", "mco.js");
+function globalMcoScriptPathFromRoot(globalRoot, platform = process.platform) {
+  const pathApi = platform === "win32" ? path.win32 : path;
+  return pathApi.join(globalRoot, "@tt-a1i", "mco", "bin", "mco.js");
 }
 
 function resolveGlobalMcoScript(runner = defaultRunner, options = {}) {
@@ -101,7 +105,7 @@ function resolveGlobalMcoScript(runner = defaultRunner, options = {}) {
   if (rootResult.status === 0) {
     const globalRoot = String(rootResult.stdout || "").trim();
     if (globalRoot) {
-      const scriptPath = globalMcoScriptPathFromRoot(globalRoot);
+      const scriptPath = globalMcoScriptPathFromRoot(globalRoot, platform);
       if (existsSync(scriptPath)) {
         return scriptPath;
       }
@@ -113,7 +117,14 @@ function resolveGlobalMcoScript(runner = defaultRunner, options = {}) {
     if (prefixResult.status === 0) {
       const prefix = String(prefixResult.stdout || "").trim();
       if (prefix) {
-        const scriptPath = path.join(prefix, "node_modules", "@tt-a1i", "mco", "bin", "mco.js");
+        const scriptPath = path.win32.join(
+          prefix,
+          "node_modules",
+          "@tt-a1i",
+          "mco",
+          "bin",
+          "mco.js",
+        );
         if (existsSync(scriptPath)) {
           return scriptPath;
         }
@@ -265,6 +276,7 @@ function promptsAvailable() {
 
 module.exports = {
   PACKAGE_NAME,
+  SKILLS_CLI_PACKAGE,
   SKILL_NAME,
   DRY_RUN_MCO_PLACEHOLDER,
   KNOWN_SKILL_AGENTS,

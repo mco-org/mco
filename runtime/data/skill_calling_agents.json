@@ -1,37 +1,67 @@
 {
+  "skills_cli_package": "skills@1.5.15",
   "agents": {
     "claude-code": {
-      "binaries": ["claude"]
+      "binaries": ["claude"],
+      "global_skill_directories": [".claude/skills"],
+      "project_skill_directories": [".claude/skills"],
+      "config_home_env": "CLAUDE_CONFIG_DIR"
     },
     "codex": {
-      "binaries": ["codex"]
+      "binaries": ["codex"],
+      "global_skill_directories": [".agents/skills"],
+      "legacy_global_skill_directories": [".codex/skills"],
+      "project_skill_directories": [".agents/skills"]
     },
     "cursor": {
-      "binaries": ["agent", "cursor"]
+      "binaries": ["agent", "cursor"],
+      "global_skill_directories": [".agents/skills"],
+      "legacy_global_skill_directories": [".cursor/skills", ".cursor/skills-cursor"],
+      "project_skill_directories": [".agents/skills"]
     },
     "gemini-cli": {
-      "binaries": ["gemini"]
+      "binaries": ["gemini"],
+      "global_skill_directories": [".agents/skills"],
+      "legacy_global_skill_directories": [".gemini/skills"],
+      "project_skill_directories": [".agents/skills"]
     },
     "opencode": {
-      "binaries": ["opencode"]
+      "binaries": ["opencode"],
+      "global_skill_directories": [".agents/skills"],
+      "legacy_global_skill_directories": [".config/opencode/skills"],
+      "project_skill_directories": [".agents/skills"]
     },
     "pi": {
-      "binaries": ["pi"]
+      "binaries": ["pi"],
+      "global_skill_directories": [".pi/agent/skills"],
+      "project_skill_directories": [".pi/skills"]
     },
     "hermes-agent": {
-      "binaries": ["hermes"]
+      "binaries": ["hermes"],
+      "global_skill_directories": [".hermes/skills"],
+      "project_skill_directories": [".hermes/skills"],
+      "config_home_env": "HERMES_HOME"
     },
     "github-copilot": {
-      "binaries": ["copilot"]
+      "binaries": ["copilot"],
+      "global_skill_directories": [".agents/skills"],
+      "legacy_global_skill_directories": [".copilot/skills"],
+      "project_skill_directories": [".agents/skills"]
     },
     "qwen-code": {
-      "binaries": ["qwen"]
+      "binaries": ["qwen"],
+      "global_skill_directories": [".qwen/skills"],
+      "project_skill_directories": [".qwen/skills"]
     },
     "windsurf": {
-      "binaries": ["windsurf"]
+      "binaries": ["windsurf"],
+      "global_skill_directories": [".codeium/windsurf/skills"],
+      "project_skill_directories": [".windsurf/skills"]
     },
     "cline": {
-      "binaries": ["cline"]
+      "binaries": ["cline"],
+      "global_skill_directories": [".agents/skills"],
+      "project_skill_directories": [".agents/skills"]
     }
   }
 }
