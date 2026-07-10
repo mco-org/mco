@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
+from ..answer_transport import AnswerTransport, decode_json_text_events
 from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
 from .parsing import normalize_findings_from_text
 from .shim import ShimAdapterBase
@@ -28,6 +29,9 @@ class OpenCodeAdapter(ShimAdapterBase):
 
     def supported_context_keys(self) -> List[str]:
         return ["plugins"]
+
+    def decode_transport(self, raw: str) -> AnswerTransport:
+        return decode_json_text_events(raw)
 
     def supported_permission_keys(self) -> List[str]:
         return ["agent_mode", "auto"]

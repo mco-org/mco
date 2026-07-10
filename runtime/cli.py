@@ -4,7 +4,9 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
@@ -2474,6 +2476,13 @@ def main(argv: List[str] | None = None) -> int:
                     "input_error",
                     "unknown model '{}' for provider '{}'".format(invocation.model, invocation.provider),
                 )
+        cancel_event = threading.Event()
+        previous_sigint = signal.getsignal(signal.SIGINT)
+
+        def _cancel_invocations(_signum: int, _frame: object) -> None:
+            cancel_event.set()
+
+        signal.signal(signal.SIGINT, _cancel_invocations)
         try:
             payload = run_invocations(
                 invocations=invocations,
@@ -2483,15 +2492,22 @@ def main(argv: List[str] | None = None) -> int:
                 timeout_seconds=cfg.policy.stall_timeout_seconds,
                 provider_permissions=cfg.policy.provider_permissions,
                 allow_paths=cfg.policy.allow_paths,
+                global_timeout_seconds=(
+                    cfg.policy.review_hard_timeout_seconds
+                    if cfg.policy.review_hard_timeout_seconds > 0
+                    else None
+                ),
+                cancel_event=cancel_event,
             )
-        except (OSError, RuntimeError, ValueError) as exc:
-            return _stream_error_exit("runtime_error", str(exc))
+        finally:
+            signal.signal(signal.SIGINT, previous_sigint)
         if args.json:
             print(json.dumps(payload, ensure_ascii=True))
         else:
             for item in payload["outputs"]:
-                print(item["output"], end="")
-        return 0
+                if item["status"] == "success":
+                    print(item["output"], end="")
+        return int(payload["exit_code"])
     if not providers:
         return _stream_error_exit(
             "provider_selection_required",

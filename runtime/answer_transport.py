@@ -28,6 +28,21 @@ def _json_lines(raw: str) -> Iterable[dict[str, Any]]:
             yield payload
 
 
+def _json_payloads(raw: str) -> Iterable[Any]:
+    stripped = raw.strip()
+    if stripped:
+        try:
+            yield json.loads(stripped)
+            return
+        except json.JSONDecodeError:
+            pass
+    for line in raw.splitlines():
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+
 def _normalize_usage(value: object) -> Optional[dict[str, int]]:
     if not isinstance(value, Mapping):
         return None
@@ -64,6 +79,55 @@ def _event_usage(payload: Mapping[str, Any]) -> Optional[dict[str, int]]:
 def decode_plain_text(raw: str) -> AnswerTransport:
     deltas = (AnswerDelta(raw),) if raw else ()
     return AnswerTransport(deltas, raw, "succeeded", None)
+
+
+def decode_json_text_events(raw: str) -> AnswerTransport:
+    deltas: list[AnswerDelta] = []
+    usage: Optional[dict[str, int]] = None
+    status = "running"
+    saw_text = False
+
+    def visit(payload: Any) -> None:
+        nonlocal usage, status, saw_text
+        if isinstance(payload, list):
+            for item in payload:
+                visit(item)
+            return
+        if not isinstance(payload, Mapping):
+            return
+        event_type = payload.get("type")
+        if isinstance(event_type, str):
+            normalized_type = event_type.lower()
+            if normalized_type in {"error", "failed", "response.failed"}:
+                status = "failed"
+            elif normalized_type in {"completed", "done", "agent_end", "response.completed", "turn.completed"}:
+                status = "succeeded"
+            if normalized_type == "text":
+                part = payload.get("part")
+                text = part.get("text") if isinstance(part, Mapping) and part.get("type") == "text" else payload.get("text")
+                if isinstance(text, str):
+                    deltas.append(AnswerDelta(text))
+                    saw_text = True
+            elif normalized_type in {"text_delta", "output_text_delta", "response.output_text.delta"}:
+                text = payload.get("delta") or payload.get("text")
+                if isinstance(text, str):
+                    deltas.append(AnswerDelta(text))
+                    saw_text = True
+            elif normalized_type == "assistant":
+                message = payload.get("message")
+                content = message.get("content") if isinstance(message, Mapping) else None
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, Mapping) and block.get("type") == "text" and isinstance(block.get("text"), str):
+                            deltas.append(AnswerDelta(block["text"]))
+                            saw_text = True
+        usage = _event_usage(payload) or usage
+
+    for payload in _json_payloads(raw):
+        visit(payload)
+    if not saw_text:
+        return decode_plain_text(raw)
+    return AnswerTransport(tuple(deltas), "".join(delta.text for delta in deltas), "succeeded" if status == "running" else status, usage)
 
 
 def decode_codex_events(raw: str) -> AnswerTransport:

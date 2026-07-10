@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import re
 import tempfile
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from .contracts import ProviderAdapter, TaskInput
 
 
 _INVOCATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+COMPLETE_EXIT_CODE = 0
+PARTIAL_EXIT_CODE = 1
+FAILED_EXIT_CODE = 2
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,165 @@ def validate_execution_scope(repo_root: str, target_paths: Sequence[str], allow_
     return normalized
 
 
+def _run_one_invocation(
+    *,
+    invocation: AgentInvocation,
+    adapter: ProviderAdapter,
+    artifact_base: str,
+    repo_root: str,
+    prompt: str,
+    timeout_seconds: int,
+    provider_permissions: Mapping[str, Mapping[str, str]],
+    allow_paths: Sequence[str],
+    cancel_event: threading.Event,
+    cancel_state: Mapping[str, str],
+) -> dict[str, object]:
+    task_id = "invocation-{}".format(invocation.invocation_id)
+    task = TaskInput(
+        task_id=task_id,
+        prompt=prompt,
+        repo_root=repo_root,
+        target_paths=list(invocation.execution_scope),
+        timeout_seconds=timeout_seconds,
+        metadata={
+            "artifact_root": artifact_base,
+            "invocation_id": invocation.invocation_id,
+            "allow_paths": list(allow_paths),
+            "provider_permissions": dict(provider_permissions.get(invocation.provider, {})),
+        },
+    )
+    if invocation.model != "default":
+        task.metadata["model"] = invocation.model
+
+    if cancel_event.is_set():
+        return {
+            "invocation_id": invocation.invocation_id,
+            "provider": invocation.provider,
+            "model": invocation.model,
+            "status": cancel_state.get("reason", "cancelled"),
+            "output": None,
+            "error": "task stopped before invocation started",
+            "exit_code": None,
+        }
+
+    try:
+        run_ref = adapter.run(task)
+    except Exception as exc:
+        return {
+            "invocation_id": invocation.invocation_id,
+            "provider": invocation.provider,
+            "model": invocation.model,
+            "status": "failed",
+            "output": None,
+            "error": str(exc),
+            "exit_code": None,
+        }
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if cancel_event.is_set():
+            try:
+                adapter.cancel(run_ref)
+            except Exception:
+                pass
+            return {
+                "invocation_id": invocation.invocation_id,
+                "provider": invocation.provider,
+                "model": invocation.model,
+                "status": cancel_state.get("reason", "cancelled"),
+                "output": None,
+                "error": "task stopped while invocation was running",
+                "exit_code": None,
+            }
+        try:
+            status = adapter.poll(run_ref)
+        except Exception as exc:
+            try:
+                adapter.cancel(run_ref)
+            except Exception:
+                pass
+            return {
+                "invocation_id": invocation.invocation_id,
+                "provider": invocation.provider,
+                "model": invocation.model,
+                "status": "failed",
+                "output": None,
+                "error": str(exc),
+                "exit_code": None,
+            }
+        if status.completed:
+            if status.attempt_state == "SUCCEEDED":
+                output_path = Path(run_ref.artifact_path) / "raw" / "{}.stdout.log".format(invocation.provider)
+                raw_output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+                decode_transport = getattr(adapter, "decode_transport", None)
+                try:
+                    transport = decode_transport(raw_output) if callable(decode_transport) else None
+                    output = transport.final_answer if transport is not None else raw_output
+                except Exception as exc:
+                    return {
+                        "invocation_id": invocation.invocation_id,
+                        "provider": invocation.provider,
+                        "model": invocation.model,
+                        "status": "failed",
+                        "output": None,
+                        "error": "transport decode failed: {}".format(exc),
+                        "exit_code": status.exit_code,
+                    }
+                if transport is not None and transport.status == "failed":
+                    return {
+                        "invocation_id": invocation.invocation_id,
+                        "provider": invocation.provider,
+                        "model": invocation.model,
+                        "status": "failed",
+                        "output": None,
+                        "error": "provider transport reported failure",
+                        "exit_code": status.exit_code,
+                        "deltas": [delta.text for delta in transport.deltas],
+                        "transport_status": transport.status,
+                        "usage": transport.usage,
+                    }
+                return {
+                    "invocation_id": invocation.invocation_id,
+                    "provider": invocation.provider,
+                    "model": invocation.model,
+                    "status": "success",
+                    "output": output,
+                    "error": None,
+                    "exit_code": status.exit_code if status.exit_code is not None else 0,
+                    "deltas": [delta.text for delta in transport.deltas] if transport is not None else ([raw_output] if raw_output else []),
+                    "transport_status": transport.status if transport is not None else "succeeded",
+                    "usage": transport.usage if transport is not None else None,
+                }
+            if status.attempt_state == "CANCELLED":
+                invocation_status = "cancelled"
+            else:
+                invocation_status = "failed"
+            return {
+                "invocation_id": invocation.invocation_id,
+                "provider": invocation.provider,
+                "model": invocation.model,
+                "status": invocation_status,
+                "output": None,
+                "error": status.message or status.attempt_state.lower(),
+                "exit_code": status.exit_code,
+            }
+        if time.monotonic() >= deadline:
+            try:
+                adapter.cancel(run_ref)
+            except Exception:
+                pass
+            return {
+                "invocation_id": invocation.invocation_id,
+                "provider": invocation.provider,
+                "model": invocation.model,
+                "status": "timeout",
+                "output": None,
+                "error": "invocation '{}' timed out".format(invocation.invocation_id),
+                "exit_code": None,
+            }
+        time.sleep(0.05)
+
+
 def run_invocations(
     *,
     invocations: Sequence[AgentInvocation],
@@ -88,50 +252,59 @@ def run_invocations(
     timeout_seconds: int,
     provider_permissions: Mapping[str, Mapping[str, str]],
     allow_paths: Sequence[str],
+    global_timeout_seconds: Optional[float] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> dict[str, object]:
-    outputs: list[dict[str, str]] = []
+    outputs: list[Optional[dict[str, object]]] = [None] * len(invocations)
+    stop_event = cancel_event or threading.Event()
+    stop_state = {"reason": "cancelled"}
     with tempfile.TemporaryDirectory(prefix="mco-invocations-") as artifact_base:
-        for invocation in invocations:
-            adapter = adapters[invocation.provider]
-            task_id = "invocation-{}".format(invocation.invocation_id)
-            task = TaskInput(
-                task_id=task_id,
-                prompt=prompt,
-                repo_root=repo_root,
-                target_paths=list(invocation.execution_scope),
-                timeout_seconds=timeout_seconds,
-                metadata={
-                    "artifact_root": artifact_base,
-                    "invocation_id": invocation.invocation_id,
-                    "allow_paths": list(allow_paths),
-                    "provider_permissions": dict(provider_permissions.get(invocation.provider, {})),
-                },
+        with ThreadPoolExecutor(max_workers=max(1, len(invocations))) as executor:
+            futures = {
+                executor.submit(
+                    _run_one_invocation,
+                    invocation=invocation,
+                    adapter=adapters[invocation.provider],
+                    artifact_base=artifact_base,
+                    repo_root=repo_root,
+                    prompt=prompt,
+                    timeout_seconds=timeout_seconds,
+                    provider_permissions=provider_permissions,
+                    allow_paths=allow_paths,
+                    cancel_event=stop_event,
+                    cancel_state=stop_state,
+                ): index
+                for index, invocation in enumerate(invocations)
+            }
+            pending = set(futures)
+            deadline = (
+                time.monotonic() + global_timeout_seconds
+                if global_timeout_seconds is not None and global_timeout_seconds > 0
+                else None
             )
-            if invocation.model != "default":
-                task.metadata["model"] = invocation.model
-            run_ref = adapter.run(task)
-            deadline = time.monotonic() + timeout_seconds
-            while True:
-                status = adapter.poll(run_ref)
-                if status.completed:
-                    break
-                if time.monotonic() >= deadline:
-                    adapter.cancel(run_ref)
-                    raise RuntimeError("invocation '{}' timed out".format(invocation.invocation_id))
-                time.sleep(0.05)
-            if status.attempt_state != "SUCCEEDED":
-                raise RuntimeError("invocation '{}' failed: {}".format(invocation.invocation_id, status.message))
-            output_path = Path(run_ref.artifact_path) / "raw" / "{}.stdout.log".format(invocation.provider)
-            raw_output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
-            decode_transport = getattr(adapter, "decode_transport", None)
-            if callable(decode_transport):
-                output = decode_transport(raw_output).final_answer
-            else:
-                output = raw_output
-            outputs.append({
-                "invocation_id": invocation.invocation_id,
-                "provider": invocation.provider,
-                "model": invocation.model,
-                "output": output,
-            })
-    return {"status": "complete", "outputs": outputs}
+            while pending:
+                wait_timeout = 0.05
+                if deadline is not None:
+                    wait_timeout = min(wait_timeout, max(0.0, deadline - time.monotonic()))
+                done, pending = wait(pending, timeout=wait_timeout, return_when=FIRST_COMPLETED)
+                for future in done:
+                    outputs[futures[future]] = future.result()
+                if deadline is not None and pending and time.monotonic() >= deadline:
+                    stop_state["reason"] = "timeout"
+                    stop_event.set()
+                if stop_event.is_set():
+                    for future in pending:
+                        future.cancel()
+
+    resolved_outputs = [item for item in outputs if item is not None]
+    successes = sum(1 for item in resolved_outputs if item["status"] == "success")
+    if successes == len(resolved_outputs):
+        task_status = "complete"
+        exit_code = COMPLETE_EXIT_CODE
+    elif successes > 0:
+        task_status = "partial"
+        exit_code = PARTIAL_EXIT_CODE
+    else:
+        task_status = "failed"
+        exit_code = FAILED_EXIT_CODE
+    return {"status": task_status, "outputs": resolved_outputs, "exit_code": exit_code}

@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from runtime.adapters import ClaudeAdapter, CommandShimAdapter, CopilotAdapter, CursorAdapter, GeminiAdapter, GrokAdapter, HermesAdapter, OllamaAdapter, OpenCodeAdapter, QwenAdapter
 
 
 class StandardTransportTests(unittest.TestCase):
+    def test_opencode_json_text_event_is_decoded_as_answer(self) -> None:
+        result = OpenCodeAdapter().decode_transport(json.dumps({"type": "text", "part": {"type": "text", "text": "OpenCode answer"}}))
+
+        self.assertEqual(result.final_answer, "OpenCode answer")
+        self.assertEqual([delta.text for delta in result.deltas], ["OpenCode answer"])
+
+    def test_qwen_json_array_text_event_is_decoded_as_answer(self) -> None:
+        result = QwenAdapter().decode_transport(json.dumps([{"type": "assistant", "message": {"content": [{"type": "text", "text": "Qwen answer"}]}}]))
+
+        self.assertEqual(result.final_answer, "Qwen answer")
+        self.assertEqual([delta.text for delta in result.deltas], ["Qwen answer"])
+
     def test_nonzero_exit_is_not_reclassified_by_answer_text(self) -> None:
         adapter = CommandShimAdapter.from_command_text("custom", "python3 -c 'print(1)'")
 

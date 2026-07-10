@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..answer_transport import AnswerTransport, decode_acp_events
+from ..answer_transport import AnswerTransport, decode_acp_events, decode_plain_text
 from ..artifacts import expected_paths
 from ..contracts import (
     CapabilitySet,
@@ -125,7 +125,9 @@ class AcpAdapter:
     def capabilities(self) -> CapabilitySet:
         return self._capability_set
 
-    def decode_transport(self, updates: List[Dict[str, Any]]) -> AnswerTransport:
+    def decode_transport(self, updates: Any) -> AnswerTransport:
+        if isinstance(updates, str):
+            return decode_plain_text(updates)
         return decode_acp_events(updates)
 
     def supported_permission_keys(self) -> List[str]:

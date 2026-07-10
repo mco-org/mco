@@ -56,6 +56,13 @@ class AnswerTransportTests(unittest.TestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(result.usage, {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10})
 
+    def test_acp_adapter_accepts_completed_text_from_its_runtime_boundary(self) -> None:
+        result = AcpAdapter(provider_id="test", binary_name="test").decode_transport("ACP answer")
+
+        self.assertEqual(result.final_answer, "ACP answer")
+        self.assertEqual([delta.text for delta in result.deltas], ["ACP answer"])
+
+
 
 if __name__ == "__main__":
     unittest.main()

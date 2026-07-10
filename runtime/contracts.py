@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Protocol, Sequence, runtime_checkable
 
+from .answer_transport import AnswerTransport
 from .types import ErrorKind
 
 
@@ -121,6 +122,9 @@ class ProviderAdapter(Protocol):
         ...
 
     def cancel(self, ref: TaskRunRef) -> None:
+        ...
+
+    def decode_transport(self, raw: Any) -> AnswerTransport:
         ...
 
     def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
