@@ -7,6 +7,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-07-07
+### Added
+- Added agent-safe `--dry-run` previews with default and effective provider risk, resolved policies, and command templates.
+- Added stable JSON error envelopes for parse, input, and configuration failures.
+- Added best-effort skill health checks and PR preview package artifacts.
+
+### Changed
+- Expanded default `mco doctor` checks to all eight supported providers, including explicit opt-in Copilot, Hermes, and Pi.
+- Kept `mco run` and `mco review` default provider set at the audited five built-ins.
+- Exposed provider risk through CLI and MCP discovery surfaces, including Copilot approval-bypass classification.
+
+### Fixed
+- Made npm packaging and publishing gates fail closed, and verified bundled runtime, schema, Copilot adapter, and skill reference files after installation.
+- Ignored arbitrary local review task directories without hiding gate or contract evidence.
+
 ## [0.10.6] - 2026-06-28
 ### Added
 - Added per-provider context policy with `--provider-context-json`, including explicit skills/context/plugin controls where supported.

@@ -90,7 +90,7 @@ When returning to end users:
   - `--provider-timeouts qwen=900,codex=300`
 - Set review hard deadline for CI predictability:
   - `--review-hard-timeout 1800`
-- Use unique `--idempotency-key` for each new execution intent.
+- Use a stable `--task-id` when you need predictable artifact paths across retries.
 
 ## Failure handling
 

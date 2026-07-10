@@ -27,8 +27,7 @@ Top-level JSON object with required fields:
   "parse_success_count": 0,
   "parse_failure_count": 0,
   "schema_valid_count": 0,
-  "dropped_findings_count": 0,
-  "created_new_task": true
+  "dropped_findings_count": 0
 }
 ```
 
@@ -39,7 +38,7 @@ Top-level JSON object with required fields:
   - `run` for generalized execution flow.
 - `findings_count` is retained canonical findings count.
 - `parse_success_count` / `parse_failure_count` are review parsing health counters.
-- `created_new_task` indicates idempotency hit/miss at submit time.
+- Failures before a normal result is available use the envelope frozen in `docs/contracts/errors-v0.1.x.md`.
 
 ## Exit Code Notes
 
@@ -54,4 +53,3 @@ Top-level JSON object with required fields:
 Contract enforcement tests:
 
 - `tests/test_cli_json_contract.py`
-

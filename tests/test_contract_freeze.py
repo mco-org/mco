@@ -54,6 +54,18 @@ class ContractFreezeTests(unittest.TestCase):
         self.assertEqual(PiAdapter().supported_permission_keys(), [])
         self.assertEqual(CopilotAdapter().supported_permission_keys(), [])
 
+    def test_provider_contract_docs_list_all_builtin_providers(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        documents = [
+            repo_root / "docs" / "implementation" / "step0-interface-freeze.md",
+            repo_root / "docs" / "contracts" / "provider-permissions-v0.1.x.md",
+        ]
+        for document in documents:
+            text = document.read_text(encoding="utf-8")
+            for provider in PROVIDER_IDS:
+                with self.subTest(document=document.name, provider=provider):
+                    self.assertIn(provider, text)
+
     def test_validate_task_id_rejects_absolute_path(self) -> None:
         with self.assertRaises(ValueError):
             validate_task_id("/etc/passwd")

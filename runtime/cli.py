@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .adapters import adapter_registry
 from .config import ReviewConfig, ReviewPolicy, load_agent_registrations
-from .contracts import ProviderPresence
+from .contracts import ProviderPresence, TaskInput
 from .formatters import (
     LiveStreamRenderer,
     _consensus_badge,
@@ -17,12 +18,65 @@ from .formatters import (
     format_markdown_pr,
     format_sarif,
 )
-from .review_engine import ReviewRequest, run_review
+from .provider_risk import effective_provider_risk, provider_risk
+from .skill_health import check_skill_health
+from . import __version__
+from .review_engine import REVIEW_FINDINGS_SCHEMA_PATH, ReviewRequest, provider_policy_preview, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "gemini", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
+DEFAULT_DOCTOR_PROVIDERS = SUPPORTED_PROVIDERS
 DEFAULT_CONFIG = ReviewConfig()
 DEFAULT_POLICY = DEFAULT_CONFIG.policy
+
+
+_ERROR_DETAILS = {
+    "parse_error": ("input", "Check command syntax with `mco <command> --help`."),
+    "input_error": ("input", "Correct the input and retry the command."),
+    "invalid_providers": ("input", "Select providers shown by `mco agent list --json`."),
+    "config_error": ("configuration", "Correct the project/global configuration and retry."),
+    "invalid_config": ("configuration", "Remove the incompatible flags or configuration values and retry."),
+    "runtime_error": ("runtime", "Inspect provider results and logs before retrying."),
+}
+
+
+def _error_envelope(
+    subtype: str,
+    message: str,
+    *,
+    provider: Optional[str] = None,
+    retryable: bool = False,
+    exit_code: int = 2,
+) -> Dict[str, object]:
+    category, hint = _ERROR_DETAILS.get(
+        subtype,
+        ("runtime", "Inspect the error message and retry only after correcting the cause."),
+    )
+    return {
+        "ok": False,
+        "error": {
+            "category": category,
+            "subtype": subtype,
+            "message": message,
+            "hint": hint,
+            "provider": provider,
+            "retryable": retryable,
+            "exit_code": exit_code,
+        },
+    }
+
+
+def _stream_error_event(subtype: str, message: str) -> Dict[str, object]:
+    from datetime import datetime, timezone
+
+    envelope = _error_envelope(subtype, message)
+    return {
+        "type": "error",
+        "code": subtype,
+        "message": message,
+        "error": envelope["error"],
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+    }
 
 
 class _HelpFormatter(argparse.RawTextHelpFormatter):
@@ -99,7 +153,8 @@ REVIEW_EPILOG = (
 DOCTOR_EPILOG = (
     "Examples:\n"
     "  mco doctor\n"
-    "  mco doctor --providers claude,codex --json\n\n"
+    "  mco doctor --providers claude,codex --json\n"
+    "  mco doctor --skill-health --json\n\n"
     "Exit codes:\n"
     "  0 = command completed (read overall_ok in output)\n"
     "  2 = invalid input"
@@ -153,7 +208,7 @@ def _load_available_agents(repo_root: str, cli_agents: Optional[Dict[str, List[s
     available: List[Dict[str, object]] = []
     seen = set()
     for provider in SUPPORTED_PROVIDERS:
-        available.append({"name": provider, "source": "builtin", "transport": "shim"})
+        available.append({"name": provider, "source": "builtin", "transport": "shim", "risk": provider_risk(provider)})
         seen.add(provider)
     for agent in load_agent_registrations(repo_root):
         name = str(agent.get("name", "")).strip()
@@ -167,6 +222,7 @@ def _load_available_agents(repo_root: str, cli_agents: Optional[Dict[str, List[s
             "model": agent.get("model"),
             "timeout": agent.get("timeout"),
             "permission_keys": agent.get("permission_keys", []),
+            "risk": provider_risk(name),
         })
         seen.add(name)
     for name, command in (cli_agents or {}).items():
@@ -177,6 +233,7 @@ def _load_available_agents(repo_root: str, cli_agents: Optional[Dict[str, List[s
             "source": "cli",
             "transport": "acp",
             "command": " ".join(command),
+            "risk": provider_risk(name),
         })
         seen.add(name)
     return available
@@ -195,6 +252,7 @@ def _check_agent(repo_root: str, name: str, cli_agents: Optional[Dict[str, List[
             "version": None,
             "transport": None,
             "reason": "unknown_agent",
+            "risk": provider_risk(name),
         }
     probe = adapter.detect()
     return {
@@ -205,6 +263,7 @@ def _check_agent(repo_root: str, name: str, cli_agents: Optional[Dict[str, List[
         "version": probe.version,
         "transport": "acp" if hasattr(adapter, "_acp_command") else "shim",
         "reason": probe.reason,
+        "risk": provider_risk(name),
     }
 
 
@@ -293,7 +352,13 @@ def _doctor_provider_presence(providers: List[str]) -> Dict[str, ProviderPresenc
     return presence
 
 
-def _doctor_payload(providers: List[str], presence_map: Dict[str, ProviderPresence]) -> Dict[str, object]:
+def _doctor_payload(
+    providers: List[str],
+    presence_map: Dict[str, ProviderPresence],
+    *,
+    skill_health: Optional[Dict[str, object]] = None,
+    skill_drift: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
     provider_payload: Dict[str, Dict[str, object]] = {}
     ready_count = 0
     for provider in providers:
@@ -313,14 +378,20 @@ def _doctor_payload(providers: List[str], presence_map: Dict[str, ProviderPresen
             "auth_ok": bool(presence.auth_ok),
             "reason": presence.reason,
             "ready": ready,
+            "risk": provider_risk(provider),
         }
-    return {
+    payload: Dict[str, object] = {
         "command": "doctor",
         "overall_ok": ready_count == len(providers),
         "ready_count": ready_count,
         "provider_count": len(providers),
         "providers": provider_payload,
     }
+    if skill_health is not None:
+        payload["skill_health"] = skill_health
+    if skill_drift is not None:
+        payload["skill_drift"] = skill_drift
+    return payload
 
 
 def _render_doctor_report(payload: Dict[str, object]) -> str:
@@ -342,6 +413,185 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
         lines.append(f"  detected={bool(details.get('detected'))} auth_ok={bool(details.get('auth_ok'))}")
         lines.append(f"  binary_path={details.get('binary_path')}")
         lines.append(f"  version={details.get('version')}")
+        risk = details.get("risk", {})
+        if isinstance(risk, dict):
+            lines.append(f"  risk={risk.get('level')} ({risk.get('reason')})")
+    if not payload.get("overall_ok"):
+        ready_providers = sorted(
+            provider
+            for provider, details in providers.items()
+            if isinstance(details, dict) and details.get("ready")
+        )
+        if ready_providers:
+            ready_csv = ",".join(ready_providers)
+            lines.extend([
+                "",
+                "Next Steps",
+                f"- Ready providers: {ready_csv}",
+                f"- Example: mco run --repo . --prompt \"<task>\" --providers {ready_csv} --dry-run --json",
+                "- Tip: persist provider subset in .mcorc.json",
+            ])
+    skill_health = payload.get("skill_health")
+    if isinstance(skill_health, dict) and skill_health.get("enabled"):
+        lines.extend(["", "Skill Check"])
+        lines.append(f"- status: {skill_health.get('status')} ({skill_health.get('reason')})")
+        reference = skill_health.get("reference", {})
+        if isinstance(reference, dict) and reference.get("path"):
+            ref_sha = reference.get("sha256")
+            sha_suffix = f", sha256={ref_sha[:12]}..." if isinstance(ref_sha, str) and ref_sha else ""
+            lines.append(f"- reference: {reference.get('path')}{sha_suffix}")
+        skill_drift = payload.get("skill_drift")
+        if isinstance(skill_drift, dict):
+            drifted = skill_drift.get("drifted") or []
+            matched = skill_drift.get("matched") or []
+            if drifted:
+                lines.append(f"- drift: {', '.join(str(item) for item in drifted)}")
+            if matched:
+                lines.append(f"- matched: {', '.join(str(item) for item in matched)}")
+    return "\n".join(lines)
+
+
+def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest, review_mode: bool, policy: Dict[str, object]) -> List[str]:
+    metadata: Dict[str, object] = {
+        "artifact_root": "<artifact_root>",
+        "allow_paths": req.policy.allow_paths,
+        "provider_permissions": policy.get("applied_permissions", {}),
+        "enforcement_mode": req.policy.enforcement_mode,
+    }
+    applied_model = policy.get("applied_model", {})
+    if isinstance(applied_model, dict):
+        metadata.update(applied_model)
+    applied_context = policy.get("applied_context", {})
+    if provider in req.policy.provider_context:
+        metadata["provider_context"] = dict(applied_context) if isinstance(applied_context, dict) else {}
+    if review_mode and provider == "codex" and REVIEW_FINDINGS_SCHEMA_PATH.exists():
+        metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
+    preview_command = getattr(adapter, "preview_command", None)
+    if callable(preview_command):
+        permissions = policy.get("applied_permissions", {})
+        return list(preview_command(permissions if isinstance(permissions, dict) else {}))
+    build_command = getattr(adapter, "_build_command", None)
+    if callable(build_command):
+        return list(build_command(TaskInput(
+            task_id=req.task_id or "<task_id>",
+            prompt="<prompt>",
+            repo_root=req.repo_root,
+            target_paths=req.target_paths or ["."],
+            metadata=metadata,
+        )))
+    build_record = getattr(adapter, "_build_command_for_record", None)
+    if callable(build_record):
+        return list(build_record())
+    return []
+
+
+def _build_dry_run_payload(
+    args: argparse.Namespace,
+    req: ReviewRequest,
+    *,
+    providers: List[str],
+    adapters: Mapping[str, object],
+    review_mode: bool,
+    result_mode: str,
+    write_artifacts: bool,
+    transport: str,
+    diff_mode: Optional[str],
+    diff_base: str,
+    memory_space: str,
+    synthesize: bool,
+    synth_provider: str,
+) -> Dict[str, object]:
+    provider_details: Dict[str, object] = {}
+    for provider in providers:
+        adapter = adapters.get(provider)
+        if adapter is None:
+            default_risk = provider_risk(provider, transport=transport)
+            provider_details[provider] = {
+                "default_risk": default_risk,
+                "risk": default_risk,
+                "policy": {"failure_reason": "adapter_not_implemented", "would_fail_strict": True},
+                "command_template": [],
+            }
+            continue
+        policy = dict(provider_policy_preview(provider, adapter, req.policy))
+        default_risk = provider_risk(provider, transport=transport)
+        applied_permissions = policy.get("applied_permissions", {})
+        effective_risk = effective_provider_risk(
+            provider,
+            applied_permissions if isinstance(applied_permissions, dict) else {},
+            transport=transport,
+        )
+        if (
+            effective_risk["level"] == "unknown"
+            and req.policy.enforcement_mode == "strict"
+            and not policy.get("would_fail_strict")
+        ):
+            policy["would_fail_strict"] = True
+            policy["failure_reason"] = "risk_classification_unknown"
+        provider_details[provider] = {
+            "default_risk": default_risk,
+            "risk": effective_risk,
+            "policy": policy,
+            "command_template": _dry_run_command_template(provider, adapter, req, review_mode, policy),
+        }
+    return {
+        "command": args.command,
+        "dry_run": True,
+        "would_execute": False,
+        "review_mode": review_mode,
+        "repo_root": req.repo_root,
+        "providers": providers,
+        "target_paths": req.target_paths or ["."],
+        "transport": transport,
+        "result_mode": result_mode,
+        "write_artifacts": write_artifacts,
+        "artifact_base": req.artifact_base,
+        "task_id": req.task_id,
+        "prompt": {
+            "chars": len(req.prompt),
+            "sha256": hashlib.sha256(req.prompt.encode("utf-8")).hexdigest(),
+        },
+        "policy": {
+            "allow_paths": list(req.policy.allow_paths),
+            "enforcement_mode": req.policy.enforcement_mode,
+            "provider_permissions": req.policy.provider_permissions,
+            "provider_models": req.policy.provider_models,
+            "provider_context": req.policy.provider_context,
+            "perspectives": req.policy.perspectives,
+            "chain": req.policy.chain,
+            "debate": req.policy.debate,
+            "divide": req.policy.divide,
+        },
+        "providers_detail": provider_details,
+        "diff": {"mode": diff_mode, "base": diff_base or None},
+        "memory": {"enabled": bool(getattr(args, "memory", False)), "space": memory_space or None},
+        "synthesis": {"enabled": synthesize, "provider": synth_provider or None},
+    }
+
+
+def _render_dry_run_report(payload: Dict[str, object]) -> str:
+    lines = ["Dry Run", ""]
+    lines.append(f"- would_execute: {payload.get('would_execute')}")
+    lines.append(f"- command: {payload.get('command')}")
+    lines.append(f"- repo_root: {payload.get('repo_root')}")
+    lines.append(f"- providers: {', '.join(str(item) for item in payload.get('providers', []))}")
+    lines.append("")
+    lines.append("Provider Preview")
+    details = payload.get("providers_detail", {})
+    if isinstance(details, dict):
+        for provider in sorted(details.keys()):
+            item = details.get(provider, {})
+            if not isinstance(item, dict):
+                continue
+            risk = item.get("risk", {})
+            policy = item.get("policy", {})
+            risk_level = risk.get("level") if isinstance(risk, dict) else "unknown"
+            failure = policy.get("failure_reason") if isinstance(policy, dict) else ""
+            suffix = f" failure={failure}" if failure else ""
+            lines.append(f"- {provider}: risk={risk_level}{suffix}")
+            command = item.get("command_template", [])
+            if isinstance(command, list) and command:
+                lines.append("  command=" + " ".join(str(part) for part in command))
     return "\n".join(lines)
 
 
@@ -952,6 +1202,11 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Force artifact writes when result-mode is stdout",
     )
+    output.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview resolved providers, policy, risk, and artifacts without executing agents",
+    )
     output_excl = output.add_mutually_exclusive_group()
     output_excl.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     output_excl.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS,
@@ -1059,7 +1314,20 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=TOP_LEVEL_EPILOG,
         formatter_class=_HelpFormatter,
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="mco {}".format(__version__),
+        help="Show version and exit",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser(
+        "version",
+        help="Print mco version",
+        description="Print the installed mco version.",
+        formatter_class=_HelpFormatter,
+    )
 
     doctor = subparsers.add_parser(
         "doctor",
@@ -1070,10 +1338,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument(
         "--providers",
-        default=",".join(DEFAULT_CONFIG.providers),
+        default=",".join(DEFAULT_DOCTOR_PROVIDERS),
         help="Comma-separated providers. Supported: {}".format(SUPPORTED_PROVIDER_LIST),
     )
     doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    doctor.add_argument(
+        "--skill-health",
+        action="store_true",
+        help="Best-effort check that local mco-cli SKILL.md installs match the bundled reference (default: disabled)",
+    )
+    doctor.add_argument(
+        "--repo",
+        default=".",
+        help="Repository root used to locate skills/mco-cli/SKILL.md for skill drift checks",
+    )
 
     agent_cmd = subparsers.add_parser(
         "agent",
@@ -1707,8 +1985,9 @@ def main(argv: List[str] | None = None) -> int:
     # If streaming is requested, suppress argparse stderr and emit a machine-readable error.
     _raw_argv = argv if argv is not None else sys.argv[1:]
     _wants_stream = "--stream" in _raw_argv and any(mode in _raw_argv for mode in ("jsonl", "live"))
+    _wants_json = "--json" in _raw_argv
     _parse_error_msg = ""
-    if _wants_stream:
+    if _wants_stream or _wants_json:
         def _capture_parse_error(message: str) -> None:
             nonlocal _parse_error_msg
             _parse_error_msg = message
@@ -1717,22 +1996,44 @@ def main(argv: List[str] | None = None) -> int:
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
-        if _wants_stream and exc.code != 0:
-            from datetime import datetime, timezone
-            err_event = json.dumps({
-                "type": "error", "code": "parse_error",
-                "message": _parse_error_msg or "Invalid arguments. Run 'mco review --help' for usage.",
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            }, ensure_ascii=True)
-            print(err_event, flush=True)
+        if exc.code != 0:
+            message = _parse_error_msg or "Invalid arguments. Run 'mco review --help' for usage."
+            if _wants_stream:
+                print(json.dumps(_stream_error_event("parse_error", message), ensure_ascii=True), flush=True)
+            elif _wants_json:
+                print(json.dumps(_error_envelope("parse_error", message), ensure_ascii=True))
         return int(exc.code) if isinstance(exc.code, int) else 2
+    if args.command == "version":
+        print(__version__)
+        return 0
+
     if args.command == "doctor":
-        providers_str = getattr(args, "providers", ",".join(DEFAULT_CONFIG.providers))
-        providers = [item for item in _parse_providers(providers_str) if item in SUPPORTED_PROVIDERS]
-        if not providers:
-            print("No valid providers selected.", file=sys.stderr)
+        providers_str = getattr(args, "providers", ",".join(DEFAULT_DOCTOR_PROVIDERS))
+        requested_providers = _parse_providers(providers_str)
+        invalid_providers = [item for item in requested_providers if item not in SUPPORTED_PROVIDERS]
+        if invalid_providers:
+            message = "Unknown providers: {}".format(", ".join(invalid_providers))
+            if args.json:
+                print(json.dumps(_error_envelope("invalid_providers", message), ensure_ascii=True))
+            else:
+                print(message, file=sys.stderr)
             return 2
-        payload = _doctor_payload(providers, _doctor_provider_presence(providers))
+        providers = requested_providers
+        repo_root = Path(getattr(args, "repo", ".")).resolve()
+        skill_health = None
+        skill_drift = None
+        if getattr(args, "skill_health", False):
+            skill_health, skill_drift = check_skill_health(
+                enabled=True,
+                package_root=Path(__file__).resolve().parent.parent,
+                cwd=repo_root,
+            )
+        payload = _doctor_payload(
+            providers,
+            _doctor_provider_presence(providers),
+            skill_health=skill_health,
+            skill_drift=skill_drift,
+        )
         if args.json:
             print(json.dumps(payload, ensure_ascii=True))
         else:
@@ -1748,11 +2049,14 @@ def main(argv: List[str] | None = None) -> int:
                 print(json.dumps(payload, ensure_ascii=True))
             else:
                 for item in payload:
+                    risk = item.get("risk", {})
+                    risk_level = risk.get("level") if isinstance(risk, dict) else ""
                     print(
-                        "{name:20s} {transport:5s} {source:7s} {detail}".format(
+                        "{name:20s} {transport:5s} {source:7s} {risk:15s} {detail}".format(
                             name=str(item.get("name", "")),
                             transport=str(item.get("transport", "")),
                             source=str(item.get("source", "")),
+                            risk=str(risk_level or ""),
                             detail=str(item.get("model") or item.get("command") or ""),
                         ).rstrip()
                     )
@@ -1767,9 +2071,16 @@ def main(argv: List[str] | None = None) -> int:
             if getattr(args, "json", False):
                 print(json.dumps(payload, ensure_ascii=True))
             else:
+                risk = payload.get("risk", {})
+                risk_level = risk.get("level") if isinstance(risk, dict) else "unknown"
                 print(
-                    "Agent {name}: ready={ready} detected={detected} transport={transport} reason={reason}".format(
-                        **payload
+                    "Agent {name}: ready={ready} detected={detected} transport={transport} reason={reason} risk={risk}".format(
+                        name=payload.get("name"),
+                        ready=payload.get("ready"),
+                        detected=payload.get("detected"),
+                        transport=payload.get("transport"),
+                        reason=payload.get("reason"),
+                        risk=risk_level,
                     )
                 )
             return 0
@@ -1871,13 +2182,11 @@ def main(argv: List[str] | None = None) -> int:
     )
 
     def _stream_error_exit(code: str, message: str) -> int:
-        """Emit error event (if streaming) or print to stderr, then return 2."""
+        """Emit a stable machine error when requested, otherwise use stderr."""
         if stream_callback:
-            from datetime import datetime, timezone
-            stream_callback({
-                "type": "error", "code": code, "message": message,
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            })
+            stream_callback(_stream_error_event(code, message))
+        elif getattr(args, "json", False):
+            print(json.dumps(_error_envelope(code, message), ensure_ascii=True))
         else:
             print(message, file=sys.stderr)
         return 2
@@ -1915,7 +2224,13 @@ def main(argv: List[str] | None = None) -> int:
     if extra_agents:
         valid_providers |= set(extra_agents.keys())
 
-    providers = [item for item in cfg.providers if item in valid_providers]
+    invalid_providers = [item for item in cfg.providers if item not in valid_providers]
+    if invalid_providers:
+        return _stream_error_exit(
+            "invalid_providers",
+            "Unknown providers: {}".format(", ".join(invalid_providers)),
+        )
+    providers = list(cfg.providers)
     # Auto-add custom agent to providers if not already listed
     if extra_agents:
         for name in extra_agents:
@@ -1976,14 +2291,72 @@ def main(argv: List[str] | None = None) -> int:
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
-        print(f"--format {args.format} is supported only for review command", file=sys.stderr)
-        return 2
+        return _stream_error_exit(
+            "invalid_config",
+            f"--format {args.format} is supported only for review command",
+        )
     effective_result_mode = args.result_mode
     if args.save_artifacts and effective_result_mode == "stdout":
         effective_result_mode = "both"
     write_artifacts = effective_result_mode in ("artifact", "both")
     transport = getattr(args, "transport", "shim")
     adapters = _doctor_adapter_registry(transport=transport, extra_agents=extra_agents, configured_agents=configured_agents) if (transport != "shim" or extra_agents or configured_agents) else None
+    if getattr(args, "dry_run", False):
+        preview_adapters = adapters or _doctor_adapter_registry()
+        try:
+            payload = _build_dry_run_payload(
+                args,
+                req,
+                providers=providers,
+                adapters=preview_adapters,
+                review_mode=review_mode,
+                result_mode=effective_result_mode,
+                write_artifacts=write_artifacts,
+                transport=transport,
+                diff_mode=diff_mode,
+                diff_base=diff_base_arg,
+                memory_space=memory_space,
+                synthesize=synthesize,
+                synth_provider=synth_provider,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            if stream_renderer is not None:
+                stream_renderer.close()
+            return _stream_error_exit(
+                "runtime_error",
+                "Dry-run command preview failed: {}".format(exc),
+            )
+        if stream_renderer is not None:
+            stream_renderer.close()
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=True))
+        else:
+            print(_render_dry_run_report(payload))
+        return 0
+    if transport == "acp" and req.policy.enforcement_mode == "strict":
+        execution_adapters = adapters or _doctor_adapter_registry(transport=transport)
+        unknown_risk_providers: List[str] = []
+        for provider in providers:
+            adapter = execution_adapters.get(provider)
+            if adapter is None:
+                continue
+            policy = provider_policy_preview(provider, adapter, req.policy)
+            applied_permissions = policy.get("applied_permissions", {})
+            risk = effective_provider_risk(
+                provider,
+                applied_permissions if isinstance(applied_permissions, dict) else {},
+                transport=transport,
+            )
+            if risk["level"] == "unknown":
+                unknown_risk_providers.append(provider)
+        if unknown_risk_providers:
+            if stream_renderer is not None:
+                stream_renderer.close()
+            return _stream_error_exit(
+                "invalid_config",
+                "risk_classification_unknown: strict ACP execution requires an explicit supported "
+                "permission override for provider(s): {}".format(",".join(unknown_risk_providers)),
+            )
     try:
         result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
     except ValueError as exc:

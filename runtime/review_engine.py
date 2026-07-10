@@ -916,6 +916,92 @@ def _poll_interval_seconds(policy: ReviewPolicy) -> float:
     return value if value > 0 else 1.0
 
 
+def provider_policy_preview(provider: str, adapter: ProviderAdapter, policy: ReviewPolicy) -> Dict[str, object]:
+    """Return the provider-specific policy resolution without running the provider."""
+    requested_permissions = policy.provider_permissions.get(provider, {})
+    requested_permissions = requested_permissions if isinstance(requested_permissions, dict) else {}
+    supported_keys = _supported_permission_keys(adapter)
+    unknown_permission_keys = sorted(
+        key for key in requested_permissions.keys() if str(key).strip() and key not in supported_keys
+    )
+    effective_permissions = {
+        str(key): str(value)
+        for key, value in requested_permissions.items()
+        if str(key).strip() in supported_keys
+    }
+
+    requested_model_config = policy.provider_models.get(provider, {})
+    requested_model_config = requested_model_config if isinstance(requested_model_config, dict) else {}
+    supported_model_keys = _supported_model_keys(adapter)
+    unknown_model_keys = sorted(
+        key for key in requested_model_config.keys() if str(key).strip() and key not in supported_model_keys
+    )
+    effective_model_config = {
+        str(key): str(value)
+        for key, value in requested_model_config.items()
+        if str(key).strip() in supported_model_keys and str(value).strip()
+    }
+
+    requested_context = policy.provider_context.get(provider, {})
+    requested_context = requested_context if isinstance(requested_context, dict) else {}
+    supported_context_keys = _supported_context_keys(adapter)
+    unknown_context_keys = sorted(
+        key for key in requested_context.keys()
+        if key not in supported_context_keys and not (provider == "pi" and key == "extensions" and requested_context[key] is False)
+    )
+    effective_context = {
+        str(key): value
+        for key, value in requested_context.items()
+        if key in supported_context_keys
+    }
+
+    incompatible_context_keys: List[str] = []
+    dropped_context_keys = list(unknown_context_keys)
+    if provider == "hermes":
+        skills_val = effective_context.get("skills")
+        has_skills = (
+            skills_val == "ambient"
+            or (isinstance(skills_val, list) and len(skills_val) > 0)
+        )
+        if has_skills and effective_context.get("context_files") is False:
+            incompatible_context_keys.extend(["skills", "context_files"])
+            if policy.enforcement_mode != "strict":
+                effective_context.pop("skills", None)
+                effective_context.pop("context_files", None)
+                dropped_context_keys.extend(incompatible_context_keys)
+
+    dropped_context_keys = sorted(set(dropped_context_keys))
+    incompatible_context_keys = sorted(set(incompatible_context_keys))
+    failure_reason = ""
+    if policy.enforcement_mode == "strict":
+        if unknown_permission_keys:
+            failure_reason = "permission_enforcement_failed"
+        elif unknown_model_keys:
+            failure_reason = "model_selection_failed"
+        elif unknown_context_keys or incompatible_context_keys:
+            failure_reason = "context_policy_enforcement_failed"
+
+    return {
+        "enforcement_mode": policy.enforcement_mode,
+        "requested_permissions": requested_permissions,
+        "applied_permissions": effective_permissions,
+        "supported_permission_keys": sorted(supported_keys),
+        "unknown_permission_keys": unknown_permission_keys,
+        "requested_model": dict(requested_model_config),
+        "applied_model": dict(effective_model_config),
+        "supported_model_keys": sorted(supported_model_keys),
+        "unknown_model_keys": unknown_model_keys,
+        "requested_context": dict(requested_context),
+        "applied_context": dict(effective_context),
+        "supported_context_keys": sorted(supported_context_keys),
+        "unknown_context_keys": unknown_context_keys,
+        "incompatible_context_keys": incompatible_context_keys,
+        "dropped_context_keys": dropped_context_keys,
+        "would_fail_strict": bool(failure_reason),
+        "failure_reason": failure_reason,
+    }
+
+
 def _timestamp_to_iso(timestamp: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
 
@@ -1573,17 +1659,11 @@ def _run_provider(
             },
         )
 
-    requested_permissions = request.policy.provider_permissions.get(provider, {})
-    requested_permissions = requested_permissions if isinstance(requested_permissions, dict) else {}
-    supported_keys = _supported_permission_keys(adapter)
-    unknown_permission_keys = sorted(
-        key for key in requested_permissions.keys() if str(key).strip() and key not in supported_keys
-    )
-    effective_permissions = {
-        str(key): str(value)
-        for key, value in requested_permissions.items()
-        if str(key).strip() in supported_keys
-    }
+    policy_preview = provider_policy_preview(provider, adapter, request.policy)
+    requested_permissions = policy_preview["requested_permissions"]
+    supported_keys = set(policy_preview["supported_permission_keys"])
+    unknown_permission_keys = policy_preview["unknown_permission_keys"]
+    effective_permissions = policy_preview["applied_permissions"]
     if unknown_permission_keys and request.policy.enforcement_mode == "strict":
         _emit_event(request, {
             "type": "provider_error", "provider": provider,
@@ -1613,17 +1693,10 @@ def _run_provider(
             },
         )
 
-    requested_model_config = request.policy.provider_models.get(provider, {})
-    requested_model_config = requested_model_config if isinstance(requested_model_config, dict) else {}
-    supported_model_keys = _supported_model_keys(adapter)
-    unknown_model_keys = sorted(
-        key for key in requested_model_config.keys() if str(key).strip() and key not in supported_model_keys
-    )
-    effective_model_config = {
-        str(key): str(value)
-        for key, value in requested_model_config.items()
-        if str(key).strip() in supported_model_keys and str(value).strip()
-    }
+    requested_model_config = policy_preview["requested_model"]
+    supported_model_keys = set(policy_preview["supported_model_keys"])
+    unknown_model_keys = policy_preview["unknown_model_keys"]
+    effective_model_config = policy_preview["applied_model"]
     if unknown_model_keys and request.policy.enforcement_mode == "strict":
         _emit_event(request, {
             "type": "provider_error", "provider": provider,
@@ -1654,79 +1727,21 @@ def _run_provider(
             },
         )
 
-    # ── Provider context policy validation ──
-    requested_context = request.policy.provider_context.get(provider, {})
-    requested_context = requested_context if isinstance(requested_context, dict) else {}
-    supported_context_keys = _supported_context_keys(adapter)
-    unknown_context_keys = sorted(
-        key for key in requested_context.keys() if key not in supported_context_keys
-    )
-    # Build effective context: keep only supported keys
-    effective_context = {
-        str(key): value
-        for key, value in requested_context.items()
-        if key in supported_context_keys
-    }
-    # Detect incompatible combinations (provider-specific)
-    incompatible_context_keys: List[str] = []
-    dropped_context_keys = list(unknown_context_keys)  # start with unknown as dropped
-    if provider == "hermes":
-        # Hermes: skills + context_files=false is incompatible because
-        # --safe-mode suppresses preloaded skills.
-        skills_val = effective_context.get("skills")
-        has_skills = (
-            skills_val == "ambient"
-            or (isinstance(skills_val, list) and len(skills_val) > 0)
-        )
-        if has_skills and effective_context.get("context_files") is False:
-            incompatible_context_keys.append("skills")
-            incompatible_context_keys.append("context_files")
-            if request.policy.enforcement_mode == "strict":
-                _emit_event(request, {
-                    "type": "provider_error", "provider": provider,
-                    "error_kind": "context_policy_enforcement_failed",
-                    "message": (
-                        "Incompatible context combination for Hermes: "
-                        "skills={} + context_files=false is unsupported "
-                        "(--safe-mode suppresses preloaded skills)".format(skills_val)
-                    ),
-                })
-                _emit_event(request, {
-                    "type": "provider_finished", "provider": provider,
-                    "success": False, "findings_count": 0, "wall_clock_seconds": 0,
-                    "findings": [], "final_error": "context_policy_enforcement_failed",
-                })
-                _ensure_if_persisting()
-                return _ProviderExecutionOutcome(
-                    provider=provider,
-                    success=False,
-                    parse_ok=False,
-                    schema_valid_count=0,
-                    dropped_count=0,
-                    findings=[],
-                    provider_result={
-                        "success": False,
-                        "reason": "context_policy_enforcement_failed",
-                        "enforcement_mode": request.policy.enforcement_mode,
-                        "requested_context": dict(requested_context),
-                        "applied_context": {},
-                        "supported_context_keys": sorted(supported_context_keys),
-                        "unknown_context_keys": unknown_context_keys,
-                        "incompatible_context_keys": incompatible_context_keys,
-                        "dropped_context_keys": dropped_context_keys,
-                    },
-                )
-            else:
-                # best_effort: drop the incompatible combination, record it
-                effective_context.pop("skills", None)
-                effective_context.pop("context_files", None)
-                dropped_context_keys.extend(incompatible_context_keys)
-                dropped_context_keys = sorted(set(dropped_context_keys))
-    if unknown_context_keys and request.policy.enforcement_mode == "strict":
+    requested_context = policy_preview["requested_context"]
+    supported_context_keys = set(policy_preview["supported_context_keys"])
+    unknown_context_keys = policy_preview["unknown_context_keys"]
+    effective_context = policy_preview["applied_context"]
+    incompatible_context_keys = policy_preview["incompatible_context_keys"]
+    dropped_context_keys = policy_preview["dropped_context_keys"]
+    if policy_preview["failure_reason"] == "context_policy_enforcement_failed":
         _emit_event(request, {
             "type": "provider_error", "provider": provider,
             "error_kind": "context_policy_enforcement_failed",
-            "message": "Unknown context keys: {}".format(unknown_context_keys),
+            "message": (
+                "Unknown context keys: {}".format(unknown_context_keys)
+                if unknown_context_keys
+                else "Incompatible context keys: {}".format(incompatible_context_keys)
+            ),
         })
         _emit_event(request, {
             "type": "provider_finished", "provider": provider,
@@ -1779,8 +1794,9 @@ def _run_provider(
             metadata.update(effective_model_config)
             # Inject provider context as a namespace (not flat keys) so
             # adapters read from metadata["provider_context"] and never
-            # collide with model/permission/artifact keys.
-            if effective_context:
+            # collide with model/permission/artifact keys. Explicit empty
+            # objects still reach adapters for safe-mode / ignore-* behavior.
+            if provider in request.policy.provider_context:
                 metadata["provider_context"] = dict(effective_context)
             input_task = TaskInput(
                 task_id=resolved_task_id,

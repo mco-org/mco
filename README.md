@@ -92,6 +92,25 @@ With the rise of agentic coding — led by projects like [OpenClaw](https://gith
 
 MCO is designed to be called by any orchestrating agent or AI-powered IDE — Claude Code, Cursor, Trae, Copilot, Windsurf, or **OpenClaw**. The calling agent organizes context, assigns tasks, and uses MCO to fan out work across multiple agents simultaneously. For example, OpenClaw running on your machine can call `mco review` to dispatch code reviews to Claude, Codex, and Gemini in parallel — turning your local setup into a multi-agent review team with a single command. Agents can also orchestrate each other: Claude Code can dispatch tasks to Codex and Gemini via MCO, and vice versa.
 
+## AI Agent Quick Start
+
+When another coding agent calls MCO, start with the health check and a dry run before executing. The default five-provider set means compatibility-audited, not read-only: Codex defaults to workspace write, Gemini and Qwen bypass interactive approvals, and OpenCode permissions remain provider-controlled. For a read-only first run, explicitly select Claude (plan mode) and Pi (read-only tool allowlist):
+
+```bash
+mco doctor --providers claude,pi --json
+mco run --repo . --prompt "Summarize this repo." --providers claude,pi --dry-run --json
+mco run --repo . --prompt "Summarize this repo." --providers claude,pi --json
+```
+
+For review workflows:
+
+```bash
+mco review --repo . --prompt "Review for bugs." --providers claude,codex,pi --dry-run --json
+mco review --repo . --prompt "Review for bugs." --providers claude,codex,pi --json
+```
+
+`--dry-run` resolves providers, default/effective risk metadata, policy, prompt hash, artifact settings, and command templates without starting any agent process. Use it when an orchestrating agent needs to show the user what will run before fan-out. With `--json`, parse/input/config failures return the stable envelope documented in [`docs/contracts/errors-v0.1.x.md`](./docs/contracts/errors-v0.1.x.md).
+
 ## One Agent is a Tool. Five Agents are a Team.
 
 No single AI model sees everything. Each model has its own training data, reasoning style, and blind spots. Using just one agent is like having a team of five engineers and only asking one for their opinion.
@@ -134,6 +153,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Divide mode** — `--divide files|dimensions` splits review work by file slices or review dimensions while preserving the existing merge + consensus pipeline
 - **CI/CD integration** — `--format sarif` for GitHub Code Scanning, `--format markdown-pr` for PR comments
 - **Environment health check** — `mco doctor` probes binary presence, version, and auth status for the default provider set, or any explicitly selected providers
+- **Dry-run execution preview** — `--dry-run --json` shows resolved providers, risk levels, policies, and command templates without running agents
 - **Token usage tracking** — `--include-token-usage` for best-effort per-agent and aggregate token consumption
 - **Progress-driven timeouts** — agents run freely until completion; cancel only when output goes idle
 - **Stateful sessions** — `mco session` for persistent multi-turn conversations with prompt queue and cancellation
@@ -161,6 +181,8 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 - **Read-only Pi review mode** — Pi runs with `read,grep,find,ls` enabled so it can inspect code without shell, edit, or write tools.
 - **Per-provider model selection** — `--provider-models-json` can pin a model per selected provider while the default remains each CLI's configured model.
 - **Model discovery** — `mco agent models --providers codex,hermes,pi --json` lists known local model choices when the underlying CLI exposes them.
+- **Provider risk metadata and dry-run preview** — `mco doctor`, `mco agent list`, and `--dry-run --json` expose provider risk levels for orchestrating agents.
+- **Per-provider context policy** — `--provider-context-json` controls skills, context files, and plugin isolation where supported (opt-in; absent keys keep provider defaults).
 - **Codex structured output compatibility** — review schema is compatible with current OpenAI strict structured output requirements.
 
 ## What's New in v0.9
@@ -184,7 +206,7 @@ The question isn't "which AI agent is best" — it's "why limit yourself to one?
 | OpenCode | `opencode` | Supported |
 | Qwen Code | `qwen` | Supported |
 
-These five providers are the default set for `mco run`, `mco review`, and `mco doctor`.
+These five providers are the default set for `mco run` and `mco review`. `mco doctor` checks all eight supported providers by default.
 
 ## Explicit Opt-in Providers
 
@@ -227,6 +249,7 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Security scan in CI | `mco review --format sarif` | Results upload directly to GitHub Code Scanning |
 | Architecture analysis | `mco run --providers claude,gemini,qwen` | Multi-perspective architecture assessment |
 | Pre-deploy health check | `mco doctor --json` | Verify all agents are installed and authenticated |
+| Execution preview | `mco review --dry-run --json` | Resolve providers, policy, risk, and commands without running agents |
 | Consensus decision | `mco review --synthesize` | Summarize what agents agree on and where they diverge |
 | Debate findings | `mco review --debate --providers claude,codex,gemini` | Run an extra challenge round before final ranking |
 | File division review | `mco review --divide files` | Split changed files across providers, balanced by file size |
@@ -246,6 +269,7 @@ The adapter architecture is extensible — adding a new agent CLI requires imple
 | Piped prompt | `cat prompt.md \| mco run --providers claude` | Read prompt from stdin pipe |
 | Quiet output | `mco run --quiet --providers claude --prompt "..."` | Print only final text, no headers |
 | Pin provider models | `mco run --provider-models-json '{"codex":"gpt-5.4"}'` | Override selected providers' CLI default model |
+| Provider context policy | `mco run --provider-context-json '{"pi":{"skills":"disabled","context_files":false}}'` | Opt-in skills/context/plugin controls per provider |
 | List provider models | `mco agent models --providers codex,pi --json` | Show discoverable model choices and configured defaults |
 | Config-driven run | (uses `.mcorc.json`) | Persistent project defaults without CLI flags |
 | Idempotent session | `mco session ensure --provider claude --name dev` | Create or return existing session |
@@ -285,6 +309,10 @@ Install via npm (Python 3.10+ required on PATH):
 ```bash
 npm i -g @tt-a1i/mco
 ```
+
+Testing a pull request before merge? Download the **Preview package** workflow
+artifact from the PR Checks tab and install the tarball locally. See
+[RELEASING.md](./RELEASING.md#preview-package-ci-artifact).
 
 Or install from source for local development:
 
@@ -346,7 +374,10 @@ Check that your agents are installed, reachable, and authenticated before runnin
 ```bash
 mco doctor
 mco doctor --json
+mco doctor --skill-health --json
 ```
+
+Optional `--skill-health` runs a best-effort drift check for the bundled `skills/mco-cli/SKILL.md` against common local skill install paths (for example `~/.claude/skills/mco-cli/SKILL.md`, `~/.cursor/skills/mco-cli/SKILL.md`). It is disabled by default, never fails doctor when installs are missing, and adds `skill_health` / `skill_drift` fields to `--json` output when enabled.
 
 ### Output Formats (Review Mode)
 
@@ -440,6 +471,7 @@ Merge order: CLI flags > project config > global config > built-in defaults. Nes
 | `--provider-timeouts` | unset | Per-provider stall-timeout overrides (`provider=seconds`) |
 | `--provider-permissions-json` | unset | Provider permission mapping JSON (see below) |
 | `--provider-models-json` | unset | Per-provider model mapping JSON, e.g. `'{"codex":"gpt-5.4","pi":{"provider":"seal","model":"deepseek-v4-pro"}}'` |
+| `--provider-context-json` | unset | Per-provider context policy JSON, e.g. `'{"pi":{"skills":"disabled","context_files":false}}'` |
 | `--save-artifacts` | off | Write artifacts while keeping stdout result delivery |
 | `--task-id` | auto-generated | Stable task identifier for artifact paths |
 | `--artifact-base` | `reports/review` | Base directory for artifact output |
@@ -496,6 +528,9 @@ mco review \
     "provider_models": {
       "codex": "gpt-5.4",
       "pi": {"provider": "seal", "model": "deepseek-v4-pro"}
+    },
+    "provider_context": {
+      "pi": {"skills": "disabled", "context_files": false}
     },
     "perspectives": {
       "claude": "Focus on security vulnerabilities and injection attacks",

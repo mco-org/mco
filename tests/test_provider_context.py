@@ -620,6 +620,58 @@ class TestReviewEngineContextPolicy(unittest.TestCase):
             result = run_review(req, adapters={"pi": adapter}, review_mode=False)
             self.assertEqual(result.terminal_state, "COMPLETED")
 
+    def test_pi_with_extensions_false_strict_passes(self) -> None:
+        """Pi example with extensions:false passes strict mode."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = ContextAwareFakeAdapter("pi", ["skills", "context_files"])
+            req = ReviewRequest(
+                repo_root=tmpdir, prompt="run task", providers=["pi"],
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(
+                    max_retries=0, enforcement_mode="strict",
+                    provider_context={"pi": {"skills": "disabled", "context_files": False, "extensions": False}},
+                ),
+            )
+            result = run_review(req, adapters={"pi": adapter}, review_mode=False)
+            self.assertEqual(result.terminal_state, "COMPLETED")
+            # Ensure extensions is NOT supported and NOT in applied_context
+            self.assertEqual(
+                result.provider_results["pi"]["applied_context"],
+                {"skills": "disabled", "context_files": False},
+            )
+
+    def test_claude_empty_provider_context_reaches_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = ContextAwareFakeAdapter("claude", ["context_files"])
+            req = ReviewRequest(
+                repo_root=tmpdir, prompt="run task", providers=["claude"],
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(
+                    max_retries=0,
+                    provider_context={"claude": {}},
+                ),
+            )
+            result = run_review(req, adapters={"claude": adapter}, review_mode=False)
+            self.assertEqual(result.terminal_state, "COMPLETED")
+            self.assertIn("provider_context", adapter.last_metadata)
+            self.assertEqual(adapter.last_metadata["provider_context"], {})
+
+    def test_codex_empty_provider_context_reaches_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = ContextAwareFakeAdapter("codex", ["context_files"])
+            req = ReviewRequest(
+                repo_root=tmpdir, prompt="run task", providers=["codex"],
+                artifact_base=f"{tmpdir}/artifacts",
+                policy=ReviewPolicy(
+                    max_retries=0,
+                    provider_context={"codex": {}},
+                ),
+            )
+            result = run_review(req, adapters={"codex": adapter}, review_mode=False)
+            self.assertEqual(result.terminal_state, "COMPLETED")
+            self.assertIn("provider_context", adapter.last_metadata)
+            self.assertEqual(adapter.last_metadata["provider_context"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

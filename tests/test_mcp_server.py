@@ -5,6 +5,7 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock
 
+from runtime.cli import SUPPORTED_PROVIDERS
 from runtime.mcp_server import (
     _ok, _err, _is_git_repo, _validate_repo,
     _sync_doctor, _sync_review, _sync_run,
@@ -73,6 +74,7 @@ class TestSyncDoctor(unittest.TestCase):
         self.assertEqual(len(providers), 1)
         self.assertEqual(providers[0]["name"], "claude")
         self.assertTrue(providers[0]["detected"])
+        self.assertEqual(providers[0]["risk"]["level"], "read_only")
 
     def test_invalid_provider_returns_error(self) -> None:
         result = _sync_doctor("nonexistent")
@@ -80,17 +82,13 @@ class TestSyncDoctor(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "invalid_providers")
 
     @patch("runtime.cli._doctor_provider_presence")
-    def test_default_providers_are_builtin_five(self, mock_presence) -> None:
-        """Default doctor (no providers arg) checks exactly the 5 built-in providers."""
+    def test_default_providers_include_opt_in(self, mock_presence) -> None:
+        """Default doctor (no providers arg) checks all supported built-in providers."""
         mock_presence.return_value = {}
         result = _sync_doctor(None)
         self.assertTrue(result["ok"])
         called_providers = mock_presence.call_args[0][0]
-        self.assertEqual(
-            called_providers,
-            ["claude", "codex", "gemini", "opencode", "qwen"],
-            "Default doctor must check only the 5 built-in providers, not hermes/pi",
-        )
+        self.assertEqual(called_providers, list(SUPPORTED_PROVIDERS))
 
     @patch("runtime.cli._doctor_provider_presence")
     def test_explicit_hermes_pi_allowed(self, mock_presence) -> None:

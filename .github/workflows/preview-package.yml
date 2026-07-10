@@ -1,0 +1,104 @@
+name: Preview package
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview-pack:
+    name: Build preview npm tarball
+    runs-on: ubuntu-latest
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      version: ${{ steps.pack.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run npm packaging smoke
+        run: ./scripts/run_npm_packaging_smoke.sh
+
+      - name: Pack preview tarball
+        id: pack
+        run: |
+          mkdir -p dist-preview
+          npm pack --pack-destination dist-preview >/dev/null
+          TARBALL="$(ls dist-preview/tt-a1i-mco-*.tgz)"
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "tarball=$(basename "$TARBALL")" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Preview tarball: $TARBALL (v$VERSION)"
+
+      - name: Upload preview tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: mco-preview-package-${{ github.run_id }}
+          path: dist-preview/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write preview install hint
+        run: |
+          VERSION="${{ steps.pack.outputs.version }}"
+          TARBALL="${{ steps.pack.outputs.tarball }}"
+          ARTIFACT="mco-preview-package-${{ github.run_id }}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## MCO preview package
+
+          This workflow built \`${TARBALL}\` (v${VERSION}) from the PR head. It is **not** published to npm.
+
+          **Download:** Checks → *Preview package* → Artifacts → \`${ARTIFACT}\`
+
+          **Install locally** (requires Python 3.10+ on PATH):
+
+          \`\`\`bash
+          tmp=\$(mktemp -d)
+          npm install /path/to/${TARBALL} --prefix "\$tmp" --no-audit --no-fund
+          "\$tmp/node_modules/.bin/mco" --help
+          \`\`\`
+
+          Replace \`/path/to/${TARBALL}\` with the \`.tgz\` extracted from the artifact.
+          EOF
+
+  comment-preview:
+    name: Comment preview install hint
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: preview-pack
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment on same-repository pull request
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TARBALL: ${{ needs.preview-pack.outputs.tarball }}
+          VERSION: ${{ needs.preview-pack.outputs.version }}
+          ARTIFACT: mco-preview-package-${{ github.run_id }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<EOF
+          ## MCO preview package
+
+          This workflow built \`${TARBALL}\` (v${VERSION}) from the PR head. It is **not** published to npm.
+
+          **Download:** Checks → *Preview package* → Artifacts → \`${ARTIFACT}\`
+
+          Install the downloaded tarball in a temporary prefix:
+
+          \`npm install /path/to/${TARBALL} --prefix /tmp/mco-preview --no-audit --no-fund\`
+          EOF
+          )"
