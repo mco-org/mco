@@ -989,7 +989,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     output.add_argument(
         "--format",
-        default="report",
+        default="",
         help=argparse.SUPPRESS,
     )
     output.add_argument(
@@ -1054,7 +1054,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     access.add_argument(
         "--perspectives-json",
         default="",
-        help="Per-provider review perspective JSON, e.g. '{\"claude\":\"Focus on security issues\",\"codex\":\"Focus on performance\"}'",
+        help=argparse.SUPPRESS,
     )
     review_flow = access.add_mutually_exclusive_group()
     review_flow.add_argument(
@@ -1071,7 +1071,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--divide",
         choices=("files", "dimensions"),
         default="",
-        help="Divide review work by file slices or review dimensions across providers",
+        help=argparse.SUPPRESS,
     )
     access.add_argument(
         "--strict-contract",
@@ -1212,6 +1212,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     findings.add_argument("legacy_args", nargs=argparse.REMAINDER)
     findings.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+
+    memory_cmd = subparsers.add_parser(
+        "memory",
+        help=argparse.SUPPRESS,
+        description="Removed legacy findings memory command.",
+        formatter_class=_HelpFormatter,
+    )
+    memory_cmd.add_argument("legacy_args", nargs=argparse.REMAINDER)
+    memory_cmd.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
     skills_cmd = subparsers.add_parser(
         "skills",
@@ -1890,6 +1899,13 @@ def main(argv: List[str] | None = None) -> int:
             "or --result-mode artifact.",
         )
 
+    if args.command == "memory":
+        return _removed_surface_error(
+            args,
+            "The memory command was removed with the findings memory layer. Persist raw answers with "
+            "--result-mode artifact or pass them through --chain, --debate, or --synthesize.",
+        )
+
     if args.command == "skills":
         return _handle_skills(args)
 
@@ -1976,14 +1992,12 @@ def main(argv: List[str] | None = None) -> int:
             print(message, file=sys.stderr)
         return 2
 
-    # Validate --stream / --format mutual exclusion (--stream vs --json is handled by argparse)
-    if stream_mode and args.format not in ("report",):
-        return _stream_error_exit("invalid_config", "--stream and --format are mutually exclusive")
-    if args.format != "report":
+    format_value = str(getattr(args, "format", "") or "").strip()
+    if format_value:
         return _stream_error_exit(
             "removed_surface",
             "--format {} was removed with the findings contract. Use raw text, --json, --stream jsonl, "
-            "or --result-mode artifact.".format(args.format),
+            "or --result-mode artifact.".format(format_value),
         )
     if getattr(args, "strict_contract", False):
         return _stream_error_exit(
@@ -2000,6 +2014,12 @@ def main(argv: List[str] | None = None) -> int:
             "removed_surface",
             "diff review flags were removed. Put the desired scope in --target-paths or the prompt.",
         )
+    if str(getattr(args, "divide", "") or "").strip() or str(getattr(args, "perspectives_json", "") or "").strip() or policy_cfg.get("divide") or policy_cfg.get("perspectives"):
+        return _stream_error_exit(
+            "removed_surface",
+            "--divide and --perspectives-json were removed with the semantic review layer. "
+            "Use explicit --agent invocations with partitioned --target-paths and raw prompts.",
+        )
 
     configured_agents = file_config.get("agents", []) if isinstance(file_config.get("agents"), list) else []
 
@@ -2014,10 +2034,6 @@ def main(argv: List[str] | None = None) -> int:
         return _stream_error_exit("config_error", "Configuration error: {}".format(exc))
     if cfg.policy.chain and cfg.policy.debate:
         return _stream_error_exit("invalid_config", "--debate and --chain are mutually exclusive")
-    if cfg.policy.divide and cfg.policy.chain:
-        return _stream_error_exit("invalid_config", "--divide and --chain are mutually exclusive")
-    if cfg.policy.divide and cfg.policy.debate:
-        return _stream_error_exit("invalid_config", "--divide and --debate are mutually exclusive")
     repo_root = str(Path(args.repo).resolve())
 
     # Valid providers = built-in providers + custom agent names
@@ -2238,11 +2254,6 @@ def main(argv: List[str] | None = None) -> int:
         target_paths=[item.strip() for item in args.target_paths.split(",") if item.strip()],
     )
     review_mode = args.command == "review"
-    if args.format in ("markdown-pr", "sarif") and not review_mode:
-        return _stream_error_exit(
-            "invalid_config",
-            f"--format {args.format} is supported only for review command",
-        )
     effective_result_mode = args.result_mode
     if args.save_artifacts and effective_result_mode == "stdout":
         effective_result_mode = "both"

@@ -12,7 +12,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from runtime.adapters import ClaudeAdapter, CodexAdapter
-from runtime.contracts import NormalizeContext, TaskInput
+from runtime.contracts import TaskInput
 
 
 PROMPT = "Reply with exactly OK"
@@ -42,10 +42,7 @@ def run_one(adapter: object, repo_root: str, artifact_root: str) -> dict:
 
     stdout_path = Path(ref.artifact_path) / "raw" / f"{adapter_id}.stdout.log"
     raw = stdout_path.read_text(encoding="utf-8") if stdout_path.exists() else ""
-    findings = adapter.normalize(  # type: ignore[attr-defined]
-        raw,
-        NormalizeContext(task_id=task.task_id, provider=adapter_id, repo_root=repo_root, raw_ref=str(stdout_path)),
-    )
+    transport = adapter.decode_transport(raw)  # type: ignore[attr-defined]
 
     return {
         "provider": adapter_id,
@@ -55,7 +52,9 @@ def run_one(adapter: object, repo_root: str, artifact_root: str) -> dict:
         "completed": status.completed,
         "error_kind": status.error_kind.value if status.error_kind else None,
         "exit_code": status.exit_code,
-        "normalized_findings": len(findings),
+        "transport_status": transport.status,
+        "answer_chars": len(transport.final_answer),
+        "usage": transport.usage,
         "artifact_path": ref.artifact_path,
         "provider_output": status.output_path,
     }
@@ -82,7 +81,9 @@ def main() -> int:
         md_lines.append(f"- completed: {item['completed']}")
         md_lines.append(f"- exit_code: {item['exit_code']}")
         md_lines.append(f"- error_kind: {item['error_kind']}")
-        md_lines.append(f"- normalized_findings: {item['normalized_findings']}")
+        md_lines.append(f"- transport_status: {item['transport_status']}")
+        md_lines.append(f"- answer_chars: {item['answer_chars']}")
+        md_lines.append(f"- usage: {item['usage']}")
         md_lines.append(f"- artifact_path: `{item['artifact_path']}`")
         md_lines.append("")
 

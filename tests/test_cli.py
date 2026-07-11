@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import unittest
 from unittest.mock import patch
 
@@ -46,6 +47,21 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertIn("strict-contract", stderr.getvalue())
         self.assertIn("removed", stderr.getvalue().lower())
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = main([
+                "review", "--repo", ".", "--prompt", "review", "--providers", "pi",
+                "--format", "report", "--dry-run", "--json",
+            ])
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(json.loads(stdout.getvalue())["error"]["subtype"], "removed_surface")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = main(["memory", "status"])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("result-mode artifact", stderr.getvalue())
 
     def test_parse_providers_deduplicates_preserve_order(self) -> None:
         providers = _parse_providers("codex,claude,codex,gemini,claude")
@@ -187,7 +203,7 @@ class CliTests(unittest.TestCase):
         args = parser.parse_args(["run", "--prompt", "x"])
         self.assertEqual(args.command, "run")
         self.assertEqual(args.result_mode, "stdout")
-        self.assertEqual(args.format, "report")
+        self.assertEqual(args.format, "")
         self.assertFalse(args.include_token_usage)
         self.assertFalse(args.synthesize)
         self.assertEqual(args.synth_provider, "")

@@ -8,7 +8,7 @@ from .contracts import ProviderId
 
 
 ARTIFACT_LAYOUT_VERSION = "invocation-v1"
-ROOT_FILES = ("run.json",)
+ROOT_FILES = ("result.md", "run.json")
 ROOT_DIRS = ("stages", "provider-runs")
 
 # Allowed task-id characters: alphanumeric, hyphens, underscores, dots.

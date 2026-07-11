@@ -338,15 +338,52 @@ class InvocationRuntimeCliTests(unittest.TestCase):
                 synthesis_provider="pi",
             )
 
-        self.assertEqual(payload["status"], "complete")
-        self.assertTrue(any(task.metadata.get("stage") == "debate" for task in adapter.inputs))
-        self.assertTrue(any(task.metadata.get("stage") == "synthesis" for task in adapter.inputs))
-        self.assertGreaterEqual(len(adapter.context_reads), 2)
-        self.assertEqual(
-            next(task for task in adapter.inputs if task.metadata.get("stage") == "debate").metadata["provider_permissions"],
-            {"tool_profile": "read_only"},
-        )
-        self.assertIn("stage", payload["outputs"][-1])
+            self.assertEqual(payload["status"], "complete")
+            self.assertTrue(any(task.metadata.get("stage") == "debate" for task in adapter.inputs))
+            self.assertTrue(any(task.metadata.get("stage") == "synthesis" for task in adapter.inputs))
+            self.assertGreaterEqual(len(adapter.context_reads), 2)
+            self.assertEqual(
+                next(task for task in adapter.inputs if task.metadata.get("stage") == "debate").metadata["provider_permissions"],
+                {"tool_profile": "read_only"},
+            )
+            self.assertIn("stage", payload["outputs"][-1])
+            artifact_root = Path(str(payload["artifact_root"]))
+            self.assertTrue((artifact_root / "stages" / "debate" / "context" / "manifest.json").is_file())
+            self.assertTrue((artifact_root / "stages" / "debate" / "result.md").is_file())
+            self.assertTrue((artifact_root / "stages" / "synthesis" / "result.md").is_file())
+
+    def test_reusing_persistent_workflow_task_id_clears_stale_stages(self) -> None:
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as artifacts:
+            adapter = ContextReadingFakeAdapter()
+            run_invocation_workflow(
+                invocations=parse_invocations(["pi:model"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="first",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+                artifact_base=artifacts,
+                task_id="reused-workflow",
+                persist_artifacts=True,
+                debate=True,
+            )
+            run_invocation_workflow(
+                invocations=parse_invocations(["pi:model"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="second",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+                artifact_base=artifacts,
+                task_id="reused-workflow",
+                persist_artifacts=True,
+            )
+
+            root = Path(artifacts) / "reused-workflow"
+            self.assertFalse((root / "stages" / "debate").exists())
+            self.assertTrue((root / "result.md").is_file())
 
     def test_cli_chain_uses_context_reading_fake_agent(self) -> None:
         adapter = ContextReadingFakeAdapter()

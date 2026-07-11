@@ -28,7 +28,6 @@
     "bin/mco.js",
     "mco",
     "runtime/**/*.py",
-    "runtime/schemas/*.json",
     "scripts/install-wizard.js",
     "scripts/install-runtime.js",
     "skills/mco-cli/**"

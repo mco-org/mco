@@ -30,10 +30,11 @@ class ContractFreezeTests(unittest.TestCase):
 
     def test_artifact_layout_contract(self) -> None:
         self.assertEqual(ARTIFACT_LAYOUT_VERSION, "invocation-v1")
-        self.assertEqual(ROOT_FILES, ("run.json",))
+        self.assertEqual(ROOT_FILES, ("result.md", "run.json"))
         self.assertEqual(ROOT_DIRS, ("stages", "provider-runs"))
 
         paths = expected_paths("/tmp/artifacts", "task-123", ("claude", "codex"))
+        self.assertTrue(str(paths["result.md"]).endswith("/task-123/result.md"))
         self.assertTrue(str(paths["providers/claude.json"]).endswith("/task-123/providers/claude.json"))
         self.assertTrue(str(paths["raw/codex.stderr.log"]).endswith("/task-123/raw/codex.stderr.log"))
 

@@ -45,5 +45,5 @@ include-package-data = true
 include = ["runtime*", "skills"]
 
 [tool.setuptools.package-data]
-runtime = ["schemas/*.json", "data/*.json"]
+runtime = ["data/*.json"]
 skills = ["mco-cli/*.md", "mco-cli/references/*.md"]

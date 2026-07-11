@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import json
 import queue
+import shutil
 import tempfile
 import threading
 import time
@@ -405,6 +406,8 @@ def run_invocations(
     temp_directory = None
     if persist_artifacts:
         artifact_root_path = (Path(artifact_base or "reports/review").resolve() / resolved_task_id)
+        if stage == "run" and artifact_root_path.exists():
+            shutil.rmtree(artifact_root_path)
         artifact_root_path.mkdir(parents=True, exist_ok=True)
     else:
         temp_directory = tempfile.TemporaryDirectory(prefix="mco-invocations-")
@@ -630,6 +633,8 @@ def run_invocation_workflow(
         temp_directory = tempfile.TemporaryDirectory(prefix="mco-invocation-workflow-")
         stage_base = temp_directory.name
     artifact_root = (Path(stage_base).resolve() / resolved_task_id)
+    if persist_artifacts and artifact_root.exists():
+        shutil.rmtree(artifact_root)
     artifact_root.mkdir(parents=True, exist_ok=True)
     stop_event = cancel_event or threading.Event()
     all_outputs: list[dict[str, object]] = []

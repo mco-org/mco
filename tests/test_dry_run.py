@@ -88,7 +88,7 @@ class DryRunTests(unittest.TestCase):
         self.assertIn("would_execute: False", output)
         self.assertIn("pi: risk=read_only", output)
 
-    def test_dry_run_review_keeps_perspective_and_division_without_findings_schema(self) -> None:
+    def test_dry_run_review_rejects_removed_perspective_and_division_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
             with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
@@ -104,13 +104,10 @@ class DryRunTests(unittest.TestCase):
                         "--json",
                     ])
 
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(exit_code, 2)
         mock_run_workflow.assert_not_called()
         payload = json.loads(stdout_buf.getvalue())
-        codex_command = payload["providers_detail"]["codex"]["command_template"]
-        self.assertNotIn("--output-schema", codex_command)
-        self.assertEqual(payload["policy"]["divide"], "dimensions")
-        self.assertEqual(payload["policy"]["perspectives"], {"codex": "Focus on security"})
+        self.assertEqual(payload["error"]["subtype"], "removed_surface")
 
     def test_dry_run_empty_provider_context_reaches_command_template(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
