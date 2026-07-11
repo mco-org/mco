@@ -17,6 +17,11 @@ class InvocationArtifactWriter:
         path.write_text("", encoding="utf-8")
         return path
 
+    def prepare(self) -> None:
+        self.invocation_dir.mkdir(parents=True, exist_ok=True)
+        for path in self.invocation_dir.glob("*.md"):
+            path.unlink()
+
     def append(self, path: Path, text: str) -> None:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(text)
@@ -58,9 +63,10 @@ class InvocationArtifactWriter:
                 "output_path": item.get("artifact_path"),
             })
 
-        self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / "result.md").write_text("".join(result_parts), encoding="utf-8")
-        (self.root / "run.json").write_text(
+        output_root = self.root if self.stage == "run" else self.root / "stages" / self.stage
+        output_root.mkdir(parents=True, exist_ok=True)
+        (output_root / "result.md").write_text("".join(result_parts), encoding="utf-8")
+        (output_root / "run.json").write_text(
             json.dumps({
                 "task_id": task_id,
                 "stage": self.stage,
@@ -69,4 +75,19 @@ class InvocationArtifactWriter:
                 "outputs": run_outputs,
             }, ensure_ascii=True, indent=2) + "\n",
             encoding="utf-8",
+        )
+
+    def write_root_run(
+        self,
+        *,
+        task_id: str,
+        status: str,
+        exit_code: int,
+        outputs: Sequence[Mapping[str, object]],
+    ) -> None:
+        InvocationArtifactWriter(self.root, stage="run").write_run(
+            task_id=task_id,
+            status=status,
+            exit_code=exit_code,
+            outputs=outputs,
         )

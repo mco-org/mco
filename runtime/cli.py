@@ -17,17 +17,15 @@ from .formatters import (
     LiveStreamRenderer,
     _consensus_badge,
     _consensus_level_label,
-    format_markdown_pr,
-    format_sarif,
 )
 from .execution_modes import EXECUTION_MODES, execution_permissions
-from .invocation_runtime import default_invocations, parse_invocations, run_invocations, validate_execution_scope
+from .invocation_runtime import default_invocations, parse_invocations, run_invocation_workflow, validate_execution_scope
 from .models import discover_models
 from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
 from .skill_manager import read_bundled_skill, skill_status, sync_bundled_skill
 from . import __version__
-from .review_engine import ReviewRequest, provider_policy_preview, run_review
+from .policy import ExecutionPreviewRequest, provider_policy_preview
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "cursor", "gemini", "grok", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
@@ -44,6 +42,7 @@ _ERROR_DETAILS = {
     "config_error": ("configuration", "Correct the project/global configuration and retry."),
     "invalid_config": ("configuration", "Remove the incompatible flags or configuration values and retry."),
     "agent_selection_required": ("configuration", "Choose one or more calling agents for the mco-cli Skill."),
+    "removed_surface": ("input", "Use the invocation-native raw text, JSON, JSONL, or artifact output instead."),
     "runtime_error": ("runtime", "Inspect provider results and logs before retrying."),
 }
 
@@ -118,7 +117,7 @@ class _StreamSafeParser(argparse.ArgumentParser):
 
 TOP_LEVEL_DESCRIPTION = (
     "MCO - Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.\n"
-    "Use `run` for general tasks and `review` for structured findings with consensus, debate, division, and streaming."
+    "Use `run` for general tasks and `review` for a thin read-only raw-answer preset."
 )
 
 TOP_LEVEL_EPILOG = (
@@ -150,14 +149,11 @@ REVIEW_EPILOG = (
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex\n"
     "  mco review --repo . --prompt \"Review for security issues.\" --providers claude,codex,qwen --json\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --synthesize --synth-provider claude\n"
-    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format markdown-pr\n"
-    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format sarif\n"
-    "  mco review --repo . --prompt \"Review runtime/ only.\" --target-paths runtime --strict-contract\n\n"
+    "  mco review --repo . --prompt \"Review runtime/ only.\" --target-paths runtime --stream jsonl\n\n"
     "Exit codes:\n"
     "  0 = complete (all invocations succeeded)\n"
     "  1 = partial (at least one invocation succeeded)\n"
     "  2 = failed / input / config / runtime failure\n"
-    "  3 = INCONCLUSIVE (review mode only)"
 )
 
 DOCTOR_EPILOG = (
@@ -466,7 +462,7 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest, review_mode: bool, policy: Dict[str, object]) -> List[str]:
+def _dry_run_command_template(provider: str, adapter: object, req: ExecutionPreviewRequest, review_mode: bool, policy: Dict[str, object]) -> List[str]:
     metadata: Dict[str, object] = {
         "artifact_root": "<artifact_root>",
         "allow_paths": req.policy.allow_paths,
@@ -500,7 +496,7 @@ def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest
 
 def _build_dry_run_payload(
     args: argparse.Namespace,
-    req: ReviewRequest,
+    req: ExecutionPreviewRequest,
     *,
     providers: List[str],
     adapters: Mapping[str, object],
@@ -1206,9 +1202,8 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     output.add_argument(
         "--format",
-        choices=("report", "markdown-pr", "sarif"),
         default="report",
-        help="Output format when --json is not set. markdown-pr/sarif are review-only",
+        help="Legacy findings format; use raw text, JSON, JSONL, or artifacts instead",
     )
     output.add_argument(
         "--include-token-usage",
@@ -1294,7 +1289,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     access.add_argument(
         "--strict-contract",
         action="store_true",
-        help="Review mode only: enforce strict findings JSON contract",
+        help="Removed legacy findings contract flag; use the provider's raw answer instead",
     )
 
     memory = parser.add_argument_group("Memory")
@@ -1434,7 +1429,7 @@ def build_parser() -> argparse.ArgumentParser:
     review = subparsers.add_parser(
         "review",
         help="Run multi-provider review",
-        description="Run structured multi-provider review with normalized findings and decisions.",
+        description="Run a thin read-only multi-provider review and return raw answers.",
         epilog=REVIEW_EPILOG,
         formatter_class=_HelpFormatter,
     )
@@ -1442,37 +1437,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     findings = subparsers.add_parser(
         "findings",
-        help="List and manage persisted findings",
-        description="List and confirm findings stored in evermemos memory.",
-        epilog=FINDINGS_EPILOG,
+        help=argparse.SUPPRESS,
+        description="Removed legacy findings command.",
         formatter_class=_HelpFormatter,
     )
-    findings_sub = findings.add_subparsers(dest="findings_action", required=True)
-
-    findings_list = findings_sub.add_parser(
-        "list",
-        help="List findings",
-        formatter_class=_HelpFormatter,
-    )
-    findings_list.add_argument("--repo", default=".", help="Repository root path")
-    findings_list.add_argument("--status", default=None, help="Filter by status (e.g. open, accepted, rejected)")
-    findings_list.add_argument("--space", default="", help="Space slug override")
-    findings_list.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
-
-    findings_confirm = findings_sub.add_parser(
-        "confirm",
-        help="Update finding status",
-        formatter_class=_HelpFormatter,
-    )
-    findings_confirm.add_argument("hash", help="Finding hash to confirm")
-    findings_confirm.add_argument(
-        "--status",
-        required=True,
-        choices=("accepted", "rejected", "wontfix"),
-        help="New status for the finding",
-    )
-    findings_confirm.add_argument("--repo", default=".", help="Repository root path")
-    findings_confirm.add_argument("--space", default="", help="Space slug override")
+    findings.add_argument("legacy_args", nargs=argparse.REMAINDER)
+    findings.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
     # ── memory subcommand ──────────────────────────────────────
     memory_cmd = subparsers.add_parser(
@@ -1813,6 +1783,15 @@ def _handle_findings(args: argparse.Namespace) -> int:
             return 2
 
     print("Unknown findings action.", file=sys.stderr)
+    return 2
+
+
+def _removed_surface_error(args: argparse.Namespace, message: str) -> int:
+    if getattr(args, "json", False):
+        payload = _error_envelope("removed_surface", message)
+        print(json.dumps(payload, ensure_ascii=True))
+    else:
+        print(message, file=sys.stderr)
     return 2
 
 
@@ -2271,7 +2250,11 @@ def main(argv: List[str] | None = None) -> int:
             return 0
 
     if args.command == "findings":
-        return _handle_findings(args)
+        return _removed_surface_error(
+            args,
+            "The findings command was removed. Use mco run/review with raw text, --json, --stream jsonl, "
+            "or --result-mode artifact.",
+        )
 
     if args.command == "memory":
         return _handle_memory(args)
@@ -2365,6 +2348,22 @@ def main(argv: List[str] | None = None) -> int:
     # Validate --stream / --format mutual exclusion (--stream vs --json is handled by argparse)
     if stream_mode and args.format not in ("report",):
         return _stream_error_exit("invalid_config", "--stream and --format are mutually exclusive")
+    if args.format != "report":
+        return _stream_error_exit(
+            "removed_surface",
+            "--format {} was removed with the findings contract. Use raw text, --json, --stream jsonl, "
+            "or --result-mode artifact.".format(args.format),
+        )
+    if getattr(args, "strict_contract", False):
+        return _stream_error_exit(
+            "removed_surface",
+            "--strict-contract was removed with the findings contract. Provider answers are now opaque raw text.",
+        )
+    if getattr(args, "memory", False) or str(getattr(args, "space", "") or "").strip():
+        return _stream_error_exit(
+            "removed_surface",
+            "--memory/--space were removed with the findings memory layer. Persist raw answers with --result-mode artifact.",
+        )
 
     configured_agents = file_config.get("agents", []) if isinstance(file_config.get("agents"), list) else []
 
@@ -2443,9 +2442,7 @@ def main(argv: List[str] | None = None) -> int:
     except ValueError as exc:
         return _stream_error_exit("input_error", str(exc))
     raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
-    use_invocation_runtime = not getattr(args, "dry_run", False) and (
-        args.command == "review" or bool(raw_invocation_agents) or providers_was_explicit
-    )
+    use_invocation_runtime = not getattr(args, "dry_run", False)
     if use_invocation_runtime:
         def _invocation_error(code: str, message: str) -> int:
             return _stream_error_exit(code, message, task_failure=True)
@@ -2575,7 +2572,7 @@ def main(argv: List[str] | None = None) -> int:
 
                 event_callback = _emit_text
         try:
-            payload = run_invocations(
+            payload = run_invocation_workflow(
                 invocations=invocations,
                 adapters=adapter_map,
                 repo_root=repo_root,
@@ -2593,7 +2590,13 @@ def main(argv: List[str] | None = None) -> int:
                 artifact_base=str(Path(cfg.artifact_base).resolve()),
                 task_id=args.task_id or "",
                 persist_artifacts=persist_invocation_artifacts,
+                chain=cfg.policy.chain,
+                debate=cfg.policy.debate,
+                synthesize=synthesize,
+                synthesis_provider=synth_provider or None,
             )
+        except ValueError as exc:
+            return _invocation_error("input_error", str(exc))
         finally:
             signal.signal(signal.SIGINT, previous_sigint)
             if stream_renderer is not None:
@@ -2612,7 +2615,7 @@ def main(argv: List[str] | None = None) -> int:
             "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
             "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
         )
-    req = ReviewRequest(
+    req = ExecutionPreviewRequest(
         repo_root=repo_root,
         prompt=prompt,
         providers=providers,  # type: ignore[arg-type]
@@ -2620,14 +2623,6 @@ def main(argv: List[str] | None = None) -> int:
         policy=cfg.policy,
         task_id=args.task_id or None,
         target_paths=[item.strip() for item in args.target_paths.split(",") if item.strip()],
-        include_token_usage=bool(args.include_token_usage),
-        synthesize=synthesize,
-        synthesis_provider=synth_provider or None,
-        memory_enabled=bool(args.memory),
-        memory_space=memory_space or None,
-        diff_mode=diff_mode,
-        diff_base=diff_base_arg or None,
-        stream_callback=stream_callback,
     )
     review_mode = args.command == "review"
     if args.format in ("markdown-pr", "sarif") and not review_mode:
@@ -2673,134 +2668,9 @@ def main(argv: List[str] | None = None) -> int:
         else:
             print(_render_dry_run_report(payload))
         return 0
-    if transport == "acp" and req.policy.enforcement_mode == "strict":
-        execution_adapters = adapters or _doctor_adapter_registry(transport=transport)
-        unknown_risk_providers: List[str] = []
-        for provider in providers:
-            adapter = execution_adapters.get(provider)
-            if adapter is None:
-                continue
-            policy = provider_policy_preview(provider, adapter, req.policy)
-            applied_permissions = policy.get("applied_permissions", {})
-            risk = effective_provider_risk(
-                provider,
-                applied_permissions if isinstance(applied_permissions, dict) else {},
-                transport=transport,
-            )
-            if risk["level"] == "unknown":
-                unknown_risk_providers.append(provider)
-        if unknown_risk_providers:
-            if stream_renderer is not None:
-                stream_renderer.close()
-            return _stream_error_exit(
-                "invalid_config",
-                "risk_classification_unknown: strict ACP execution requires an explicit supported "
-                "permission override for provider(s): {}".format(",".join(unknown_risk_providers)),
-            )
-    try:
-        result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
-    except ValueError as exc:
-        return _stream_error_exit("input_error", "Input error: {}".format(exc))
-    finally:
-        if stream_renderer is not None:
-            stream_renderer.close()
-
-    # In stream mode, events were already emitted — just return exit code
-    if stream_mode:
-        if result.decision == "FAIL":
-            return 2
-        if review_mode and result.decision == "INCONCLUSIVE":
-            return 3
-        return 0
-
-    if getattr(args, "quiet", False):
-        for prov_id, prov_data in result.provider_results.items():
-            text = prov_data.get("final_text", "") or prov_data.get("output_text", "")
-            if text:
-                print(text)
-        if result.decision == "FAIL":
-            return 2
-        if review_mode and result.decision == "INCONCLUSIVE":
-            return 3
-        return 0
-
-    payload = {
-        "command": args.command,
-        "task_id": result.task_id,
-        "artifact_root": result.artifact_root,
-        "decision": result.decision,
-        "terminal_state": result.terminal_state,
-        "provider_success_count": sum(1 for item in result.provider_results.values() if bool(item.get("success"))),
-        "provider_failure_count": sum(1 for item in result.provider_results.values() if not bool(item.get("success"))),
-        "findings_count": result.findings_count,
-        "parse_success_count": result.parse_success_count,
-        "parse_failure_count": result.parse_failure_count,
-        "schema_valid_count": result.schema_valid_count,
-        "dropped_findings_count": result.dropped_findings_count,
-        "findings": result.findings,
-    }
-    if result.division_strategy:
-        payload["division_strategy"] = result.division_strategy
-        payload["provider_scopes"] = {
-            provider: details.get("assigned_scope")
-            for provider, details in result.provider_results.items()
-            if details.get("assigned_scope") is not None
-        }
-    if result.token_usage_summary is not None:
-        payload["token_usage_summary"] = result.token_usage_summary
-    if result.debate_round is not None:
-        payload["debate_round"] = result.debate_round
-    if result.synthesis is not None:
-        payload["synthesis"] = result.synthesis
-    if effective_result_mode == "artifact":
-        if args.json:
-            print(json.dumps(payload, ensure_ascii=True))
-        else:
-            if args.format == "markdown-pr":
-                print(format_markdown_pr(payload, result.findings, total_providers=len(providers), chain_mode=getattr(args, "chain", False)))
-            elif args.format == "sarif":
-                print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
-            else:
-                print(
-                    _render_user_readable_report(
-                        args.command,
-                        effective_result_mode,
-                        providers,
-                        payload,
-                        result.provider_results,
-                        result.findings,
-                        chain_mode=getattr(args, "chain", False),
-                    )
-                )
-    else:
-        detailed_payload = dict(payload)
-        detailed_payload["result_mode"] = effective_result_mode
-        detailed_payload["provider_results"] = result.provider_results
-        if args.json:
-            print(json.dumps(detailed_payload, ensure_ascii=True))
-        else:
-            if args.format == "markdown-pr":
-                print(format_markdown_pr(payload, result.findings, total_providers=len(providers), chain_mode=getattr(args, "chain", False)))
-            elif args.format == "sarif":
-                print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
-            else:
-                print(
-                    _render_user_readable_report(
-                        args.command,
-                        effective_result_mode,
-                        providers,
-                        payload,
-                        result.provider_results,
-                        result.findings,
-                        chain_mode=getattr(args, "chain", False),
-                    )
-                )
-
-    if result.decision == "FAIL":
-        return 2
-    if review_mode and result.decision == "INCONCLUSIVE":
-        return 3
-    return 0
+    if stream_renderer is not None:
+        stream_renderer.close()
+    return _stream_error_exit("runtime_error", "Execution did not enter the invocation-native runtime")
 
 
 if __name__ == "__main__":

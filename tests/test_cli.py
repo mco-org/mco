@@ -19,6 +19,34 @@ from runtime import __version__
 
 
 class CliTests(unittest.TestCase):
+    def test_removed_findings_surfaces_return_migration_guidance(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = main(["findings", "list"])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("removed", stderr.getvalue().lower())
+        self.assertIn("raw", stderr.getvalue().lower())
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = main([
+                "review", "--repo", ".", "--prompt", "review", "--providers", "pi",
+                "--format", "markdown-pr",
+            ])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("--format", stderr.getvalue())
+        self.assertIn("removed", stderr.getvalue().lower())
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = main([
+                "review", "--repo", ".", "--prompt", "review", "--providers", "pi",
+                "--strict-contract",
+            ])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("strict-contract", stderr.getvalue())
+        self.assertIn("removed", stderr.getvalue().lower())
+
     def test_parse_providers_deduplicates_preserve_order(self) -> None:
         providers = _parse_providers("codex,claude,codex,gemini,claude")
         self.assertEqual(providers, ["codex", "claude", "gemini"])
@@ -201,12 +229,11 @@ class CliTests(unittest.TestCase):
         self.assertIn("Timeout and Parallelism:", help_text)
         self.assertIn("Access and Contracts:", help_text)
         self.assertIn("Examples:", help_text)
-        self.assertIn("--format markdown-pr", help_text)
-        self.assertIn("--format sarif", help_text)
+        self.assertIn("raw", help_text.lower())
         self.assertIn("--synthesize", help_text)
         self.assertIn("--synth-provider", help_text)
         self.assertIn("Exit codes:", help_text)
-        self.assertIn("INCONCLUSIVE", help_text)
+        self.assertNotIn("INCONCLUSIVE", help_text)
         # Config-overridable flags use argparse.SUPPRESS, so default isn't shown
         self.assertIn("--stall-timeout", help_text)
         self.assertIn("per-provider", help_text.lower())

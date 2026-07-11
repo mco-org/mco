@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from runtime.answer_transport import AnswerTransport, decode_pi_events
 from runtime.cli import main
-from runtime.invocation_runtime import parse_invocations, run_invocations
+from runtime.invocation_runtime import parse_invocations, run_invocation_workflow, run_invocations
 from runtime.contracts import CapabilitySet, ProviderPresence, TaskInput, TaskRunRef, TaskStatus
 
 
@@ -118,7 +118,249 @@ class StreamingFakeAdapter(DeterministicFakeAdapter):
         return super().poll(ref)
 
 
+class ContextReadingFakeAdapter(DeterministicFakeAdapter):
+    def __init__(self, *, reject_context: bool = False) -> None:
+        super().__init__()
+        self.context_reads: list[str] = []
+        self.reject_context = reject_context
+
+    def run(self, input_task: TaskInput) -> TaskRunRef:
+        context_manifest = input_task.metadata.get("context_manifest")
+        if context_manifest:
+            if self.reject_context:
+                raise RuntimeError("context_file_unsupported")
+            manifest = json.loads(Path(str(context_manifest)).read_text(encoding="utf-8"))
+            for entry in manifest["inputs"]:
+                answer = Path(entry["path"]).read_text(encoding="utf-8")
+                self.context_reads.append(answer)
+            input_task.metadata["context_read"] = True
+        ref = super().run(input_task)
+        output_path = Path(ref.artifact_path) / "raw" / "pi.stdout.log"
+        if self.context_reads:
+            output_path.write_text("read: " + " | ".join(self.context_reads), encoding="utf-8")
+        return ref
+
+
+class TeeFailureFakeAdapter(StreamingFakeAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancelled: list[str] = []
+
+    def cancel(self, ref: TaskRunRef) -> None:
+        self.cancelled.append(ref.task_id)
+
+
+class BlockingRunFakeAdapter(DeterministicFakeAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def run(self, input_task: TaskInput) -> TaskRunRef:
+        self.started.set()
+        self.release.wait(5)
+        return super().run(input_task)
+
+
 class InvocationRuntimeCliTests(unittest.TestCase):
+    def test_global_timeout_does_not_wait_for_blocking_adapter_start(self) -> None:
+        adapter = BlockingRunFakeAdapter()
+        started_at = time.monotonic()
+        try:
+            with tempfile.TemporaryDirectory() as repo:
+                payload = run_invocations(
+                    invocations=parse_invocations(["pi:model"], ["."]),
+                    adapters={"pi": adapter},
+                    repo_root=repo,
+                    prompt="timeout",
+                    timeout_seconds=10,
+                    provider_permissions={},
+                    allow_paths=["."],
+                    global_timeout_seconds=0.05,
+                )
+        finally:
+            adapter.release.set()
+
+        self.assertLess(time.monotonic() - started_at, 1.0)
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["outputs"][0]["status"], "timeout")
+
+    def test_cli_rejects_artifact_task_id_traversal_as_task_failure(self) -> None:
+        adapter = DeterministicFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "save", "--agent", "pi:model",
+                    "--task-id", "../outside", "--json",
+                ])
+
+        self.assertEqual(exit_code, 2)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "failed")
+        self.assertIn("task_id", payload["error"]["message"])
+
+    def test_artifact_tee_failure_cancels_active_invocation(self) -> None:
+        adapter = TeeFailureFakeAdapter()
+        original_open = Path.open
+
+        def fail_answer_append(path: Path, mode: str = "r", *args: object, **kwargs: object):
+            if mode == "a" and path.suffix == ".md":
+                raise OSError("artifact disk full")
+            return original_open(path, mode, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as repo, patch.object(Path, "open", new=fail_answer_append):
+            payload = run_invocations(
+                invocations=parse_invocations(["pi:model"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="tee",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+            )
+
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(adapter.cancelled, ["invocation-pi-model"])
+
+    def test_persistent_artifact_task_id_cannot_escape_artifact_base(self) -> None:
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as artifacts:
+            with self.assertRaisesRegex(ValueError, "task_id"):
+                run_invocations(
+                    invocations=parse_invocations(["pi:model"], ["."]),
+                    adapters={"pi": DeterministicFakeAdapter()},
+                    repo_root=repo,
+                    prompt="save",
+                    timeout_seconds=10,
+                    provider_permissions={},
+                    allow_paths=["."],
+                    artifact_base=artifacts,
+                    task_id="../outside",
+                    persist_artifacts=True,
+                )
+
+    def test_reusing_persistent_task_id_clears_old_invocation_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as artifacts:
+            run_invocations(
+                invocations=parse_invocations(["old=pi:model"], ["."]),
+                adapters={"pi": DeterministicFakeAdapter()},
+                repo_root=repo,
+                prompt="first",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+                artifact_base=artifacts,
+                task_id="reused",
+                persist_artifacts=True,
+            )
+            run_invocations(
+                invocations=parse_invocations(["new=pi:model"], ["."]),
+                adapters={"pi": DeterministicFakeAdapter()},
+                repo_root=repo,
+                prompt="second",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+                artifact_base=artifacts,
+                task_id="reused",
+                persist_artifacts=True,
+            )
+
+            invocation_dir = Path(artifacts) / "reused" / "stages" / "run" / "invocations"
+            self.assertFalse((invocation_dir / "old.md").exists())
+            self.assertTrue((invocation_dir / "new.md").exists())
+
+    def test_chain_passes_complete_markdown_context_by_manifest_path(self) -> None:
+        adapter = ContextReadingFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as artifacts:
+            payload = run_invocation_workflow(
+                invocations=parse_invocations(["first=pi:first", "second=pi:second"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="review this",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+                artifact_base=artifacts,
+                task_id="chain-run",
+                persist_artifacts=True,
+                chain=True,
+            )
+
+            second = adapter.inputs[1]
+            manifest_path = Path(str(second.metadata["context_manifest"]))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "complete")
+            self.assertIn("answer for first", adapter.context_reads)
+            self.assertIn(str(manifest_path), second.prompt)
+            self.assertNotIn("answer for first", second.prompt)
+            self.assertIn(str(manifest_path), second.target_paths)
+            self.assertEqual(manifest["inputs"][0]["stage"], "chain-00")
+            self.assertEqual(manifest["inputs"][0]["invocation_id"], "first")
+
+    def test_chain_context_unsupported_is_explicit_and_dependent_stage_fails(self) -> None:
+        adapter = ContextReadingFakeAdapter(reject_context=True)
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as artifacts:
+            payload = run_invocation_workflow(
+                invocations=parse_invocations(["first=pi:first", "second=pi:second"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="review this",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+                artifact_base=artifacts,
+                task_id="chain-unsupported",
+                persist_artifacts=True,
+                chain=True,
+            )
+
+        self.assertEqual(payload["status"], "partial")
+        self.assertEqual(payload["outputs"][1]["status"], "failed")
+        self.assertEqual(payload["outputs"][1]["error"], "context_file_unsupported")
+
+    def test_debate_and_synthesis_are_raw_file_backed_stages(self) -> None:
+        adapter = ContextReadingFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as artifacts:
+            payload = run_invocation_workflow(
+                invocations=parse_invocations(["first=pi:first", "second=pi:second"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="review this",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+                artifact_base=artifacts,
+                task_id="debate-run",
+                persist_artifacts=True,
+                debate=True,
+                synthesize=True,
+                synthesis_provider="pi",
+            )
+
+        self.assertEqual(payload["status"], "complete")
+        self.assertTrue(any(task.metadata.get("stage") == "debate" for task in adapter.inputs))
+        self.assertTrue(any(task.metadata.get("stage") == "synthesis" for task in adapter.inputs))
+        self.assertGreaterEqual(len(adapter.context_reads), 2)
+        self.assertEqual(
+            next(task for task in adapter.inputs if task.metadata.get("stage") == "debate").metadata["provider_permissions"],
+            {"tool_profile": "read_only"},
+        )
+        self.assertIn("stage", payload["outputs"][-1])
+
+    def test_cli_chain_uses_context_reading_fake_agent(self) -> None:
+        adapter = ContextReadingFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "chain",
+                    "--agent", "first=pi:first", "--agent", "second=pi:second", "--chain", "--json",
+                ])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("answer for first", adapter.context_reads)
+
     def test_review_uses_invocation_runtime_and_preserves_explicit_prompt(self) -> None:
         adapter = DeterministicFakeAdapter()
         with tempfile.TemporaryDirectory() as repo:
@@ -486,8 +728,8 @@ class InvocationRuntimeCliTests(unittest.TestCase):
                 ])
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual([task.metadata["model"] for task in adapter.inputs], ["fast-model", "careful-model"])
-        self.assertEqual([task.metadata["invocation_id"] for task in adapter.inputs], ["fast", "careful"])
+        self.assertEqual(sorted(task.metadata["model"] for task in adapter.inputs), ["careful-model", "fast-model"])
+        self.assertEqual(sorted(task.metadata["invocation_id"] for task in adapter.inputs), ["careful", "fast"])
         self.assertEqual([task.metadata["allow_paths"] for task in adapter.inputs], [["."], ["."]])
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "complete")
