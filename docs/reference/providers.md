@@ -38,13 +38,19 @@ Provider-specific overrides remain available through `--provider-permissions-jso
 
 ## Provider selection
 
-`mco run` and `mco review` require an explicit team:
+`mco run` and `mco review` require an explicit provider/model team:
 
 ```bash
 mco review --providers claude,codex,pi --prompt "Review this repository."
 ```
 
-If no provider selection is supplied, MCO returns `provider_selection_required`. Calling agents should ask the user rather than infer consent from installed binaries.
+For model-qualified dispatch, repeat `--agent`:
+
+```bash
+mco run --agent fast=pi:fast-model --agent careful=pi:careful-model --prompt "Compare these models."
+```
+
+If neither `--providers` nor `--agent` is supplied, MCO returns `provider_selection_required`. Calling Agents should ask the user rather than infer consent from installed binaries.
 
 ## Model discovery and routing
 
@@ -54,7 +60,7 @@ MCO normally preserves each CLI's configured default model.
 mco agent models --providers codex,hermes,pi --json
 ```
 
-Pin models for one run:
+Pin one configured model per provider for one run:
 
 ```bash
 mco review \
@@ -64,6 +70,8 @@ mco review \
 ```
 
 The model catalog is best-effort and depends on what each installed CLI exposes.
+
+Model discovery may be incomplete. An incomplete catalog must not be treated as proof that a model-qualified invocation cannot be attempted; only a confirmed invalid model or provider configuration should fail fast.
 
 ## Context policy
 

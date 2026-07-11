@@ -1,51 +1,32 @@
 # Multi-model parallel execution
 
-Use multiple models from the same provider when you want independent opinions or implementations without changing MCO's provider abstraction.
-
-## Why separate runs are required
-
-MCO deduplicates `--providers` by provider ID, and `--provider-models-json` stores one model selection per provider ID. Therefore, `--providers pi,pi,pi` still produces one effective `pi` execution; it does not create three Pi instances.
-
-To run multiple Pi models concurrently:
-
-1. Launch one independent `mco run` or `mco review` call per model.
-2. Give every call an explicit `--providers pi`, model mapping, and unique `--task-id`.
-3. Use the upstream caller's parallel execution mechanism to run those calls concurrently.
-
-## Pi example
-
-The following independent calls evaluate the same repository with three Pi models. Run them concurrently from the upstream caller.
-
-### Gemini 3.5 Flash
+Use repeatable `--agent` declarations when one provider should run more than one model in the same MCO task.
 
 ```bash
-mco run --repo . --prompt "Evaluate this project with file-backed evidence." --providers pi --provider-models-json '{"pi":{"provider":"codewiz-gemini","model":"gemini-3.5-flash"}}' --task-id "eval-gemini-3-5-flash" --execution-mode read_only --result-mode stdout --json
+mco run --repo . --prompt "Evaluate this project." \
+  --agent gemini=pi:gemini-3-5-flash \
+  --agent qwen=pi:qwen3-7-max \
+  --agent deepseek=pi:deepseek-v4-pro \
+  --result-mode both --task-id model-comparison
 ```
 
-### Qwen 3.7 Max
+Each alias becomes an independent invocation. MCO preserves declaration order in the final result and keeps each answer in its own artifact. `--providers pi` remains useful when the provider's configured/default model is sufficient; `--provider-models-json` can supply the default model mapping for that provider.
+
+## Parallel writing safety
+
+Before running multiple `write` or `yolo` invocations, partition file ownership explicitly:
 
 ```bash
-mco run --repo . --prompt "Evaluate this project with file-backed evidence." --providers pi --provider-models-json '{"pi":{"provider":"codewiz-anthropic","model":"qwen3.7-max"}}' --task-id "eval-qwen-3-7-max" --execution-mode read_only --result-mode stdout --json
+mco run --repo . --target-paths runtime/parser.py \
+  --agent parser=codex:gpt-5.6-sol --task-id parser-change
+mco run --repo . --target-paths tests/test_parser.py \
+  --agent tests=pi:code-model --task-id parser-tests
 ```
 
-### DeepSeek V4 Pro
+The examples are independent calls. MCO does not create or manage worktrees, and it does not ban a user from selecting parallel writers. The upstream Agent must warn about conflicts, use non-overlapping paths where possible, and identify any shared files that can still race.
 
-```bash
-mco run --repo . --prompt "Evaluate this project with file-backed evidence." --providers pi --provider-models-json '{"pi":{"provider":"seal","model":"deepseek-v4-pro"}}' --task-id "eval-deepseek-v4-pro" --execution-mode read_only --result-mode stdout --json
-```
+Use `read_only` when several models inspect the same working tree. Use unique task IDs for persistent artifacts so separate calls do not overwrite one another.
 
-## Output and write safety
+## Output handoff
 
-- `stdout` is the default result mode and uses a per-process temporary artifact directory. It is the simplest choice for upstream aggregation.
-- When using `--result-mode artifact`, `both`, or `--save-artifacts`, keep task IDs unique so persistent artifact paths do not overlap.
-- Use `read_only` when models are evaluating the same working tree.
-- Do not let multiple `write` or `yolo` runs edit the same working tree concurrently. Give each writer a separate worktree, or select one model to implement after the read-only comparison.
-
-## Aggregate results
-
-For every run:
-
-1. Check the outer `terminal_state`.
-2. Check the Pi provider's `success`, `final_error`, and `parse_reason` fields.
-3. Compare file-backed evidence across successful model outputs.
-4. Treat agreement as a lead, not proof. Verify claims against source files and run the relevant tests before accepting a conclusion or change.
+For each invocation, inspect `status`, `output`, `error`, `exit_code`, and `artifact_path`. In JSONL mode, concatenate only that invocation's `output_delta` events to reconstruct its formal answer. Treat agreement as an input for human or upstream-Agent judgment, never as a semantic consensus field.

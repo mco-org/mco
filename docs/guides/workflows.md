@@ -1,10 +1,10 @@
 # MCO workflow guide
 
-This guide collects the workflows intentionally kept out of the project README. Run `mco <command> --help` for the authoritative options installed with your version.
+This guide covers the invocation-native CLI. Run `mco <command> --help` for the authoritative options installed with your version.
 
 ## Install
 
-Install the CLI and copy the bundled Skill into selected calling agents:
+Install the CLI and copy the bundled Skill into selected calling Agents:
 
 ```bash
 npx @tt-a1i/mco@latest install --agent codex --agent claude-code --yes
@@ -18,142 +18,121 @@ npm i -g @tt-a1i/mco
 mco skills sync --agent codex --agent claude-code
 ```
 
-Installer `--agent` selects Skill destinations. Runtime `--providers` selects the agents that execute a task.
+Installer `--agent` selects Skill destinations. Runtime `--agent` selects model-qualified invocations; runtime `--providers` is the shorthand for one configured/default model per provider.
 
 ## Run and review
 
-`mco run` is for general execution. It defaults to `--execution-mode write`.
+`mco run` defaults to workspace write access. `mco review` is a thin read-only preset over the same invocation runtime.
 
 ```bash
 mco run \
   --repo . \
   --prompt "Summarize the architecture." \
   --providers claude,codex
-```
 
-`mco review` is for normalized findings and severity-based decisions. It defaults to `--execution-mode read_only`.
-
-```bash
 mco review \
   --repo . \
-  --prompt "Review for correctness and security issues." \
+  --prompt "Review this repository for correctness risks." \
   --providers claude,codex,pi
 ```
 
-## Review only changes
+An explicit review prompt is passed unchanged. Without one, review uses a short natural-language prompt and does not request a structured findings response.
+
+## Explicit model invocations
+
+Use `--agent [alias=]provider:model` when model identity matters or when one provider should run multiple models:
 
 ```bash
-mco review --providers claude,codex --diff
-mco review --providers claude,codex --staged
-mco review --providers claude,codex --unstaged
-mco review --providers claude,codex --diff-base origin/main
+mco run --repo . --prompt "Inspect the authentication flow." \
+  --agent security=codex:gpt-5.6-sol \
+  --agent alternate=codex:gpt-5.6-luna \
+  --result-mode both --task-id auth-review
 ```
 
-The diff flags are mutually exclusive. An explicit `--diff-base` implies branch diff mode.
+Each alias is an independent invocation. MCO preserves each answer and reports its operational status separately. Configuration errors are rejected before provider execution.
 
-## Coordination modes
+## Scope and parallel writing
 
-| Mode | Flag | Behavior |
-|------|------|----------|
-| Parallel | default | All selected providers inspect the same scope independently |
-| Chain | `--chain` | Each provider sees the preceding analysis |
-| Debate | `--debate` | Providers challenge merged findings in a second round |
-| Divide files | `--divide files` | Split file ownership across providers |
-| Divide dimensions | `--divide dimensions` | Assign review dimensions such as security or performance |
-
-`--chain`, `--debate`, and `--divide` are mutually exclusive.
-
-Assign explicit perspectives without changing file scope:
+Use `--target-paths` to constrain the task scope:
 
 ```bash
-mco review \
-  --providers claude,codex \
-  --perspectives-json '{"claude":"security","codex":"performance"}' \
-  --prompt "Review this change."
+mco run --repo . --target-paths runtime/parser.py \
+  --agent parser=codex:model-a --prompt "Implement the parser change."
+mco run --repo . --target-paths tests/test_parser.py \
+  --agent tests=pi:model-b --prompt "Add coverage for the parser change."
 ```
 
-## Multiple models from one provider
+Parallel writing is an explicit user choice. MCO does not create or manage worktrees and does not prohibit parallel writers. The calling Agent should partition ownership into non-overlapping paths, use distinct task IDs, and warn about shared-file edit conflicts before dispatch.
 
-Provider IDs are deduplicated within one MCO call. To compare several Pi models, launch one independent call per model and run those calls concurrently from the upstream orchestrator.
+## Chain, debate, and synthesis
+
+### Chain
 
 ```bash
-mco run --providers pi \
-  --provider-models-json '{"pi":{"provider":"codewiz-gemini","model":"gemini-3.5-flash"}}' \
-  --task-id eval-gemini --execution-mode read_only --prompt "Evaluate this project."
+mco run --repo . --prompt "Analyze this repository." \
+  --agent first=pi:model-a \
+  --agent second=codex:model-b \
+  --chain --result-mode artifact --task-id chained-analysis
 ```
 
-Use unique task IDs. Do not let parallel `write` or `yolo` calls modify the same worktree.
+Chain runs one invocation per stage. The next stage receives `stages/<stage>/context/manifest.json` and paths to complete prior Markdown answers. It does not receive a silent summary, sample, truncation, or prompt-embedded copy of the earlier answer.
 
-## Result delivery
+### Debate and synthesis
 
-| Mode | Behavior |
-|------|----------|
-| `stdout` | Print the complete result and use temporary runtime artifacts; default |
-| `artifact` | Persist artifacts and print a summary |
-| `both` | Persist artifacts and print the complete result |
+```bash
+mco review --repo . --prompt "Challenge the previous analysis." \
+  --providers claude,codex,pi \
+  --debate --synthesize --synth-provider codex \
+  --result-mode both --task-id debate-run
+```
 
-Use `--save-artifacts` to preserve artifacts while keeping stdout delivery.
+Debate and synthesis are read-only stages. Earlier outputs are untrusted reference material. If an earlier stage is partially successful, later stages continue when at least one valid answer exists; otherwise the dependent stage records an explicit failure and the aggregate remains `partial` or `failed`.
 
-## Streaming
+## Output and artifacts
+
+```text
+<artifact-base>/<task-id>/
+  result.md
+  run.json
+  stages/<stage>/invocations/<invocation-id>.md
+  stages/<stage>/context/manifest.json
+  stages/<stage>/result.md
+  stages/<stage>/run.json
+```
+
+Use `stdout` for temporary answer delivery, `artifact` for persistent files, or `both` for both. Temporary runs clean up their runtime directory and report `artifact_root: null`. Persistent Markdown contains the raw answer body; `run.json` contains only operational metadata.
+
+## Streaming and machine output
 
 ```bash
 mco review --providers claude,codex --stream live
 mco review --providers claude,codex --stream jsonl
+mco review --providers claude,codex --json
 ```
 
-`live` is intended for humans. `jsonl` is intended for orchestration and automation.
+Default text mode writes answer deltas to stdout as they arrive. Multiple invocations receive source labels between answers, while each answer body remains unchanged. JSONL `output_delta` events are losslessly reconstructible per invocation. Progress, warnings, and provider diagnostics are written to stderr.
 
-## Persistent sessions
+## Sessions and MCP
+
+Persistent sessions remain available:
 
 ```bash
 mco session start --provider claude --name dev
 mco session send dev "Review the authentication flow."
-mco session send dev "Now propose a fix." --no-wait
-mco session result dev 2
-mco session queue dev
-mco session cancel dev
+mco session result dev 1
 mco session stop dev
 ```
 
-Use `mco session ensure --provider claude --name dev` when callers need create-or-return behavior.
-
-## Memory
-
-Cross-session memory is optional and requires `evermemos-mcp` plus `EVERMEMOS_API_KEY`.
-
-```bash
-mco review --providers claude,codex --memory --space my-project
-mco memory status --space my-project
-mco memory agent-stats --space my-project
-```
-
-The `--space` value is a slug. MCO adds its internal prefix and storage suffixes.
-
-## MCP server and ACP transport
-
-Run the MCO MCP server:
+Run the MCO MCP server when the caller needs the same raw operational run/review surface over MCP:
 
 ```bash
 mco serve
 ```
 
-Use ACP for providers that support structured JSON-RPC transport:
-
-```bash
-mco run --transport acp --providers claude --prompt "Analyze this repository."
-```
-
-ACP file and terminal handlers extend the trust boundary. Terminal access must be explicitly enabled and should only be granted to trusted agents or isolated environments.
-
 ## Failure handling
 
-MCO waits for selected providers independently. Report `success`, `final_error`, and `parse_reason` per provider instead of hiding partial failure behind one aggregate result.
+Inspect each invocation's `status`, `output`, `error`, `exit_code`, `transport_status`, `usage`, and `stderr`. Task exit codes are `0` for `complete`, `1` for `partial`, and `2` for `failed`. A provider failure never silently removes successful answers.
 
-Use provider-specific stall timeouts when one CLI is predictably slower:
+For example, when `fast` succeeds and `slow` times out, the final JSON remains useful: it has `status: partial`, `exit_code: 1`, the complete `fast` answer, and an explicit timeout record for `slow`.
 
-```bash
-mco review \
-  --providers claude,codex,qwen \
-  --provider-timeouts qwen=900,codex=300 \
-  --review-hard-timeout 1800
-```
+Old findings, semantic decision, consensus, SARIF, Markdown-PR, memory, and diff-only review workflows are removed. Migrate them to raw prompts, `--target-paths`, JSON/JSONL output, and file-backed stages.

@@ -2,49 +2,37 @@
 
 ## Provider failures
 
-If a provider fails:
+Inspect each invocation's `status`, `error`, `exit_code`, `transport_status`, `usage`, and `stderr`. A failed invocation does not discard successful answers. The aggregate is `partial` when at least one invocation succeeds and `failed` when none do.
 
-1. Report per-provider `success/final_error/parse_reason`.
-2. Distinguish transport/auth errors from parse/contract issues.
-3. Continue with successful providers (wait-all behavior).
+## Timeouts and cancellation
+
+- Use `--provider-timeouts provider=seconds` when one provider is predictably slow.
+- Use `--review-hard-timeout seconds` for a global deadline across the task.
+- A timed-out or cancelled invocation is recorded explicitly; it is not converted into a successful-looking answer.
+- After a test or run, verify that no provider child processes remain before retrying.
+
+## Result modes and artifacts
+
+- `stdout`: temporary artifacts, raw answer delivery, and `artifact_root: null` in JSON.
+- `artifact`: persistent `result.md`, `run.json`, and per-stage/per-invocation Markdown.
+- `both`: persistent artifacts plus stdout answer delivery.
+
+Use a stable, safe `--task-id` for reproducible artifact paths. Reusing a task ID replaces stale invocation Markdown for that stage; do not share it between concurrent processes.
+
+## Multi-stage failures
+
+Chain, debate, and synthesis read complete Markdown answers through `context/manifest.json`. If a context file cannot be read, the dependent invocation records the provider error. If no valid prior answer exists, synthesis records `no_valid_prior_answer` and the task remains failed or partial as appropriate.
 
 ## Skill drift
-
-Check bundled Skill health:
 
 ```bash
 mco doctor --skill-health --json
 mco skills status --json
-```
-
-Repair drift explicitly:
-
-```bash
 mco skills sync --agent codex --agent claude-code
 ```
 
-## Partial install recovery
+Sync only the explicitly selected calling Agents. Do not treat a detected installation as consent.
 
-If CLI installation succeeded but Skill sync failed, retry:
+## Breaking migration errors
 
-```bash
-mco skills sync --agent codex --agent claude-code
-```
-
-Do not roll back a successful CLI install when Skill sync fails.
-
-## Timeouts and stability
-
-- Use provider-specific stall timeout when one provider is slow:
-  - `--provider-timeouts qwen=900,codex=300`
-- Set review hard deadline for CI predictability:
-  - `--review-hard-timeout 1800`
-- Use a stable `--task-id` when you need predictable artifact paths across retries.
-
-## Result modes
-
-- `artifact`: writes user-facing artifact files for CI/audit.
-- `stdout`: returns results directly to caller output for chat/agent UX.
-- `both`: writes artifacts and returns detailed stdout payload.
-
-When returning to end users, prefer non-JSON stdout unless the caller explicitly requires JSON.
+Old findings-oriented flags return guidance to use raw prompts, JSON/JSONL output, result modes, and file-backed stages. Do not retry them with hidden combinations; update the calling workflow.

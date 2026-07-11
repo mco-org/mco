@@ -1,6 +1,6 @@
 # Configuration and custom agents
 
-MCO works without a config file once providers are explicitly selected. Configuration is useful for project defaults, model routing, context policy, and custom agents.
+MCO works without a config file once providers or model-qualified invocations are explicitly selected. Configuration is useful for project defaults, model routing, context policy, and custom agents.
 
 ## Runtime configuration
 
@@ -36,7 +36,7 @@ Nested policy objects are deep-merged.
 }
 ```
 
-Calling agents should still confirm the provider team with the user instead of treating a discoverable binary as consent.
+`providers` supplies the `--providers` shorthand. Calling Agents should still confirm the provider/model team with the user instead of treating a discoverable binary as consent. Use repeatable `--agent [alias=]provider:model` when a task needs multiple models from one provider.
 
 ## Custom agent registry
 
@@ -71,7 +71,7 @@ mco agent check my-ollama
 
 ## Registry transports
 
-- `transport: shim` launches a command and normalizes its stdout.
+- `transport: shim` launches a command and decodes its provider transport into an opaque answer.
 - `transport: acp` launches an ACP-compatible JSON-RPC process.
 - `model: ...` creates an Ollama-backed adapter.
 
@@ -84,7 +84,7 @@ mco run \
   --prompt "Analyze this repository."
 ```
 
-Registration does not select an agent. The agent must still appear in `--providers`.
+Registration does not select an invocation. The registered name must still appear in `--providers` or in an `--agent alias=name:model` declaration.
 
 ## Skill installation
 

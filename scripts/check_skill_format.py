@@ -8,7 +8,7 @@ from pathlib import Path
 
 VALID_EXECUTION_MODES = {"read_only", "write", "yolo"}
 IMPLICIT_PROVIDER_PATTERNS = (
-    re.compile(r"mco\s+(run|review)(?!.*--providers)", re.IGNORECASE),
+    re.compile(r"mco\s+(run|review)(?!.*(--providers|--agent))", re.IGNORECASE | re.DOTALL),
     re.compile(r"--providers\s+\$?\{?default", re.IGNORECASE),
 )
 
