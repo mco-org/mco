@@ -53,7 +53,7 @@ class TestPerspectiveValidation(unittest.TestCase):
         args.max_provider_parallelism = 0
         args.chain = False
         # Suppress-based attributes
-        for attr in ("enforcement_mode", "stall_timeout", "poll_interval", "review_hard_timeout",
+        for attr in ("enforcement_mode", "invocation_hard_timeout", "stall_timeout", "poll_interval", "review_hard_timeout",
                       "quiet", "memory", "transport"):
             delattr(args, attr)
         with self.assertRaises(ValueError) as ctx:
@@ -76,7 +76,7 @@ class TestPerspectiveValidation(unittest.TestCase):
         args.allow_paths = "."
         args.max_provider_parallelism = 0
         args.chain = False
-        for attr in ("enforcement_mode", "stall_timeout", "poll_interval", "review_hard_timeout",
+        for attr in ("enforcement_mode", "invocation_hard_timeout", "stall_timeout", "poll_interval", "review_hard_timeout",
                       "quiet", "memory", "transport"):
             delattr(args, attr)
         with self.assertRaises(ValueError) as ctx:
@@ -100,7 +100,7 @@ class TestPerspectiveValidation(unittest.TestCase):
         args.allow_paths = "."
         args.max_provider_parallelism = 0
         args.chain = False
-        for attr in ("enforcement_mode", "stall_timeout", "poll_interval", "review_hard_timeout",
+        for attr in ("enforcement_mode", "invocation_hard_timeout", "stall_timeout", "poll_interval", "review_hard_timeout",
                       "quiet", "memory", "transport"):
             delattr(args, attr)
         with self.assertRaises(ValueError) as ctx:

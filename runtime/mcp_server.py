@@ -106,6 +106,7 @@ def _sync_review(
 ) -> Dict[str, Any]:
     """Run the thin read-only review preset and return raw invocation outputs."""
     from .adapters import adapter_registry
+    from .config import ReviewPolicy
     from .execution_modes import EXECUTION_MODES, execution_permissions
     from .invocation_runtime import parse_invocations, run_invocation_workflow, validate_execution_scope
 
@@ -143,12 +144,14 @@ def _sync_review(
             ["{}:default".format(provider) for provider in valid_providers],
             scope,
         )
+        default_policy = ReviewPolicy()
         result = run_invocation_workflow(
             invocations=invocations,
             adapters=adapters,
             repo_root=str(repo_path),
             prompt=prompt or "Review the selected scope and report any concerns in natural language.",
-            timeout_seconds=900,
+            timeout_seconds=default_policy.stall_timeout_seconds,
+            hard_timeout_seconds=default_policy.timeout_seconds,
             provider_permissions=provider_permissions,
             allow_paths=["."],
         )
@@ -167,6 +170,7 @@ def _sync_run(
 ) -> Dict[str, Any]:
     """General-purpose multi-agent task execution."""
     from .adapters import adapter_registry
+    from .config import ReviewPolicy
     from .execution_modes import EXECUTION_MODES, execution_permissions
     from .invocation_runtime import parse_invocations, run_invocation_workflow, validate_execution_scope
 
@@ -199,6 +203,7 @@ def _sync_run(
             [p.strip() for p in target_paths.split(",") if p.strip()] or ["."],
             ["."],
         )
+        default_policy = ReviewPolicy()
         result = run_invocation_workflow(
             invocations=parse_invocations(
                 ["{}:default".format(provider) for provider in valid_providers],
@@ -207,7 +212,8 @@ def _sync_run(
             adapters=adapter_registry(),
             repo_root=str(repo_path),
             prompt=prompt,
-            timeout_seconds=900,
+            timeout_seconds=default_policy.stall_timeout_seconds,
+            hard_timeout_seconds=default_policy.timeout_seconds,
             provider_permissions=provider_permissions,
             allow_paths=["."],
         )

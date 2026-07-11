@@ -17,11 +17,12 @@ class McpInvocationTests(unittest.TestCase):
             "exit_code": 0,
             "artifact_root": None,
         }
-        with tempfile.TemporaryDirectory() as repo, patch("runtime.invocation_runtime.run_invocation_workflow", return_value=expected):
+        with tempfile.TemporaryDirectory() as repo, patch("runtime.invocation_runtime.run_invocation_workflow", return_value=expected) as workflow:
             result = _sync_run(repo, "task", "pi")
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["data"], expected)
+        self.assertEqual(workflow.call_args.kwargs["hard_timeout_seconds"], 180)
 
     def test_review_uses_read_only_execution_and_raw_output(self) -> None:
         expected = {
@@ -32,11 +33,12 @@ class McpInvocationTests(unittest.TestCase):
             "exit_code": 0,
             "artifact_root": None,
         }
-        with tempfile.TemporaryDirectory() as repo, patch("runtime.invocation_runtime.run_invocation_workflow", return_value=expected):
+        with tempfile.TemporaryDirectory() as repo, patch("runtime.invocation_runtime.run_invocation_workflow", return_value=expected) as workflow:
             result = _sync_review(repo, "review", "pi")
 
         self.assertTrue(result["ok"])
         self.assertNotIn("findings", result["data"])
+        self.assertEqual(workflow.call_args.kwargs["hard_timeout_seconds"], 180)
 
 
 if __name__ == "__main__":

@@ -44,8 +44,9 @@ Aliases must be unique. Repeating the same provider/model without distinct alias
 | `--enforcement-mode` | `strict` | Reject unsupported provider policy or use `best_effort` |
 | `--provider-permissions-json` | unset | Provider-specific permission overrides |
 | `--provider-context-json` | unset | Provider context policy |
-| `--provider-timeouts` | unset | Provider-specific timeout overrides |
-| `--stall-timeout` | `900` | Per-invocation timeout in seconds |
+| `--provider-timeouts` | unset | Provider-specific invocation hard-timeout overrides |
+| `--invocation-hard-timeout` | `180` | Per-invocation wall-clock deadline; `0` disables |
+| `--stall-timeout` | `900` | Maximum time without Provider output progress |
 | `--review-hard-timeout` | `1800` | Global task deadline; `0` disables |
 | `--max-provider-parallelism` | `0` | Parallelism policy for configured execution |
 
@@ -75,7 +76,7 @@ Aliases must be unique. Repeating the same provider/model without distinct alias
 | `--perspectives-json` | Add an explicit per-provider prompt perspective |
 | `--divide files\|dimensions` | Assign non-overlapping scope files, or declaration-ordered rotating review lenses, without interpreting answers |
 
-Chain, debate, and division are mutually exclusive. Perspectives and division are explicit prompt/scope coordination only: `--perspectives-json` prepends a Provider-specific `Review Perspective`; `--divide files` sorts regular files in the selected scope and assigns them round-robin in declaration order; `--divide dimensions` rotates the fixed review lenses in that order without changing `target_paths`. Dry-run shows the complete resolved invocation prompts and target paths. These options preserve raw invocation answers and never derive semantic findings or consensus. Debate and synthesis mark earlier answer files as untrusted reference material. A valid earlier answer allows later stages to continue after a partial failure; no valid input produces an explicit dependent-stage failure.
+Chain, debate, and division are mutually exclusive. Perspectives and division are explicit prompt/scope coordination only: `--perspectives-json` prepends a Provider-specific `Review Perspective`; `--divide files` sorts repository files in the selected scope, excludes ignored/local/build directories, and assigns the remaining files round-robin in declaration order; `--divide dimensions` rotates the fixed review lenses in that order without changing `target_paths`. Dry-run shows the complete resolved invocation prompts and target paths. These options preserve raw invocation answers and never derive semantic findings or consensus. Debate and synthesis mark earlier answer files as untrusted reference material. A valid earlier answer allows later stages to continue after a partial failure; no valid input produces an explicit dependent-stage failure.
 
 `mco review` uses the same runtime. Its default prompt is a short natural-language review request, and an explicit `--prompt` is passed unchanged. It never injects a findings schema.
 

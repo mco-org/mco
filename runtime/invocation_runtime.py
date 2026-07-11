@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import CancelledError, FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -161,6 +161,7 @@ def _run_one_invocation(
     repo_root: str,
     prompt: str,
     timeout_seconds: int,
+    hard_timeout_seconds: int,
     provider_permissions: Mapping[str, Mapping[str, str]],
     provider_context: Mapping[str, Mapping[str, object]],
     allow_paths: Sequence[str],
@@ -191,12 +192,13 @@ def _run_one_invocation(
     effective_allow_paths.extend(
         path for path in context_read_only_paths if path not in effective_allow_paths
     )
+    task_timeout_seconds = hard_timeout_seconds if hard_timeout_seconds > 0 else timeout_seconds
     task = TaskInput(
         task_id=task_id,
         prompt=prompt,
         repo_root=repo_root,
         target_paths=target_paths,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=task_timeout_seconds,
         metadata={
             "artifact_root": artifact_base,
             "invocation_id": invocation.invocation_id,
@@ -230,7 +232,14 @@ def _run_one_invocation(
 
     started_at = time.monotonic()
     stall_deadline = started_at + timeout_seconds
+    hard_deadline = (
+        started_at + hard_timeout_seconds
+        if hard_timeout_seconds > 0
+        else None
+    )
     deadline = stall_deadline
+    if hard_deadline is not None:
+        deadline = min(deadline, hard_deadline)
     if global_deadline is not None:
         deadline = min(deadline, global_deadline)
     start_deadline = deadline
@@ -277,6 +286,7 @@ def _run_one_invocation(
         }
     emitted_answer = ""
     emitted_deltas: list[str] = []
+    observed_raw_marker: Optional[tuple[int, int]] = None
 
     def completed_result(
         invocation_status: str,
@@ -328,9 +338,18 @@ def _run_one_invocation(
             return completed_result("failed", str(exc), None)
         output_path = Path(run_ref.artifact_path) / "raw" / "{}.stdout.log".format(invocation.provider)
         try:
-            raw_output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+            if output_path.exists():
+                raw_output = output_path.read_text(encoding="utf-8")
+                raw_stat = output_path.stat()
+                raw_marker = (raw_stat.st_size, raw_stat.st_mtime_ns)
+            else:
+                raw_output = ""
+                raw_marker = None
         except OSError as exc:
             return completed_result("failed", "failed to read provider output: {}".format(exc), status.exit_code)
+        if raw_marker is not None and raw_marker != observed_raw_marker:
+            observed_raw_marker = raw_marker
+            stall_deadline = time.monotonic() + timeout_seconds
         try:
             decode_transport = getattr(adapter, "decode_transport", None)
             transport_snapshot = decode_transport(raw_output) if callable(decode_transport) else None
@@ -394,6 +413,8 @@ def _run_one_invocation(
                 invocation_status = "failed"
             return completed_result(invocation_status, status.message or status.attempt_state.lower(), status.exit_code)
         active_deadline = stall_deadline
+        if hard_deadline is not None:
+            active_deadline = min(active_deadline, hard_deadline)
         if global_deadline is not None:
             active_deadline = min(active_deadline, global_deadline)
         if time.monotonic() >= active_deadline:
@@ -412,6 +433,7 @@ def run_invocations(
     repo_root: str,
     prompt: str,
     timeout_seconds: int,
+    hard_timeout_seconds: int = 0,
     provider_permissions: Mapping[str, Mapping[str, str]],
     allow_paths: Sequence[str],
     artifact_base: Optional[str] = None,
@@ -484,7 +506,11 @@ def run_invocations(
                     artifact_base=str(provider_artifact_base),
                     repo_root=repo_root,
                     prompt=(invocation_prompts or {}).get(invocation.invocation_id, prompt),
-                    timeout_seconds=(provider_timeouts or {}).get(invocation.provider, timeout_seconds),
+                    timeout_seconds=timeout_seconds,
+                    hard_timeout_seconds=(provider_timeouts or {}).get(
+                        invocation.provider,
+                        hard_timeout_seconds,
+                    ),
                     provider_permissions=provider_permissions,
                     provider_context=provider_context or {},
                     allow_paths=allow_paths,
@@ -511,6 +537,19 @@ def run_invocations(
                     index = futures[future]
                     try:
                         result = future.result()
+                    except CancelledError:
+                        invocation = invocations[index]
+                        stopped_reason = stop_state.get("reason", "cancelled")
+                        result = {
+                            "invocation_id": invocation.invocation_id,
+                            "provider": invocation.provider,
+                            "model": invocation.model,
+                            "status": stopped_reason,
+                            "output": None,
+                            "error": "task stopped before invocation started",
+                            "exit_code": None,
+                            "stderr": "",
+                        }
                     except Exception as exc:
                         invocation = invocations[index]
                         result = {
@@ -661,6 +700,7 @@ def run_invocation_workflow(
     repo_root: str,
     prompt: str,
     timeout_seconds: int,
+    hard_timeout_seconds: int = 0,
     provider_permissions: Mapping[str, Mapping[str, str]],
     allow_paths: Sequence[str],
     artifact_base: Optional[str] = None,
@@ -687,6 +727,7 @@ def run_invocation_workflow(
             repo_root=repo_root,
             prompt=prompt,
             timeout_seconds=timeout_seconds,
+            hard_timeout_seconds=hard_timeout_seconds,
             provider_permissions=provider_permissions,
             allow_paths=allow_paths,
             artifact_base=artifact_base,
@@ -811,6 +852,7 @@ def run_invocation_workflow(
             repo_root=repo_root,
             prompt=stage_prompt,
             timeout_seconds=timeout_seconds,
+            hard_timeout_seconds=hard_timeout_seconds,
             provider_permissions=stage_permissions,
             allow_paths=allow_paths,
             artifact_base=stage_base,

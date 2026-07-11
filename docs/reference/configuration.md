@@ -18,6 +18,7 @@ Nested policy objects are deep-merged.
   "providers": ["claude", "codex", "pi"],
   "transport": "shim",
   "policy": {
+    "timeout_seconds": 180,
     "stall_timeout_seconds": 600,
     "enforcement_mode": "strict",
     "max_provider_parallelism": 3,
@@ -39,7 +40,9 @@ Nested policy objects are deep-merged.
 
 `providers` supplies the `--providers` shorthand. Calling Agents should still confirm the provider/model team with the user instead of treating a discoverable binary as consent. Use repeatable `--agent [alias=]provider:model` when a task needs multiple models from one provider.
 
-`perspectives` and `divide` are explicit coordination settings. A perspective adds a Provider prompt focus; `divide: "files"` partitions sorted regular files in the selected target scope without overlap, while `divide: "dimensions"` rotates fixed review lenses by invocation declaration order without changing target paths. They are visible in dry-run and never parse, rank, or rewrite Agent answers.
+`timeout_seconds` is the immutable per-invocation wall-clock deadline; `stall_timeout_seconds` limits time without Provider output progress. `provider_timeouts` overrides the hard deadline for named Providers, while `review_hard_timeout_seconds` caps the complete task.
+
+`perspectives` and `divide` are explicit coordination settings. A perspective adds a Provider prompt focus; `divide: "files"` partitions sorted repository files in the selected target scope without overlap while excluding ignored, local-state, cache, dependency, artifact, and build directories; `divide: "dimensions"` rotates fixed review lenses by invocation declaration order without changing target paths. They are visible in dry-run and never parse, rank, or rewrite Agent answers.
 
 ## Custom agent registry
 

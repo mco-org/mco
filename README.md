@@ -70,7 +70,7 @@ One agent gives you one perspective. MCO turns selected agents into a review or 
 
 MCO keeps answer text opaque. It does not turn natural-language output into findings, severity, confidence, consensus, or an automatic decision.
 
-For explicit review coordination, `--perspectives-json` adds a Provider-specific prompt focus. `--divide files` round-robins sorted scope files without overlap, while `--divide dimensions` rotates review lenses in declaration order without changing target paths. These choices are visible in dry-run and arrange only the prompt or scope; the returned invocation answers remain raw.
+For explicit review coordination, `--perspectives-json` adds a Provider-specific prompt focus. `--divide files` excludes ignored/local/build directories and round-robins the remaining sorted repository files without overlap, while `--divide dimensions` rotates review lenses in declaration order without changing target paths. These choices are visible in dry-run and arrange only the prompt or scope; the returned invocation answers remain raw.
 
 ## Built-in providers
 

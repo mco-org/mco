@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import signal
 import sys
 import threading
@@ -432,6 +433,61 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+_DIVISION_EXCLUDED_NAMES = {
+    ".git",
+    ".golutra",
+    ".hermes",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "artifacts",
+    "build",
+    "coverage",
+    "dist",
+    "htmlcov",
+    "node_modules",
+    "reports",
+    "venv",
+}
+_DIVISION_EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+
+
+def _division_path_is_excluded(root: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    return (
+        any(part in _DIVISION_EXCLUDED_NAMES for part in relative.parts)
+        or path.suffix in _DIVISION_EXCLUDED_SUFFIXES
+    )
+
+
+def _git_files_for_division(root: Path, scope: Path) -> Optional[List[Path]]:
+    relative_scope = scope.relative_to(root)
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(root), "ls-files", "--cached", "--others",
+                "--exclude-standard", "-z", "--", str(relative_scope) or ".",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return [
+        root / raw.decode("utf-8", errors="surrogateescape")
+        for raw in result.stdout.split(b"\0")
+        if raw
+    ]
+
+
 def _files_for_division(repo_root: str, execution_scope: List[str]) -> List[str]:
     root = Path(repo_root).resolve()
     files = set()
@@ -444,8 +500,10 @@ def _files_for_division(repo_root: str, execution_scope: List[str]) -> List[str]
         if candidate.is_file():
             files.add(str(candidate.relative_to(root)))
         elif candidate.is_dir():
-            for child in candidate.rglob("*"):
-                if not child.is_file() or ".git" in child.parts:
+            discovered = _git_files_for_division(root, candidate)
+            children = discovered if discovered is not None else candidate.rglob("*")
+            for child in children:
+                if child.is_symlink() or not child.is_file() or _division_path_is_excluded(root, child):
                     continue
                 try:
                     files.add(str(child.relative_to(root)))
@@ -1054,7 +1112,13 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     timeouts.add_argument(
         "--provider-timeouts",
         default="",
-        help="Provider-specific stall-timeout overrides, e.g. claude=120,codex=90",
+        help="Provider-specific invocation hard-timeout overrides, e.g. claude=120,codex=90",
+    )
+    timeouts.add_argument(
+        "--invocation-hard-timeout",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=f"Per-invocation hard timeout in seconds (default: {DEFAULT_POLICY.timeout_seconds}; 0 disables)",
     )
     timeouts.add_argument(
         "--stall-timeout",
@@ -1509,6 +1573,9 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     stall_timeout_seconds = getattr(args, "stall_timeout", None)
     if stall_timeout_seconds is None:
         stall_timeout_seconds = fc_policy.get("stall_timeout_seconds", cfg.policy.stall_timeout_seconds)
+    invocation_hard_timeout_seconds = getattr(args, "invocation_hard_timeout", None)
+    if invocation_hard_timeout_seconds is None:
+        invocation_hard_timeout_seconds = fc_policy.get("timeout_seconds", cfg.policy.timeout_seconds)
     poll_interval_seconds = getattr(args, "poll_interval", None)
     if poll_interval_seconds is None:
         poll_interval_seconds = fc_policy.get("poll_interval_seconds", cfg.policy.poll_interval_seconds)
@@ -1527,6 +1594,12 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         or stall_timeout_seconds < 0
     ):
         raise ValueError("--stall-timeout must be a non-negative integer")
+    if (
+        not isinstance(invocation_hard_timeout_seconds, int)
+        or isinstance(invocation_hard_timeout_seconds, bool)
+        or invocation_hard_timeout_seconds < 0
+    ):
+        raise ValueError("--invocation-hard-timeout must be an integer greater than or equal to 0")
     if (
         not isinstance(poll_interval_seconds, (int, float))
         or isinstance(poll_interval_seconds, bool)
@@ -1563,7 +1636,7 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         raise ValueError("--divide must be one of: files, dimensions")
 
     policy = ReviewPolicy(
-        timeout_seconds=cfg.policy.timeout_seconds,
+        timeout_seconds=invocation_hard_timeout_seconds,
         stall_timeout_seconds=stall_timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
         review_hard_timeout_seconds=review_hard_timeout_seconds,
@@ -2079,6 +2152,7 @@ def main(argv: List[str] | None = None) -> int:
 
     # Group 2: policy flags (config key names differ from args attr names)
     _POLICY_DEFAULTS = {
+        "invocation_hard_timeout": ("timeout_seconds", DEFAULT_POLICY.timeout_seconds),
         "stall_timeout": ("stall_timeout_seconds", DEFAULT_POLICY.stall_timeout_seconds),
         "max_provider_parallelism": ("max_provider_parallelism", DEFAULT_POLICY.max_provider_parallelism),
         "poll_interval": ("poll_interval_seconds", DEFAULT_POLICY.poll_interval_seconds),
@@ -2331,6 +2405,7 @@ def main(argv: List[str] | None = None) -> int:
                 repo_root=repo_root,
                 prompt=prompt,
                 timeout_seconds=cfg.policy.stall_timeout_seconds,
+                hard_timeout_seconds=cfg.policy.timeout_seconds,
                 provider_permissions=cfg.policy.provider_permissions,
                 provider_context=effective_provider_context,
                 provider_timeouts=cfg.policy.provider_timeouts,

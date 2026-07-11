@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import io
+import subprocess
 import threading
 import tempfile
 import time
@@ -242,6 +243,52 @@ class ProgressingFakeAdapter(DeterministicFakeAdapter):
         if count < 6:
             return TaskStatus(ref.task_id, "pi", ref.run_id, "STARTED", False, None, None, message="running")
         return super().poll(ref)
+
+
+class ProtocolProgressingFakeAdapter(ProtocolFakeAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.poll_counts: dict[str, int] = {}
+
+    def run(self, input_task: TaskInput) -> TaskRunRef:
+        ref = super().run(input_task)
+        output_path = Path(ref.artifact_path) / "raw" / "pi.stdout.log"
+        output_path.write_text("", encoding="utf-8")
+        return ref
+
+    def poll(self, ref: TaskRunRef) -> TaskStatus:
+        count = self.poll_counts.get(ref.run_id, 0) + 1
+        self.poll_counts[ref.run_id] = count
+        output_path = Path(ref.artifact_path) / "raw" / "pi.stdout.log"
+        if count < 7:
+            with output_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    '{"type":"tool_execution_start","toolCallId":"call-%s"}\n' % count
+                )
+            return TaskStatus(ref.task_id, "pi", ref.run_id, "STARTED", False, None, None, message="working")
+        output_path.write_text(
+            '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"final answer"}}\n'
+            '{"type":"agent_end"}\n',
+            encoding="utf-8",
+        )
+        return super().poll(ref)
+
+
+class EndlessProgressFakeAdapter(DeterministicFakeAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.poll_counts: dict[str, int] = {}
+        self.cancelled: list[str] = []
+
+    def poll(self, ref: TaskRunRef) -> TaskStatus:
+        count = self.poll_counts.get(ref.run_id, 0) + 1
+        self.poll_counts[ref.run_id] = count
+        output_path = Path(ref.artifact_path) / "raw" / "pi.stdout.log"
+        output_path.write_text("answer progress {}".format(count), encoding="utf-8")
+        return TaskStatus(ref.task_id, "pi", ref.run_id, "STARTED", False, None, None, message="working")
+
+    def cancel(self, ref: TaskRunRef) -> None:
+        self.cancelled.append(ref.task_id)
 
 
 class UsageProtocolFakeAdapter(ProtocolFakeAdapter):
@@ -1142,6 +1189,39 @@ class InvocationRuntimeCliTests(unittest.TestCase):
         self.assertEqual(payload["status"], "complete")
         self.assertEqual(payload["outputs"][0]["output"], "progress 6")
 
+    def test_stall_deadline_refreshes_on_protocol_progress_before_answer(self) -> None:
+        adapter = ProtocolProgressingFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            payload = run_invocations(
+                invocations=parse_invocations(["pi:model"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="progress",
+                timeout_seconds=1,
+                provider_permissions={},
+                allow_paths=["."],
+                poll_interval_seconds=0.25,
+            )
+
+        self.assertEqual(payload["status"], "complete")
+        self.assertEqual(payload["outputs"][0]["output"], "final answer")
+
+    def test_cli_invocation_hard_timeout_stops_continuously_progressing_agent(self) -> None:
+        adapter = EndlessProgressFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "keep working", "--json",
+                    "--agent", "pi:model", "--stall-timeout", "10",
+                    "--invocation-hard-timeout", "1", "--poll-interval", "0.2",
+                ])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(payload["outputs"][0]["status"], "timeout")
+        self.assertEqual(adapter.cancelled, ["invocation-pi-model"])
+
     def test_usage_is_omitted_from_json_and_run_metadata_by_default(self) -> None:
         adapter = UsageProtocolFakeAdapter()
         with tempfile.TemporaryDirectory() as repo:
@@ -1276,8 +1356,13 @@ class InvocationRuntimeCliTests(unittest.TestCase):
     def test_review_perspectives_and_file_division_are_explicit_without_rewriting_answers(self) -> None:
         adapter = DeterministicFakeAdapter()
         with tempfile.TemporaryDirectory() as repo:
+            subprocess.run(["git", "init", "-q", repo], check=True)
             for name in ("a.py", "b.py", "c.py"):
                 Path(repo, name).write_text(name, encoding="utf-8")
+            for directory in (".hermes", "node_modules", "build", ".pytest_cache", "ignored"):
+                Path(repo, directory).mkdir()
+                Path(repo, directory, "local.py").write_text(directory, encoding="utf-8")
+            Path(repo, ".gitignore").write_text("ignored/\n", encoding="utf-8")
             stdout = io.StringIO()
             with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
                 exit_code = main([
@@ -1289,8 +1374,8 @@ class InvocationRuntimeCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         tasks = {task.metadata["invocation_id"]: task for task in adapter.inputs}
-        self.assertEqual(tasks["first"].target_paths, ["a.py", "c.py"])
-        self.assertEqual(tasks["second"].target_paths, ["b.py"])
+        assigned_paths = tasks["first"].target_paths + tasks["second"].target_paths
+        self.assertEqual(sorted(assigned_paths), [".gitignore", "a.py", "b.py", "c.py"])
         self.assertIn("Focus on security boundaries.", tasks["first"].prompt)
         self.assertIn("Assigned files (non-overlapping):", tasks["second"].prompt)
         self.assertTrue(set(tasks["first"].target_paths).isdisjoint(tasks["second"].target_paths))

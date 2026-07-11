@@ -64,7 +64,7 @@ mco run --repo . --target-paths tests/test_parser.py \
 
 Parallel writing is an explicit user choice. MCO does not create or manage worktrees and does not prohibit parallel writers. The calling Agent should partition ownership into non-overlapping paths, use distinct task IDs, and warn about shared-file edit conflicts before dispatch.
 
-For review coordination, `--perspectives-json` prepends an explicit Provider prompt focus. `--divide files` sorts the regular files in the selected target scope and assigns them round-robin without overlap; `--divide dimensions` rotates fixed review lenses in invocation declaration order and leaves `target_paths` unchanged. Dry-run shows the fully resolved prompts and target paths. These settings only arrange prompts or scope; MCO still returns each invocation's untouched raw answer and never infers a semantic conclusion. `--divide` cannot be combined with `--chain` or `--debate`.
+For review coordination, `--perspectives-json` prepends an explicit Provider prompt focus. `--divide files` excludes ignored/local/build directories, sorts the remaining repository files in the selected target scope, and assigns them round-robin without overlap; `--divide dimensions` rotates fixed review lenses in invocation declaration order and leaves `target_paths` unchanged. Dry-run shows the fully resolved prompts and target paths. These settings only arrange prompts or scope; MCO still returns each invocation's untouched raw answer and never infers a semantic conclusion. `--divide` cannot be combined with `--chain` or `--debate`.
 
 ## Chain, debate, and synthesis
 

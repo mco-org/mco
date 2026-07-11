@@ -112,6 +112,8 @@ class CliTests(unittest.TestCase):
                 "3",
                 "--provider-timeouts",
                 "codex=120,qwen=240",
+                "--invocation-hard-timeout",
+                "240",
                 "--stall-timeout",
                 "700",
                 "--poll-interval",
@@ -136,6 +138,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(resolved.policy.provider_timeouts.get("qwen"), 240)
         self.assertEqual(resolved.policy.provider_timeouts.get("codex"), 120)
         self.assertIsNone(resolved.policy.provider_timeouts.get("claude"))
+        self.assertEqual(resolved.policy.timeout_seconds, 240)
         self.assertEqual(resolved.policy.stall_timeout_seconds, 700)
         self.assertEqual(resolved.policy.poll_interval_seconds, 2.0)
         self.assertEqual(resolved.policy.review_hard_timeout_seconds, 3000)
@@ -201,6 +204,7 @@ class CliTests(unittest.TestCase):
     def test_cli_rejects_invalid_runtime_policy_values_before_dispatch(self) -> None:
         invalid_values = (
             ("--max-provider-parallelism", "-1"),
+            ("--invocation-hard-timeout", "-1"),
             ("--stall-timeout", "-1"),
             ("--poll-interval", "0"),
             ("--review-hard-timeout", "-1"),

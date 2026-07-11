@@ -20,6 +20,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Removed the findings schema and semantic normalization, decision, consensus, findings-memory, Markdown-PR, SARIF, and content-derived status surfaces. Removed flags return migration guidance rather than running a legacy path.
 
 ### Fixed
+- Separated per-invocation hard deadlines from output-progress stall timeouts, and preserved timeout status for queued invocations cancelled by the global deadline.
+- Made stall detection recognize structured Provider progress without exposing protocol noise as answer content.
+- Restored repository-aware `--divide files` filtering for ignored, local-state, dependency, cache, artifact, and build directories.
 - Expanded Skill health checks to every supported calling agent and the complete bundled Skill tree.
 - Added explicit `not_installed` health and Windows npm-prefix handling.
 - Added macOS packaging and Windows installer validation to CI.

@@ -6,7 +6,8 @@ Inspect each invocation's `status`, `error`, `exit_code`, `transport_status`, an
 
 ## Timeouts and cancellation
 
-- Use `--provider-timeouts provider=seconds` when one provider is predictably slow.
+- Use `--invocation-hard-timeout seconds` for a per-invocation wall-clock deadline and `--provider-timeouts provider=seconds` to override it for a predictably slow Provider.
+- Use `--stall-timeout seconds` to stop an invocation that produces no raw Provider progress.
 - Use `--review-hard-timeout seconds` for a global deadline across the task.
 - A timed-out or cancelled invocation is recorded explicitly; it is not converted into a successful-looking answer.
 - After a test or run, verify that no provider child processes remain before retrying.
