@@ -2218,6 +2218,30 @@ def main(argv: List[str] | None = None) -> int:
     if not extra_agents:
         extra_agents = None
 
+    raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
+    if providers_was_explicit and raw_invocation_agents:
+        return _stream_error_exit(
+            "invalid_config",
+            "--agent and --providers are mutually exclusive",
+            task_failure=not getattr(args, "dry_run", False),
+        )
+    try:
+        declared_invocations = (
+            parse_invocations(raw_invocation_agents, _parse_paths(args.target_paths))
+            if raw_invocation_agents
+            else []
+        )
+    except ValueError as exc:
+        return _stream_error_exit(
+            "input_error",
+            str(exc),
+            task_failure=not getattr(args, "dry_run", False),
+        )
+    if declared_invocations:
+        args.providers = ",".join(dict.fromkeys(
+            item.provider for item in declared_invocations
+        ))
+
     try:
         cfg = _resolve_config(args, file_config=file_config)
     except ValueError as exc:
@@ -2236,14 +2260,13 @@ def main(argv: List[str] | None = None) -> int:
     if extra_agents:
         valid_providers |= set(extra_agents.keys())
 
-    invalid_providers = [item for item in cfg.providers if item not in valid_providers]
+    providers = list(cfg.providers)
+    invalid_providers = [item for item in providers if item not in valid_providers]
     if invalid_providers:
         return _stream_error_exit(
             "invalid_providers",
             "Unknown providers: {}".format(", ".join(invalid_providers)),
         )
-    providers = list(cfg.providers)
-
     synth_provider = args.synth_provider.strip() if isinstance(args.synth_provider, str) else ""
     synthesize = bool(args.synthesize or synth_provider)
     if synth_provider and synth_provider not in providers:
@@ -2260,15 +2283,11 @@ def main(argv: List[str] | None = None) -> int:
         )
     except ValueError as exc:
         return _stream_error_exit("input_error", str(exc))
-    raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
     use_invocation_runtime = not getattr(args, "dry_run", False)
     if use_invocation_runtime:
         def _invocation_error(code: str, message: str) -> int:
             return _stream_error_exit(code, message, task_failure=True)
 
-        if providers_was_explicit:
-            if raw_invocation_agents:
-                return _invocation_error("invalid_config", "--agent and --providers are mutually exclusive")
         try:
             execution_scope = validate_execution_scope(
                 repo_root,
