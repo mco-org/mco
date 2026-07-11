@@ -2,7 +2,7 @@
 
 ## Provider failures
 
-Inspect each invocation's `status`, `error`, `exit_code`, `transport_status`, `usage`, and `stderr`. A failed invocation does not discard successful answers. The aggregate is `partial` when at least one invocation succeeds and `failed` when none do.
+Inspect each invocation's `status`, `error`, `exit_code`, `transport_status`, and `stderr`; inspect `usage` only when `--include-token-usage` was requested and the Provider reported it. A failed invocation does not discard successful answers. The aggregate is `partial` when at least one invocation succeeds and `failed` when none do.
 
 ## Timeouts and cancellation
 

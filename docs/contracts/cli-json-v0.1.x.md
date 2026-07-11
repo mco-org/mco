@@ -21,7 +21,6 @@ This document describes the raw operational envelope emitted by `mco run --json`
       "exit_code": 0,
       "deltas": ["raw ", "Agent answer"],
       "transport_status": "succeeded",
-      "usage": null,
       "artifact_path": null
     }
   ],
@@ -30,7 +29,7 @@ This document describes the raw operational envelope emitted by `mco run --json`
 }
 ```
 
-The `outputs` array preserves declaration order. The JSON CLI envelope omits provider `stderr` from stdout; diagnostics remain available on stderr. `artifact_root` is `null` for temporary execution and is the persistent task directory for `artifact` or `both` result modes.
+The `outputs` array preserves declaration order. Reliable `usage` appears only when `--include-token-usage` is requested and a provider supplied it. The JSON CLI envelope omits provider `stderr` from stdout; diagnostics remain available on stderr. `artifact_root` is `null` for temporary execution and is the persistent task directory for `artifact` or `both` result modes.
 
 ## Status and exit code
 
@@ -64,7 +63,7 @@ Chain, debate, and synthesis events include `stage`. Persistent artifacts use:
   stages/<stage>/run.json
 ```
 
-Earlier stage answers are passed by file path and manifest. Their bodies are not silently summarized or truncated.
+Earlier stage answers are passed by file path and manifest. Their bodies are not silently summarized or truncated. Root `result.md` groups the actual stages, puts synthesis first when present, and preserves raw answers plus operational failure records.
 
 ## Compatibility
 

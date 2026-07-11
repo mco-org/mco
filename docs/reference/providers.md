@@ -86,6 +86,8 @@ mco run \
 
 Absent keys preserve the provider's own defaults. Unsupported keys fail closed in strict enforcement mode.
 
+File-backed chain, debate, and synthesis context is a separate, read-only input surface: MCO copies complete prior-answer Markdown and its manifest into the stage `context/` directory, then grants read access only to that directory. It does not broaden repository or system write access. ACP permits reads there and rejects writes; Codex context runs force its read-only sandbox rather than granting a writable extra directory. A Provider that cannot read the context files records `context_file_unsupported` instead of silently omitting them.
+
 ## Risk inspection
 
 Inspect default and effective provider risk before execution:

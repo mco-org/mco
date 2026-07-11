@@ -58,14 +58,15 @@ Use `--result-mode stdout|artifact|both`. Temporary runs clean up their task dir
   stages/<stage>/run.json                 # staged operational record
 ```
 
-`--save-artifacts` is shorthand for upgrading the default stdout mode to `both`. Answer Markdown preserves the Agent's answer body as returned by the transport decoder.
+`--save-artifacts` is shorthand for upgrading the default stdout mode to `both`. Answer Markdown preserves the Agent's answer body as returned by the transport decoder. Root `result.md` groups actual stages, places the synthesis group first when present, and retains all raw answers and explicit failures.
 
 ## Multi-stage workflows
 
 - `--chain` runs invocations sequentially. Each next Agent receives a manifest and paths to the complete prior Markdown answer; MCO does not summarize, sample, truncate, or paste the previous answer into the prompt.
 - `--debate` adds a read-only stage over the prior raw answer files.
-- `--synthesize` adds a read-only stage using `--synth-provider` when specified, otherwise the first selected invocation.
-- Debate and synthesis prompts mark earlier files as untrusted reference material. If a prior stage partially fails, later stages continue when a valid answer exists; otherwise the dependent stage records an explicit failure.
+- `--synthesize` adds a read-only stage using `--synth-provider` when specified, otherwise the first selected invocation. Its manifest keeps run and (when present) debate records, including failed or missing invocations, but never reads synthesis output itself.
+- Debate and synthesis prompts mark earlier files as untrusted reference material. If a prior stage partially fails, later stages continue when a valid answer exists, including a run answer after debate failed; otherwise the dependent stage records an explicit failure.
+- `--perspectives-json` prepends a named Provider prompt focus. `--divide files` round-robins sorted regular files from the selected scope without overlap; `--divide dimensions` rotates fixed review lenses in invocation declaration order without changing target paths. Dry-run shows the full resolved prompts and target paths. These are coordination only: they do not parse, rank, or rewrite invocation answers. `--divide` is mutually exclusive with `--chain` and `--debate`.
 
 ## Parallel writing safety
 

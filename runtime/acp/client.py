@@ -135,6 +135,7 @@ class AcpClient:
     def start(
         self,
         allow_paths: Optional[List[str]] = None,
+        read_only_paths: Optional[List[str]] = None,
         enable_terminal: bool = False,
     ) -> None:
         """Spawn the agent subprocess and register fs/terminal handlers.
@@ -142,6 +143,8 @@ class AcpClient:
         allow_paths: Directories the agent may read/write (relative to cwd).
             Must be explicitly provided; falls back to NO paths (empty list)
             if omitted, which blocks all fs operations.
+        read_only_paths: Allowed directories that may only be read. They must
+            also be present in allow_paths to make fs/read_text_file available.
         enable_terminal: If True, register terminal/* handlers. Defaults to
             False — callers must opt in (e.g. via provider_permissions).
         """
@@ -154,6 +157,7 @@ class AcpClient:
         # Register ACP fs handlers — gated by allow_paths
         from .handlers import handle_fs_read, handle_fs_write, TerminalManager
         paths = allow_paths if allow_paths is not None else []
+        read_only = read_only_paths if read_only_paths is not None else []
         cwd = self._cwd
         if paths:
             self._transport.register_handler(
@@ -162,7 +166,7 @@ class AcpClient:
             )
             self._transport.register_handler(
                 "fs/write_text_file",
-                lambda params: handle_fs_write(params, cwd, paths),
+                lambda params: handle_fs_write(params, cwd, paths, read_only),
             )
 
         # Terminal handlers — disabled by default, require explicit opt-in

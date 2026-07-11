@@ -31,12 +31,15 @@ Nested policy objects are deep-merged.
     "perspectives": {
       "claude": "security",
       "codex": "performance"
-    }
+    },
+    "divide": "dimensions"
   }
 }
 ```
 
 `providers` supplies the `--providers` shorthand. Calling Agents should still confirm the provider/model team with the user instead of treating a discoverable binary as consent. Use repeatable `--agent [alias=]provider:model` when a task needs multiple models from one provider.
+
+`perspectives` and `divide` are explicit coordination settings. A perspective adds a Provider prompt focus; `divide: "files"` partitions sorted regular files in the selected target scope without overlap, while `divide: "dimensions"` rotates fixed review lenses by invocation declaration order without changing target paths. They are visible in dry-run and never parse, rank, or rewrite Agent answers.
 
 ## Custom agent registry
 

@@ -31,16 +31,16 @@ When `--json` is requested and validation fails before a normal task result exis
 
 Provider processes do not start for configuration errors. Provider execution errors are retained in the normal `outputs` array, alongside any successful answers. Diagnostics are written to stderr rather than mixed into JSON stdout.
 
-## Common migration errors
+## Removed surfaces and migration errors
 
-The removed findings-oriented flags return actionable migration text:
+These commands and flags are removed. They return migration guidance rather than being silently accepted; they do not select a legacy runtime.
 
-- `--format`, `--strict-contract`: use raw text, `--json`, or `--stream jsonl`.
-- `--memory`, `--space`: persist raw answers with `--result-mode artifact`.
-- `--diff`, `--staged`, `--unstaged`, `--diff-base`: put scope in `--target-paths` and the prompt.
-- `mco findings`: inspect invocation outputs or persistent Markdown artifacts.
-
-These flags are not silently ignored.
+| Removed surface | Invocation-native replacement |
+|---|---|
+| `mco findings` | Use `mco run` / `mco review` output records or persistent Markdown artifacts. |
+| `--format`, `--strict-contract` | Use raw text, `--json`, or `--stream jsonl`. |
+| `--memory`, `--space` | Persist raw answers with `--result-mode artifact`, then pass them through a file-backed stage when needed. |
+| `--diff`, `--staged`, `--unstaged`, `--diff-base` | Put scope in `--target-paths` and the raw prompt. |
 
 ## JSONL errors
 

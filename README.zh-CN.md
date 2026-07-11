@@ -70,6 +70,8 @@ MCO 不会静默替你选择 Provider 或模型。缺少 `--providers` 和 `--ag
 
 MCO 将回答正文视为不透明内容，不会从自然语言中推断 finding、严重度、置信度、共识或自动决策。
 
+需要明确协调审查时，可用 `--perspectives-json` 为 Provider 添加 prompt 侧重点；`--divide files` 会将选定作用域内排序后的文件按声明顺序轮转分配且不重叠，`--divide dimensions` 会按声明顺序轮转审查维度且不改变 target paths。这些选择会在 dry-run 中显示，只改变 prompt 或作用域，返回的 invocation 回答仍保持原始内容。
+
 ## 内置 Provider
 
 | Provider | CLI | Provider ID |

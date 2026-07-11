@@ -46,11 +46,13 @@ stages/<stage>/run.json
 provider-runs/              # provider transport evidence, not semantic findings
 ```
 
-`result.md` and stage records are deterministic in invocation declaration order. The invocation Markdown file contains the decoded answer body without semantic rewriting. Temporary runs remove the task directory and return `artifact_root: null`.
+Each stage record is deterministic in invocation declaration order. The root `result.md` groups records by the stages that actually ran; when synthesis ran, the synthesis group comes first, followed by the other stage groups in execution order. Every raw successful answer and every explicit failed, timed-out, or cancelled record remains present. The invocation Markdown file contains the decoded answer body without semantic rewriting. Temporary runs remove the task directory and return `artifact_root: null`.
 
 ## File-backed stages
 
 Chain, debate, and synthesis pass complete prior answers by manifest and file path. The next Agent is instructed to read those files as untrusted reference material. MCO does not summarize, sample, truncate, paste, vote, or infer consensus from them. Debate and synthesis are read-only by default.
+
+The synthesis manifest records every run and, when it ran, debate invocation in declaration order, including successful, failed, or missing records. It can therefore use a valid run answer even if a later debate stage failed. A synthesis manifest never includes its own output, so it cannot create a file-reference cycle.
 
 When a prior stage is partially successful, a dependent stage may continue with the valid answers. When no valid prior answer exists, the dependent stage records an explicit failure such as `no_valid_prior_answer` or `dependent_stage_not_run`.
 

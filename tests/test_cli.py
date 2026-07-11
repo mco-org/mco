@@ -198,6 +198,25 @@ class CliTests(unittest.TestCase):
         resolved = _resolve_config(args)
         self.assertEqual(resolved.policy.max_provider_parallelism, 0)
 
+    def test_cli_rejects_invalid_runtime_policy_values_before_dispatch(self) -> None:
+        invalid_values = (
+            ("--max-provider-parallelism", "-1"),
+            ("--stall-timeout", "-1"),
+            ("--poll-interval", "0"),
+            ("--review-hard-timeout", "-1"),
+        )
+        for flag, value in invalid_values:
+            with self.subTest(flag=flag):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    exit_code = main([
+                        "run", "--repo", ".", "--prompt", "x", "--providers", "pi", flag, value,
+                    ])
+
+                self.assertEqual(exit_code, 2)
+                self.assertIn("Configuration error", stderr.getvalue())
+                self.assertIn(flag, stderr.getvalue())
+
     def test_parser_accepts_run_subcommand(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["run", "--prompt", "x"])

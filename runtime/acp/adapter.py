@@ -131,6 +131,9 @@ class AcpAdapter:
     def supported_permission_keys(self) -> List[str]:
         return list(self._permission_keys)
 
+    def supported_context_keys(self) -> List[str]:
+        return ["context_files"]
+
     def preview_command(
         self,
         provider_permissions: Optional[Dict[str, str]] = None,
@@ -159,8 +162,16 @@ class AcpAdapter:
 
         # Extract allow_paths and permissions from task metadata
         allow_paths = input_task.metadata.get("allow_paths", [])
+        if not isinstance(allow_paths, list):
+            allow_paths = []
+        read_only_paths = input_task.metadata.get("context_read_only_paths", [])
+        if not isinstance(read_only_paths, list):
+            read_only_paths = []
+        for path in read_only_paths:
+            if isinstance(path, str) and path and path not in allow_paths:
+                allow_paths.append(path)
         provider_perms = input_task.metadata.get("provider_permissions", {})
-        enable_terminal = provider_perms.get("terminal", "") != ""
+        enable_terminal = provider_perms.get("terminal", "") != "" and not read_only_paths
 
         # Build ACP command with permission flags applied
         acp_cmd = self.preview_command(provider_perms)
@@ -172,7 +183,11 @@ class AcpAdapter:
         )
 
         try:
-            client.start(allow_paths=allow_paths, enable_terminal=enable_terminal)
+            client.start(
+                allow_paths=allow_paths,
+                read_only_paths=[path for path in read_only_paths if isinstance(path, str) and path],
+                enable_terminal=enable_terminal,
+            )
             agent_info = client.initialize(timeout=30.0)
             session_id = client.new_session(
                 working_directory=input_task.repo_root,

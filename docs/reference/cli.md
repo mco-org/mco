@@ -70,10 +70,12 @@ Aliases must be unique. Repeating the same provider/model without distinct alias
 |--------|----------|
 | `--chain` | Run invocations sequentially and pass complete prior Markdown through a manifest |
 | `--debate` | Add a read-only stage over prior raw answers |
-| `--synthesize` | Add a read-only synthesis stage over the latest valid raw answers |
+| `--synthesize` | Add a read-only synthesis stage over the available run/debate raw records |
 | `--synth-provider` | Select the provider invocation used for synthesis |
+| `--perspectives-json` | Add an explicit per-provider prompt perspective |
+| `--divide files\|dimensions` | Assign non-overlapping scope files, or declaration-ordered rotating review lenses, without interpreting answers |
 
-Chain and debate are mutually exclusive. The removed divide/perspectives flags return migration guidance. Debate and synthesis mark earlier answer files as untrusted reference material. A valid earlier answer allows later stages to continue after a partial failure; no valid input produces an explicit dependent-stage failure.
+Chain, debate, and division are mutually exclusive. Perspectives and division are explicit prompt/scope coordination only: `--perspectives-json` prepends a Provider-specific `Review Perspective`; `--divide files` sorts regular files in the selected scope and assigns them round-robin in declaration order; `--divide dimensions` rotates the fixed review lenses in that order without changing `target_paths`. Dry-run shows the complete resolved invocation prompts and target paths. These options preserve raw invocation answers and never derive semantic findings or consensus. Debate and synthesis mark earlier answer files as untrusted reference material. A valid earlier answer allows later stages to continue after a partial failure; no valid input produces an explicit dependent-stage failure.
 
 `mco review` uses the same runtime. Its default prompt is a short natural-language review request, and an explicit `--prompt` is passed unchanged. It never injects a findings schema.
 
@@ -91,7 +93,7 @@ stages/<stage>/run.json
 provider-runs/                 # internal transport/provider evidence
 ```
 
-`result.md` is deterministic in declaration order. Per-invocation Markdown preserves the decoded Agent answer body. Temporary execution removes its task directory and reports `artifact_root: null`.
+Each stage is deterministic in declaration order. Root `result.md` groups the stages that actually ran; synthesis comes first when present, while every raw answer and explicit failure record remains below it. Per-invocation Markdown preserves the decoded Agent answer body. Temporary execution removes its task directory and reports `artifact_root: null`.
 
 ## Exit codes and task status
 

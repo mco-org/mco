@@ -47,6 +47,16 @@ class CodexAdapter(ShimAdapterBase):
                 sandbox = value.strip()
         approval_policy = raw_permissions.get("approval_policy") if isinstance(raw_permissions, dict) else None
         bypass = raw_permissions.get("bypass") if isinstance(raw_permissions, dict) else None
+        context_read_only_paths = input_task.metadata.get("context_read_only_paths", [])
+        has_context_read_only_paths = (
+            isinstance(context_read_only_paths, list)
+            and any(isinstance(path, str) and path for path in context_read_only_paths)
+        )
+        if has_context_read_only_paths:
+            # Codex --add-dir would make the context writable. A file-backed
+            # stage therefore uses the built-in read-only sandbox instead.
+            sandbox = "read-only"
+            bypass = None
         cmd = [
             "codex",
         ]

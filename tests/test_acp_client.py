@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 
 from runtime.acp.client import AcpClient, AgentInfo, SessionUpdate
 
@@ -110,6 +111,63 @@ class TestAcpClient(unittest.TestCase):
         self.assertTrue(self.client.alive)
         self.client.close()
         self.assertFalse(self.client.alive)
+
+
+class TestAcpContextPermissions(unittest.TestCase):
+    def test_context_path_handler_allows_read_and_rejects_write(self) -> None:
+        agent_script = r'''
+import json
+import sys
+
+context_path = sys.argv[1]
+for line in sys.stdin:
+    request = json.loads(line)
+    if request.get("method") != "initialize":
+        continue
+    sys.stdout.write(json.dumps({
+        "jsonrpc": "2.0", "id": request["id"],
+        "result": {"agentInfo": {"name": "context-agent", "version": "1"}},
+    }) + "\n")
+    sys.stdout.flush()
+    responses = {}
+    for request_id, method, params in (
+        (701, "fs/read_text_file", {"path": context_path}),
+        (702, "fs/write_text_file", {"path": context_path, "content": "tampered"}),
+    ):
+        sys.stdout.write(json.dumps({
+            "jsonrpc": "2.0", "id": request_id, "method": method, "params": params,
+        }) + "\n")
+        sys.stdout.flush()
+        responses[str(request_id)] = json.loads(sys.stdin.readline())
+    sys.stdout.write(json.dumps({
+        "jsonrpc": "2.0", "method": "context_access_result", "params": responses,
+    }) + "\n")
+    sys.stdout.flush()
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            context_dir = Path(tmp) / "context"
+            context_dir.mkdir()
+            context_file = context_dir / "answer.md"
+            context_file.write_text("prior answer", encoding="utf-8")
+            client = AcpClient(
+                command=[sys.executable, "-c", agent_script, str(context_file)],
+                cwd=tmp,
+            )
+            try:
+                client.start(
+                    allow_paths=[str(context_dir)],
+                    read_only_paths=[str(context_dir)],
+                )
+                client.initialize(timeout=5.0)
+                notification = client._transport.receive_notification(timeout=5.0)
+            finally:
+                client.close()
+
+        self.assertIsNotNone(notification)
+        assert notification is not None
+        responses = notification["params"]
+        self.assertEqual(responses["701"]["result"]["content"], "prior answer")
+        self.assertIn("read-only", responses["702"]["error"]["message"])
 
 
 class TestAcpClientNotificationOrder(unittest.TestCase):

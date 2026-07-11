@@ -162,6 +162,7 @@ def _run_one_invocation(
     prompt: str,
     timeout_seconds: int,
     provider_permissions: Mapping[str, Mapping[str, str]],
+    provider_context: Mapping[str, Mapping[str, object]],
     allow_paths: Sequence[str],
     cancel_event: threading.Event,
     cancel_state: Mapping[str, str],
@@ -171,6 +172,8 @@ def _run_one_invocation(
     context_paths: Sequence[str],
     context_manifest: Optional[str],
     global_deadline: Optional[float],
+    poll_interval_seconds: float,
+    include_token_usage: bool,
 ) -> dict[str, object]:
     task_id = (
         "invocation-{}".format(invocation.invocation_id)
@@ -179,6 +182,15 @@ def _run_one_invocation(
     )
     target_paths = list(invocation.execution_scope)
     target_paths.extend(path for path in context_paths if path not in target_paths)
+    context_read_only_paths = sorted({
+        str(Path(path).resolve().parent)
+        for path in context_paths
+        if isinstance(path, str) and path
+    })
+    effective_allow_paths = list(allow_paths)
+    effective_allow_paths.extend(
+        path for path in context_read_only_paths if path not in effective_allow_paths
+    )
     task = TaskInput(
         task_id=task_id,
         prompt=prompt,
@@ -188,7 +200,8 @@ def _run_one_invocation(
         metadata={
             "artifact_root": artifact_base,
             "invocation_id": invocation.invocation_id,
-            "allow_paths": list(allow_paths),
+            "allow_paths": effective_allow_paths,
+            "context_read_only_paths": context_read_only_paths,
             "provider_permissions": dict(provider_permissions.get(invocation.provider, {})),
             "stage": stage,
             "context_paths": list(context_paths),
@@ -198,6 +211,11 @@ def _run_one_invocation(
         task.metadata["context_manifest"] = context_manifest
     if invocation.model != "default":
         task.metadata["model"] = invocation.model
+    if invocation.provider in provider_context:
+        configured_context = provider_context[invocation.provider]
+        task.metadata["provider_context"] = (
+            dict(configured_context) if isinstance(configured_context, Mapping) else {}
+        )
 
     if cancel_event.is_set():
         return {
@@ -210,7 +228,9 @@ def _run_one_invocation(
             "exit_code": None,
         }
 
-    deadline = time.monotonic() + timeout_seconds
+    started_at = time.monotonic()
+    stall_deadline = started_at + timeout_seconds
+    deadline = stall_deadline
     if global_deadline is not None:
         deadline = min(deadline, global_deadline)
     start_deadline = deadline
@@ -270,7 +290,7 @@ def _run_one_invocation(
             stderr = stderr_path.read_text(encoding="utf-8") if stderr_path.exists() else ""
         except OSError as exc:
             stderr = "failed to read provider diagnostics: {}".format(exc)
-        return {
+        result: dict[str, object] = {
             "invocation_id": invocation.invocation_id,
             "provider": invocation.provider,
             "model": invocation.model,
@@ -280,10 +300,12 @@ def _run_one_invocation(
             "exit_code": exit_code,
             "deltas": [delta.text for delta in transport.deltas] if transport is not None else list(emitted_deltas),
             "transport_status": transport.status if transport is not None else ("succeeded" if invocation_status == "success" else invocation_status),
-            "usage": transport.usage if transport is not None else None,
             "stderr": stderr,
             "artifact_path": str(answer_path) if answer_path is not None else None,
         }
+        if include_token_usage and transport is not None and transport.usage is not None:
+            result["usage"] = transport.usage
+        return result
 
     while True:
         if cancel_event.is_set():
@@ -348,6 +370,7 @@ def _run_one_invocation(
                             status.exit_code,
                         )
                 emitted_answer = streamed_answer
+                stall_deadline = time.monotonic() + timeout_seconds
         if status.completed:
             if status.attempt_state == "SUCCEEDED":
                 decode_transport = getattr(adapter, "decode_transport", None)
@@ -370,13 +393,16 @@ def _run_one_invocation(
             else:
                 invocation_status = "failed"
             return completed_result(invocation_status, status.message or status.attempt_state.lower(), status.exit_code)
-        if time.monotonic() >= deadline:
+        active_deadline = stall_deadline
+        if global_deadline is not None:
+            active_deadline = min(active_deadline, global_deadline)
+        if time.monotonic() >= active_deadline:
             try:
                 adapter.cancel(run_ref)
             except Exception:
                 pass
             return completed_result("timeout", "invocation '{}' timed out".format(invocation.invocation_id), None)
-        time.sleep(0.05)
+        time.sleep(poll_interval_seconds)
 
 
 def run_invocations(
@@ -392,11 +418,18 @@ def run_invocations(
     task_id: str = "",
     persist_artifacts: bool = False,
     global_timeout_seconds: Optional[float] = None,
+    global_deadline: Optional[float] = None,
     cancel_event: Optional[threading.Event] = None,
     event_callback: Optional[Callable[[dict[str, object]], None]] = None,
     stage: str = "run",
     context_paths: Sequence[str] = (),
     context_manifest: Optional[str] = None,
+    provider_context: Optional[Mapping[str, Mapping[str, object]]] = None,
+    provider_timeouts: Optional[Mapping[str, int]] = None,
+    max_provider_parallelism: int = 0,
+    poll_interval_seconds: float = 0.05,
+    include_token_usage: bool = False,
+    invocation_prompts: Optional[Mapping[str, str]] = None,
 ) -> dict[str, object]:
     outputs: list[Optional[dict[str, object]]] = [None] * len(invocations)
     stop_event = cancel_event or threading.Event()
@@ -421,12 +454,20 @@ def run_invocations(
         for invocation in invocations
     }
     try:
-        with ThreadPoolExecutor(max_workers=max(1, len(invocations))) as executor:
-            deadline = (
-                time.monotonic() + global_timeout_seconds
-                if global_timeout_seconds is not None and global_timeout_seconds > 0
-                else None
-            )
+        configured_parallelism = (
+            max_provider_parallelism
+            if isinstance(max_provider_parallelism, int) and not isinstance(max_provider_parallelism, bool)
+            else 0
+        )
+        max_workers = (
+            max(1, min(len(invocations), configured_parallelism))
+            if configured_parallelism > 0
+            else max(1, len(invocations))
+        )
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            deadline = global_deadline
+            if deadline is None and global_timeout_seconds is not None and global_timeout_seconds > 0:
+                deadline = time.monotonic() + global_timeout_seconds
             for invocation in invocations:
                 _notify(event_callback, {
                     "type": "invocation_started",
@@ -442,9 +483,10 @@ def run_invocations(
                     adapter=adapters[invocation.provider],
                     artifact_base=str(provider_artifact_base),
                     repo_root=repo_root,
-                    prompt=prompt,
-                    timeout_seconds=timeout_seconds,
+                    prompt=(invocation_prompts or {}).get(invocation.invocation_id, prompt),
+                    timeout_seconds=(provider_timeouts or {}).get(invocation.provider, timeout_seconds),
                     provider_permissions=provider_permissions,
+                    provider_context=provider_context or {},
                     allow_paths=allow_paths,
                     cancel_event=stop_event,
                     cancel_state=stop_state,
@@ -454,6 +496,8 @@ def run_invocations(
                     context_paths=context_paths,
                     context_manifest=context_manifest,
                     global_deadline=deadline,
+                    poll_interval_seconds=poll_interval_seconds,
+                    include_token_usage=include_token_usage,
                 ): index
                 for index, invocation in enumerate(invocations)
             }
@@ -481,7 +525,7 @@ def run_invocations(
                         }
                     result.setdefault("artifact_path", str(answer_paths[invocations[index].invocation_id]))
                     outputs[index] = result
-                    _notify(event_callback, {
+                    event = {
                         "type": "invocation_finished",
                         "stage": stage,
                         "invocation_id": result["invocation_id"],
@@ -491,7 +535,10 @@ def run_invocations(
                         "error": result.get("error"),
                         "exit_code": result.get("exit_code"),
                         "stderr": result.get("stderr", ""),
-                    })
+                    }
+                    if "usage" in result:
+                        event["usage"] = result["usage"]
+                    _notify(event_callback, event)
                 if deadline is not None and pending and time.monotonic() >= deadline:
                     stop_state["reason"] = "timeout"
                     stop_event.set()
@@ -553,9 +600,18 @@ def _write_context_manifest(
     context_dir.mkdir(parents=True, exist_ok=True)
     inputs = []
     context_paths = []
-    for item in source_outputs:
+    for index, item in enumerate(source_outputs):
         raw_path = item.get("artifact_path")
-        path = str(Path(str(raw_path)).resolve()) if raw_path else ""
+        path = ""
+        if raw_path:
+            source_path = Path(str(raw_path)).resolve()
+            if source_path.is_file():
+                context_path = context_dir / "{:03d}-{}.md".format(
+                    index,
+                    item.get("invocation_id", "invocation"),
+                )
+                shutil.copyfile(source_path, context_path)
+                path = str(context_path.resolve())
         if path:
             context_paths.append(path)
         inputs.append({
@@ -587,6 +643,17 @@ def _context_prompt(task_prompt: str, manifest_path: Path, context_paths: Sequen
     ).format(task_prompt, manifest_path, paths)
 
 
+def _supports_context_files(adapter: ProviderAdapter) -> bool:
+    supported_context_keys = getattr(adapter, "supported_context_keys", None)
+    if not callable(supported_context_keys):
+        return False
+    try:
+        keys = supported_context_keys()
+    except (AttributeError, TypeError):
+        return False
+    return isinstance(keys, list) and "context_files" in keys
+
+
 def run_invocation_workflow(
     *,
     invocations: Sequence[AgentInvocation],
@@ -606,6 +673,12 @@ def run_invocation_workflow(
     debate: bool = False,
     synthesize: bool = False,
     synthesis_provider: Optional[str] = None,
+    provider_context: Optional[Mapping[str, Mapping[str, object]]] = None,
+    provider_timeouts: Optional[Mapping[str, int]] = None,
+    max_provider_parallelism: int = 0,
+    poll_interval_seconds: float = 0.05,
+    include_token_usage: bool = False,
+    invocation_prompts: Optional[Mapping[str, str]] = None,
 ) -> dict[str, object]:
     if not chain and not debate and not synthesize:
         return run_invocations(
@@ -622,6 +695,12 @@ def run_invocation_workflow(
             global_timeout_seconds=global_timeout_seconds,
             cancel_event=cancel_event,
             event_callback=event_callback,
+            provider_context=provider_context,
+            provider_timeouts=provider_timeouts,
+            max_provider_parallelism=max_provider_parallelism,
+            poll_interval_seconds=poll_interval_seconds,
+            include_token_usage=include_token_usage,
+            invocation_prompts=invocation_prompts,
         )
 
     resolved_task_id = task_id or "run-{}".format(uuid4().hex[:8])
@@ -638,6 +717,41 @@ def run_invocation_workflow(
     artifact_root.mkdir(parents=True, exist_ok=True)
     stop_event = cancel_event or threading.Event()
     all_outputs: list[dict[str, object]] = []
+    workflow_deadline = (
+        time.monotonic() + global_timeout_seconds
+        if global_timeout_seconds is not None and global_timeout_seconds > 0
+        else None
+    )
+
+    def stage_context_records(
+        stage: str,
+        stage_invocations: Sequence[AgentInvocation],
+        stage_outputs: Sequence[Mapping[str, object]],
+    ) -> list[dict[str, object]]:
+        outputs_by_invocation = {
+            str(item.get("invocation_id")): item
+            for item in stage_outputs
+        }
+        records = []
+        for invocation in stage_invocations:
+            item = outputs_by_invocation.get(invocation.invocation_id)
+            if item is None:
+                records.append({
+                    "invocation_id": invocation.invocation_id,
+                    "provider": invocation.provider,
+                    "model": invocation.model,
+                    "stage": stage,
+                    "status": "missing",
+                    "output": None,
+                    "error": "missing_stage_output",
+                    "exit_code": None,
+                    "artifact_path": None,
+                })
+                continue
+            record = dict(item)
+            record["stage"] = stage
+            records.append(record)
+        return records
 
     def run_stage(
         stage: str,
@@ -649,8 +763,21 @@ def run_invocation_workflow(
         context_paths: list[str] = []
         if source_outputs:
             manifest_path, context_paths = _write_context_manifest(artifact_root, stage, source_outputs)
-            stage_prompt = _context_prompt(stage_prompt, manifest_path, context_paths)
             context_paths = [str(manifest_path), *context_paths]
+        stage_invocation_prompts = None
+        if invocation_prompts:
+            stage_invocation_prompts = {
+                invocation.invocation_id: invocation_prompts.get(invocation.invocation_id, stage_prompt)
+                for invocation in stage_invocations
+            }
+        if manifest_path is not None:
+            if stage_invocation_prompts is None:
+                stage_prompt = _context_prompt(stage_prompt, manifest_path, context_paths[1:])
+            else:
+                stage_invocation_prompts = {
+                    invocation_id: _context_prompt(invocation_prompt, manifest_path, context_paths[1:])
+                    for invocation_id, invocation_prompt in stage_invocation_prompts.items()
+                }
         stage_permissions = provider_permissions
         if stage in ("debate", "synthesis"):
             from .execution_modes import execution_permissions
@@ -659,8 +786,27 @@ def run_invocation_workflow(
                 provider: execution_permissions(provider, "read_only") or dict(provider_permissions.get(provider, {}))
                 for provider in adapters
             }
+        eligible_invocations = list(stage_invocations)
+        unsupported_outputs = {}
+        if manifest_path is not None:
+            eligible_invocations = []
+            for invocation in stage_invocations:
+                if _supports_context_files(adapters[invocation.provider]):
+                    eligible_invocations.append(invocation)
+                    continue
+                unsupported_outputs[invocation.invocation_id] = {
+                    "invocation_id": invocation.invocation_id,
+                    "provider": invocation.provider,
+                    "model": invocation.model,
+                    "stage": stage,
+                    "status": "failed",
+                    "output": None,
+                    "error": "context_file_unsupported",
+                    "exit_code": None,
+                    "artifact_path": None,
+                }
         payload = run_invocations(
-            invocations=stage_invocations,
+            invocations=eligible_invocations,
             adapters=adapters,
             repo_root=repo_root,
             prompt=stage_prompt,
@@ -671,13 +817,29 @@ def run_invocation_workflow(
             task_id=resolved_task_id,
             persist_artifacts=True,
             global_timeout_seconds=global_timeout_seconds,
+            global_deadline=workflow_deadline,
             cancel_event=stop_event,
             event_callback=event_callback,
             stage=stage,
             context_paths=context_paths,
             context_manifest=str(manifest_path) if manifest_path is not None else None,
+            provider_context=provider_context,
+            provider_timeouts=provider_timeouts,
+            max_provider_parallelism=max_provider_parallelism,
+            poll_interval_seconds=poll_interval_seconds,
+            include_token_usage=include_token_usage,
+            invocation_prompts=stage_invocation_prompts,
         )
-        return [dict(item) for item in payload["outputs"]]
+        outputs_by_invocation = {
+            str(item.get("invocation_id")): dict(item)
+            for item in payload["outputs"]
+        }
+        outputs_by_invocation.update(unsupported_outputs)
+        return [
+            outputs_by_invocation[invocation.invocation_id]
+            for invocation in stage_invocations
+            if invocation.invocation_id in outputs_by_invocation
+        ]
 
     try:
         if chain:
@@ -709,10 +871,12 @@ def run_invocation_workflow(
             base_outputs = run_stage("run", invocations, prompt)
             all_outputs.extend(base_outputs)
             latest_outputs = base_outputs
+            synthesis_sources = stage_context_records("run", invocations, base_outputs)
             if debate and any(item.get("status") == "success" for item in latest_outputs):
                 debate_outputs = run_stage("debate", invocations, prompt, latest_outputs)
                 all_outputs.extend(debate_outputs)
                 latest_outputs = debate_outputs
+                synthesis_sources.extend(stage_context_records("debate", invocations, debate_outputs))
             if synthesize:
                 synthesis_invocation = next(
                     (item for item in invocations if synthesis_provider and item.provider == synthesis_provider),
@@ -730,8 +894,8 @@ def run_invocation_workflow(
                         "exit_code": None,
                         "artifact_path": None,
                     })
-                elif any(item.get("status") == "success" for item in latest_outputs):
-                    synthesis_outputs = run_stage("synthesis", [synthesis_invocation], prompt, latest_outputs)
+                elif any(item.get("status") == "success" for item in synthesis_sources):
+                    synthesis_outputs = run_stage("synthesis", [synthesis_invocation], prompt, synthesis_sources)
                     all_outputs.extend(synthesis_outputs)
                 else:
                     all_outputs.append({

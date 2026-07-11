@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .adapters import adapter_registry
-from .config import ReviewConfig, ReviewPolicy, load_agent_registrations
+from .config import DIVISION_DIMENSIONS, ReviewConfig, ReviewPolicy, load_agent_registrations
 from .contracts import ProviderPresence, TaskInput
 from .execution_modes import EXECUTION_MODES, execution_permissions
-from .invocation_runtime import default_invocations, parse_invocations, run_invocation_workflow, validate_execution_scope
+from .invocation_runtime import AgentInvocation, default_invocations, parse_invocations, run_invocation_workflow, validate_execution_scope
 from .models import discover_models
 from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
@@ -432,6 +432,74 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def _files_for_division(repo_root: str, execution_scope: List[str]) -> List[str]:
+    root = Path(repo_root).resolve()
+    files = set()
+    for scope in execution_scope:
+        candidate = (root / scope).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            files.add(str(candidate.relative_to(root)))
+        elif candidate.is_dir():
+            for child in candidate.rglob("*"):
+                if not child.is_file() or ".git" in child.parts:
+                    continue
+                try:
+                    files.add(str(child.relative_to(root)))
+                except ValueError:
+                    continue
+    return sorted(files)
+
+
+def _apply_file_division(
+    repo_root: str,
+    invocations: List[AgentInvocation],
+    divide: str,
+) -> List[AgentInvocation]:
+    if divide != "files" or not invocations:
+        return list(invocations)
+    files = _files_for_division(repo_root, list(invocations[0].execution_scope))
+    assignments = [[] for _ in invocations]
+    for index, path in enumerate(files):
+        assignments[index % len(invocations)].append(path)
+    return [
+        AgentInvocation(
+            invocation_id=invocation.invocation_id,
+            provider=invocation.provider,
+            model=invocation.model,
+            declaration_order=invocation.declaration_order,
+            execution_scope=tuple(assignments[index]),
+        )
+        for index, invocation in enumerate(invocations)
+    ]
+
+
+def _invocation_prompts(
+    prompt: str,
+    invocations: List[AgentInvocation],
+    policy: ReviewPolicy,
+) -> Dict[str, str]:
+    prompts: Dict[str, str] = {}
+    for index, invocation in enumerate(invocations):
+        additions = []
+        perspective = policy.perspectives.get(invocation.provider, "")
+        if perspective:
+            additions.append("## Review Perspective\n{}".format(perspective))
+        if policy.divide == "files":
+            assigned = "\n".join("- {}".format(path) for path in invocation.execution_scope)
+            additions.append(
+                "## Coordination\nAssigned files (non-overlapping):\n{}".format(assigned or "- (no files assigned)")
+            )
+        elif policy.divide == "dimensions":
+            dimension = DIVISION_DIMENSIONS[index % len(DIVISION_DIMENSIONS)]
+            additions.append("## Coordination\nAssigned review dimension: {}".format(dimension))
+        prompts[invocation.invocation_id] = "\n\n".join([*additions, prompt]) if additions else prompt
+    return prompts
+
+
 def _dry_run_command_template(provider: str, adapter: object, req: ExecutionPreviewRequest, review_mode: bool, policy: Dict[str, object]) -> List[str]:
     metadata: Dict[str, object] = {
         "artifact_root": "<artifact_root>",
@@ -476,6 +544,8 @@ def _build_dry_run_payload(
     transport: str,
     synthesize: bool,
     synth_provider: str,
+    invocations: Optional[List[AgentInvocation]] = None,
+    invocation_prompts: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, object]:
     provider_details: Dict[str, object] = {}
     for provider in providers:
@@ -510,6 +580,8 @@ def _build_dry_run_payload(
             "policy": policy,
             "command_template": _dry_run_command_template(provider, adapter, req, review_mode, policy),
         }
+    resolved_invocations = invocations or []
+    resolved_prompts = invocation_prompts or {}
     return {
         "command": args.command,
         "dry_run": True,
@@ -540,6 +612,20 @@ def _build_dry_run_payload(
             "divide": req.policy.divide,
         },
         "providers_detail": provider_details,
+        "provider_prompts": {
+            invocation.provider: resolved_prompts.get(invocation.invocation_id, req.prompt)
+            for invocation in resolved_invocations
+        },
+        "invocations": [
+            {
+                "invocation_id": invocation.invocation_id,
+                "provider": invocation.provider,
+                "model": invocation.model,
+                "target_paths": list(invocation.execution_scope),
+                "prompt": resolved_prompts.get(invocation.invocation_id, req.prompt),
+            }
+            for invocation in resolved_invocations
+        ],
         "execution_mode": req.policy.execution_mode,
         "synthesis": {"enabled": synthesize, "provider": synth_provider or None},
     }
@@ -568,6 +654,21 @@ def _render_dry_run_report(payload: Dict[str, object]) -> str:
             command = item.get("command_template", [])
             if isinstance(command, list) and command:
                 lines.append("  command=" + " ".join(str(part) for part in command))
+    invocations = payload.get("invocations", [])
+    if isinstance(invocations, list) and invocations:
+        lines.extend(["", "Invocation Instructions"])
+        for invocation in invocations:
+            if not isinstance(invocation, dict):
+                continue
+            lines.append(
+                "- {} ({}:{}) paths={}".format(
+                    invocation.get("invocation_id"),
+                    invocation.get("provider"),
+                    invocation.get("model"),
+                    ",".join(str(path) for path in invocation.get("target_paths", [])),
+                )
+            )
+            lines.append("  prompt=" + str(invocation.get("prompt", "")))
     return "\n".join(lines)
 
 
@@ -1053,7 +1154,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     access.add_argument(
         "--perspectives-json",
         default="",
-        help=argparse.SUPPRESS,
+        help="Per-provider explicit prompt addition JSON, e.g. '{\"codex\":\"Focus on security\"}'",
     )
     review_flow = access.add_mutually_exclusive_group()
     review_flow.add_argument(
@@ -1070,7 +1171,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--divide",
         choices=("files", "dimensions"),
         default="",
-        help=argparse.SUPPRESS,
+        help="Explicit non-semantic task division: files assigns non-overlapping files; dimensions assigns review lenses",
     )
     access.add_argument(
         "--strict-contract",
@@ -1414,6 +1515,30 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     review_hard_timeout_seconds = getattr(args, "review_hard_timeout", None)
     if review_hard_timeout_seconds is None:
         review_hard_timeout_seconds = fc_policy.get("review_hard_timeout_seconds", cfg.policy.review_hard_timeout_seconds)
+    if (
+        not isinstance(max_provider_parallelism, int)
+        or isinstance(max_provider_parallelism, bool)
+        or max_provider_parallelism < 0
+    ):
+        raise ValueError("--max-provider-parallelism must be an integer greater than or equal to 0")
+    if (
+        not isinstance(stall_timeout_seconds, int)
+        or isinstance(stall_timeout_seconds, bool)
+        or stall_timeout_seconds < 0
+    ):
+        raise ValueError("--stall-timeout must be a non-negative integer")
+    if (
+        not isinstance(poll_interval_seconds, (int, float))
+        or isinstance(poll_interval_seconds, bool)
+        or poll_interval_seconds <= 0
+    ):
+        raise ValueError("--poll-interval must be a positive number")
+    if (
+        not isinstance(review_hard_timeout_seconds, int)
+        or isinstance(review_hard_timeout_seconds, bool)
+        or review_hard_timeout_seconds < 0
+    ):
+        raise ValueError("--review-hard-timeout must be an integer greater than or equal to 0")
     # Parse perspectives from CLI or config
     perspectives: Dict[str, str] = {}
     perspectives_json = getattr(args, "perspectives_json", "")
@@ -2012,13 +2137,6 @@ def main(argv: List[str] | None = None) -> int:
             "removed_surface",
             "diff review flags were removed. Put the desired scope in --target-paths or the prompt.",
         )
-    if str(getattr(args, "divide", "") or "").strip() or str(getattr(args, "perspectives_json", "") or "").strip() or policy_cfg.get("divide") or policy_cfg.get("perspectives"):
-        return _stream_error_exit(
-            "removed_surface",
-            "--divide and --perspectives-json were removed with the semantic review layer. "
-            "Use explicit --agent invocations with partitioned --target-paths and raw prompts.",
-        )
-
     configured_agents = file_config.get("agents", []) if isinstance(file_config.get("agents"), list) else []
 
     # Build extra_agents from --custom-agent flag.
@@ -2088,6 +2206,7 @@ def main(argv: List[str] | None = None) -> int:
                 if raw_invocation_agents
                 else default_invocations(providers, execution_scope, cfg.policy.provider_models)
             )
+            invocations = _apply_file_division(repo_root, invocations, cfg.policy.divide)
         except ValueError as exc:
             return _invocation_error("input_error", str(exc))
         if not invocations:
@@ -2096,6 +2215,7 @@ def main(argv: List[str] | None = None) -> int:
                 "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
                 "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
             )
+        invocation_prompts = _invocation_prompts(prompt, invocations, cfg.policy)
         adapter_map = _doctor_adapter_registry(
             transport=getattr(args, "transport", "shim"),
             extra_agents=extra_agents,
@@ -2104,6 +2224,7 @@ def main(argv: List[str] | None = None) -> int:
         unknown = [item.provider for item in invocations if item.provider not in adapter_map]
         if unknown:
             return _invocation_error("invalid_providers", "Unknown providers: {}".format(", ".join(dict.fromkeys(unknown))))
+        effective_provider_context: Dict[str, Dict[str, object]] = {}
         for invocation in invocations:
             preview = provider_policy_preview(invocation.provider, adapter_map[invocation.provider], cfg.policy)
             if preview["would_fail_strict"]:
@@ -2135,6 +2256,11 @@ def main(argv: List[str] | None = None) -> int:
                 return _invocation_error(
                     "input_error",
                     "unknown model '{}' for provider '{}'".format(invocation.model, invocation.provider),
+                )
+            if invocation.provider in cfg.policy.provider_context:
+                applied_context = preview.get("applied_context", {})
+                effective_provider_context[invocation.provider] = (
+                    dict(applied_context) if isinstance(applied_context, Mapping) else {}
                 )
         cancel_event = threading.Event()
         previous_sigint = signal.getsignal(signal.SIGINT)
@@ -2206,6 +2332,11 @@ def main(argv: List[str] | None = None) -> int:
                 prompt=prompt,
                 timeout_seconds=cfg.policy.stall_timeout_seconds,
                 provider_permissions=cfg.policy.provider_permissions,
+                provider_context=effective_provider_context,
+                provider_timeouts=cfg.policy.provider_timeouts,
+                max_provider_parallelism=cfg.policy.max_provider_parallelism,
+                poll_interval_seconds=cfg.policy.poll_interval_seconds,
+                include_token_usage=bool(args.include_token_usage),
                 allow_paths=cfg.policy.allow_paths,
                 global_timeout_seconds=(
                     cfg.policy.review_hard_timeout_seconds
@@ -2221,6 +2352,7 @@ def main(argv: List[str] | None = None) -> int:
                 debate=cfg.policy.debate,
                 synthesize=synthesize,
                 synthesis_provider=synth_provider or None,
+                invocation_prompts=invocation_prompts,
             )
         except ValueError as exc:
             return _invocation_error("input_error", str(exc))
@@ -2261,6 +2393,14 @@ def main(argv: List[str] | None = None) -> int:
     if getattr(args, "dry_run", False):
         preview_adapters = adapters or _doctor_adapter_registry()
         try:
+            preview_scope = req.target_paths or ["."]
+            preview_invocations = (
+                parse_invocations(raw_invocation_agents, preview_scope)
+                if raw_invocation_agents
+                else default_invocations(providers, preview_scope, cfg.policy.provider_models)
+            )
+            preview_invocations = _apply_file_division(repo_root, preview_invocations, cfg.policy.divide)
+            preview_prompts = _invocation_prompts(prompt, preview_invocations, cfg.policy)
             payload = _build_dry_run_payload(
                 args,
                 req,
@@ -2272,6 +2412,8 @@ def main(argv: List[str] | None = None) -> int:
                 transport=transport,
                 synthesize=synthesize,
                 synth_provider=synth_provider,
+                invocations=preview_invocations,
+                invocation_prompts=preview_prompts,
             )
         except (KeyError, TypeError, ValueError) as exc:
             if stream_renderer is not None:

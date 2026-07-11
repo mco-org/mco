@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import threading
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 def _check_path_allowed(path: str, cwd: str, allow_paths: List[str]) -> str:
@@ -30,6 +30,26 @@ def _check_path_allowed(path: str, cwd: str, allow_paths: List[str]) -> str:
             continue
 
     raise PermissionError("Path '{}' is outside allowed paths: {}".format(path, allow_paths))
+
+
+def _check_path_writable(
+    path: str,
+    cwd: str,
+    allow_paths: List[str],
+    read_only_paths: List[str],
+) -> str:
+    """Resolve an allowed path and reject scopes granted for context reads only."""
+    resolved = _check_path_allowed(path, cwd, allow_paths)
+    resolved_path = Path(resolved)
+    cwd_resolved = Path(cwd).resolve()
+    for read_only_path in read_only_paths:
+        readonly_resolved = (cwd_resolved / read_only_path).resolve()
+        try:
+            resolved_path.relative_to(readonly_resolved)
+        except ValueError:
+            continue
+        raise PermissionError("Path '{}' is inside a read-only allowed path".format(path))
+    return resolved
 
 
 def handle_fs_read(
@@ -54,6 +74,7 @@ def handle_fs_write(
     params: Dict[str, Any],
     cwd: str,
     allow_paths: List[str],
+    read_only_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Handle fs/write_text_file request."""
     path = params.get("path", "")
@@ -61,7 +82,7 @@ def handle_fs_write(
     if not path:
         raise ValueError("Missing 'path' parameter")
 
-    resolved = _check_path_allowed(path, cwd, allow_paths)
+    resolved = _check_path_writable(path, cwd, allow_paths, read_only_paths or [])
     Path(resolved).parent.mkdir(parents=True, exist_ok=True)
     Path(resolved).write_text(content, encoding="utf-8")
     return {}

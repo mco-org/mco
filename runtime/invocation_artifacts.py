@@ -27,6 +27,60 @@ class InvocationArtifactWriter:
             handle.write(text)
             handle.flush()
 
+    @staticmethod
+    def _append_invocation_result(result_parts: list[str], item: Mapping[str, object]) -> None:
+        invocation_id = str(item.get("invocation_id", ""))
+        provider = str(item.get("provider", ""))
+        model = str(item.get("model", ""))
+        invocation_status = str(item.get("status", "failed"))
+        result_parts.append("### Invocation: {} ({}:{})\n".format(invocation_id, provider, model))
+        if invocation_status == "success":
+            result_parts.append(str(item.get("output", "")))
+            result_parts.append("\n\n")
+            return
+        result_parts.append("status: {}\n".format(invocation_status))
+        error = item.get("error")
+        if error:
+            result_parts.append("error: {}\n".format(error))
+        result_parts.append("\n")
+
+    @staticmethod
+    def _run_output(item: Mapping[str, object]) -> dict[str, object]:
+        run_output = {
+            "invocation_id": str(item.get("invocation_id", "")),
+            "provider": str(item.get("provider", "")),
+            "model": str(item.get("model", "")),
+            "status": str(item.get("status", "failed")),
+            "exit_code": item.get("exit_code"),
+            "error": item.get("error"),
+            "output_path": item.get("artifact_path"),
+        }
+        if "usage" in item:
+            run_output["usage"] = item["usage"]
+        return run_output
+
+    @staticmethod
+    def _write_run_metadata(
+        output_root: Path,
+        *,
+        task_id: str,
+        stage: str,
+        status: str,
+        exit_code: int,
+        outputs: Sequence[Mapping[str, object]],
+    ) -> None:
+        output_root.mkdir(parents=True, exist_ok=True)
+        (output_root / "run.json").write_text(
+            json.dumps({
+                "task_id": task_id,
+                "stage": stage,
+                "status": status,
+                "exit_code": exit_code,
+                "outputs": [InvocationArtifactWriter._run_output(item) for item in outputs],
+            }, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     def write_run(
         self,
         *,
@@ -36,45 +90,19 @@ class InvocationArtifactWriter:
         outputs: Sequence[Mapping[str, object]],
     ) -> None:
         result_parts = ["# MCO Run\n", "## Stage: {}\n".format(self.stage)]
-        run_outputs = []
         for item in outputs:
-            invocation_id = str(item.get("invocation_id", ""))
-            provider = str(item.get("provider", ""))
-            model = str(item.get("model", ""))
-            invocation_status = str(item.get("status", "failed"))
-            result_parts.append("### Invocation: {} ({}:{})\n".format(invocation_id, provider, model))
-            if invocation_status == "success":
-                result_parts.append(str(item.get("output", "")))
-                result_parts.append("\n\n")
-            else:
-                result_parts.append("status: {}\n".format(invocation_status))
-                error = item.get("error")
-                if error:
-                    result_parts.append("error: {}\n".format(error))
-                result_parts.append("\n")
-            run_outputs.append({
-                "invocation_id": invocation_id,
-                "provider": provider,
-                "model": model,
-                "status": invocation_status,
-                "exit_code": item.get("exit_code"),
-                "error": item.get("error"),
-                "usage": item.get("usage"),
-                "output_path": item.get("artifact_path"),
-            })
+            self._append_invocation_result(result_parts, item)
 
         output_root = self.root if self.stage == "run" else self.root / "stages" / self.stage
         output_root.mkdir(parents=True, exist_ok=True)
         (output_root / "result.md").write_text("".join(result_parts), encoding="utf-8")
-        (output_root / "run.json").write_text(
-            json.dumps({
-                "task_id": task_id,
-                "stage": self.stage,
-                "status": status,
-                "exit_code": exit_code,
-                "outputs": run_outputs,
-            }, ensure_ascii=True, indent=2) + "\n",
-            encoding="utf-8",
+        self._write_run_metadata(
+            output_root,
+            task_id=task_id,
+            stage=self.stage,
+            status=status,
+            exit_code=exit_code,
+            outputs=outputs,
         )
 
     def write_root_run(
@@ -85,8 +113,26 @@ class InvocationArtifactWriter:
         exit_code: int,
         outputs: Sequence[Mapping[str, object]],
     ) -> None:
-        InvocationArtifactWriter(self.root, stage="run").write_run(
+        grouped_outputs: dict[str, list[Mapping[str, object]]] = {}
+        for item in outputs:
+            stage = str(item.get("stage", "run"))
+            grouped_outputs.setdefault(stage, []).append(item)
+        ordered_stages = [stage for stage in grouped_outputs if stage != "synthesis"]
+        if "synthesis" in grouped_outputs:
+            ordered_stages.insert(0, "synthesis")
+
+        result_parts = ["# MCO Run\n"]
+        for stage in ordered_stages:
+            result_parts.append("## Stage: {}\n".format(stage))
+            for item in grouped_outputs[stage]:
+                self._append_invocation_result(result_parts, item)
+
+        self.root.mkdir(parents=True, exist_ok=True)
+        (self.root / "result.md").write_text("".join(result_parts), encoding="utf-8")
+        self._write_run_metadata(
+            self.root,
             task_id=task_id,
+            stage="run",
             status=status,
             exit_code=exit_code,
             outputs=outputs,

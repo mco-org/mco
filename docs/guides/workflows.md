@@ -64,6 +64,8 @@ mco run --repo . --target-paths tests/test_parser.py \
 
 Parallel writing is an explicit user choice. MCO does not create or manage worktrees and does not prohibit parallel writers. The calling Agent should partition ownership into non-overlapping paths, use distinct task IDs, and warn about shared-file edit conflicts before dispatch.
 
+For review coordination, `--perspectives-json` prepends an explicit Provider prompt focus. `--divide files` sorts the regular files in the selected target scope and assigns them round-robin without overlap; `--divide dimensions` rotates fixed review lenses in invocation declaration order and leaves `target_paths` unchanged. Dry-run shows the fully resolved prompts and target paths. These settings only arrange prompts or scope; MCO still returns each invocation's untouched raw answer and never infers a semantic conclusion. `--divide` cannot be combined with `--chain` or `--debate`.
+
 ## Chain, debate, and synthesis
 
 ### Chain
@@ -86,7 +88,7 @@ mco review --repo . --prompt "Challenge the previous analysis." \
   --result-mode both --task-id debate-run
 ```
 
-Debate and synthesis are read-only stages. Earlier outputs are untrusted reference material. If an earlier stage is partially successful, later stages continue when at least one valid answer exists; otherwise the dependent stage records an explicit failure and the aggregate remains `partial` or `failed`.
+Debate and synthesis are read-only stages. Earlier outputs are untrusted reference material. The synthesis manifest retains run and (when run) debate records in declaration order, including explicit failure or missing records; it never points at synthesis output itself. If an earlier stage is partially successful, later stages continue when at least one valid answer exists, including a valid run answer after a failed debate; otherwise the dependent stage records an explicit failure and the aggregate remains `partial` or `failed`.
 
 ## Output and artifacts
 
@@ -100,7 +102,7 @@ Debate and synthesis are read-only stages. Earlier outputs are untrusted referen
   stages/<stage>/run.json
 ```
 
-Use `stdout` for temporary answer delivery, `artifact` for persistent files, or `both` for both. Temporary runs clean up their runtime directory and report `artifact_root: null`. Persistent Markdown contains the raw answer body; `run.json` contains only operational metadata.
+Use `stdout` for temporary answer delivery, `artifact` for persistent files, or `both` for both. Temporary runs clean up their runtime directory and report `artifact_root: null`. Persistent Markdown contains the raw answer body; root `result.md` groups actual stages, puts synthesis first when present, and still keeps all raw answers and explicit failures. `run.json` contains only operational metadata.
 
 ## Streaming and machine output
 

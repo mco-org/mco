@@ -17,6 +17,7 @@ class PackageVersionTests(unittest.TestCase):
 
         self.assertEqual(package_version, pyproject_version)
         self.assertEqual(package_version, runtime_version)
+        self.assertEqual(package_version, "0.11.0")
 
 
 if __name__ == "__main__":

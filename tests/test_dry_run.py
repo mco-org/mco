@@ -88,7 +88,7 @@ class DryRunTests(unittest.TestCase):
         self.assertIn("would_execute: False", output)
         self.assertIn("pi: risk=read_only", output)
 
-    def test_dry_run_review_rejects_removed_perspective_and_division_flags(self) -> None:
+    def test_dry_run_review_exposes_perspective_and_division_prompts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
             with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
@@ -97,17 +97,21 @@ class DryRunTests(unittest.TestCase):
                         "review",
                         "--repo", tmp,
                         "--prompt", "Review for bugs.",
-                        "--providers", "codex",
+                        "--providers", "codex,pi",
                         "--perspectives-json", '{"codex":"Focus on security"}',
                         "--divide", "dimensions",
                         "--dry-run",
                         "--json",
                     ])
 
-        self.assertEqual(exit_code, 2)
+        self.assertEqual(exit_code, 0)
         mock_run_workflow.assert_not_called()
         payload = json.loads(stdout_buf.getvalue())
-        self.assertEqual(payload["error"]["subtype"], "removed_surface")
+        self.assertEqual(payload["policy"]["divide"], "dimensions")
+        self.assertEqual(payload["policy"]["perspectives"], {"codex": "Focus on security"})
+        self.assertIn("Focus on security", payload["provider_prompts"]["codex"])
+        self.assertIn("Assigned review dimension: security", payload["provider_prompts"]["codex"])
+        self.assertIn("Assigned review dimension: performance", payload["provider_prompts"]["pi"])
 
     def test_dry_run_empty_provider_context_reaches_command_template(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

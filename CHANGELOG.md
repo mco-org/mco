@@ -7,10 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+- Added the v0.11.0 invocation-native runtime: explicit model-qualified invocations, raw-answer operational records, and file-backed chain, debate, and synthesis stages.
+
 ### Changed
+- Made raw invocation output the active public contract. Persistent root results now group actual stages, put final synthesis first, and retain every raw answer and explicit failure record.
 - Restored MCO's active-maintenance positioning, with Hive documented as a complementary browser workbench.
 - Made installer agent selection fail before global mutation in non-interactive and dry-run flows.
 - Pinned the tested Skill installer dependency to `skills@1.5.15`.
+
+### Removed
+- Removed the findings schema and semantic normalization, decision, consensus, findings-memory, Markdown-PR, SARIF, and content-derived status surfaces. Removed flags return migration guidance rather than running a legacy path.
 
 ### Fixed
 - Expanded Skill health checks to every supported calling agent and the complete bundled Skill tree.

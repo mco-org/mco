@@ -62,6 +62,29 @@ class ContractFreezeTests(unittest.TestCase):
                 with self.subTest(document=document.name, provider=provider):
                     self.assertIn(provider, text)
 
+    def test_step0_freeze_is_explicitly_superseded_by_the_invocation_contract(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        text = (repo_root / "docs" / "implementation" / "step0-interface-freeze.md").read_text(encoding="utf-8")
+
+        self.assertIn("Status: SUPERSEDED", text)
+        self.assertIn("../contracts/invocation-runtime-v1.md", text)
+
+    def test_invocation_contract_covers_synthesis_inputs_and_root_aggregation(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        text = (repo_root / "docs" / "contracts" / "invocation-runtime-v1.md").read_text(encoding="utf-8")
+
+        self.assertIn("successful, failed, or missing", text)
+        self.assertIn("never includes its own output", text)
+        self.assertIn("synthesis group comes first", text)
+
+    def test_error_contract_pairs_removed_surfaces_with_invocation_replacements(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        text = (repo_root / "docs" / "contracts" / "errors-v0.1.x.md").read_text(encoding="utf-8")
+
+        self.assertIn("| Removed surface | Invocation-native replacement |", text)
+        self.assertIn("`mco findings`", text)
+        self.assertIn("`mco run` / `mco review`", text)
+
     def test_validate_task_id_rejects_absolute_path(self) -> None:
         with self.assertRaises(ValueError):
             validate_task_id("/etc/passwd")

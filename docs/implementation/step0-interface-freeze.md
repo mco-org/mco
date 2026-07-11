@@ -1,15 +1,17 @@
-# Step 0 Interface Freeze (Stage A)
+# Step 0 Interface Freeze (Stage A, historical snapshot)
 
 Date: 2026-02-26  
-Status: READY FOR STEP 1
+Status: SUPERSEDED
 
-This document freezes three implementation contracts before adapter coding:
+The active invocation-native contracts are [the invocation and artifact contract](../contracts/invocation-runtime-v1.md) and the neighboring active CLI/provider contracts. This file is retained only as an archived Stage A snapshot; it does not define the current Provider, result, or artifact contract.
+
+This document froze three implementation contracts before the invocation-native migration:
 - Provider adapter input/output interfaces (proposal §2).
 - Runtime `RunResult` field contract.
 - Artifact directory/output contract (proposal §13).
 
 ## 1) ProviderAdapter Contract (Frozen)
-Runtime source of truth: `runtime/contracts.py`.
+Historical Stage A source of truth: `runtime/contracts.py`.
 
 Required methods:
 - `detect() -> ProviderPresence`
@@ -24,7 +26,7 @@ Frozen enums/sets:
 - `CapabilityTier`: `C0..C6`
 
 ## 2) RunResult Contract (Frozen)
-Runtime source of truth: `runtime/types.py`.
+Historical Stage A source of truth: `runtime/types.py`.
 
 Schema version:
 - `RUN_RESULT_SCHEMA_VERSION = "stage-a-v2"`
@@ -42,7 +44,7 @@ Frozen field order:
 10. `deduped_dispatch`
 
 ## 3) Artifact Layout Contract (Frozen)
-Runtime source of truth: `runtime/artifacts.py`.
+Historical Stage A source of truth: `runtime/artifacts.py`.
 
 Layout version:
 - `ARTIFACT_LAYOUT_VERSION = "stage-a-v1"`
@@ -72,7 +74,7 @@ Per-provider required files:
 - [x] Contract-freeze tests enforce these shapes:
   - `tests/test_contract_freeze.py`
 
-## 5) Change Policy
+## 5) Historical Change Policy
 If any frozen field/signature/layout changes:
 1. Bump schema version (`stage-a-v2`).
 2. Update this document.
