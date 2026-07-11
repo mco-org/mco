@@ -119,6 +119,32 @@ class StreamingFakeAdapter(DeterministicFakeAdapter):
 
 
 class InvocationRuntimeCliTests(unittest.TestCase):
+    def test_review_uses_invocation_runtime_and_preserves_explicit_prompt(self) -> None:
+        adapter = DeterministicFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "review", "--repo", repo, "--prompt", "plain review", "--providers", "pi", "--json",
+                ])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(adapter.inputs[0].prompt, "plain review")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "complete")
+        self.assertNotIn("findings", payload["outputs"][0]["output"])
+
+    def test_review_without_prompt_uses_natural_language_default(self) -> None:
+        adapter = DeterministicFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), patch("sys.stdin", io.StringIO("")), contextlib.redirect_stdout(stdout):
+                exit_code = main(["review", "--repo", repo, "--providers", "pi", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("review", adapter.inputs[0].prompt.lower())
+        self.assertNotIn("json", adapter.inputs[0].prompt.lower())
+
     def test_event_callback_failure_does_not_break_invocation_cleanup(self) -> None:
         adapter = DeterministicFakeAdapter()
 

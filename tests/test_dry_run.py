@@ -8,7 +8,6 @@ import unittest
 from unittest.mock import patch
 
 from runtime.cli import main
-from runtime.review_engine import REVIEW_FINDINGS_SCHEMA_PATH
 
 
 class DryRunTests(unittest.TestCase):
@@ -89,7 +88,7 @@ class DryRunTests(unittest.TestCase):
         self.assertIn("would_execute: False", output)
         self.assertIn("pi: risk=read_only", output)
 
-    def test_dry_run_codex_review_includes_output_schema_when_exists(self) -> None:
+    def test_dry_run_review_keeps_perspective_and_division_without_findings_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
             with patch("runtime.cli.run_review") as mock_run_review:
@@ -99,6 +98,8 @@ class DryRunTests(unittest.TestCase):
                         "--repo", tmp,
                         "--prompt", "Review for bugs.",
                         "--providers", "codex",
+                        "--perspectives-json", '{"codex":"Focus on security"}',
+                        "--divide", "dimensions",
                         "--dry-run",
                         "--json",
                     ])
@@ -107,9 +108,9 @@ class DryRunTests(unittest.TestCase):
         mock_run_review.assert_not_called()
         payload = json.loads(stdout_buf.getvalue())
         codex_command = payload["providers_detail"]["codex"]["command_template"]
-        self.assertIn("--output-schema", codex_command)
-        schema_index = codex_command.index("--output-schema") + 1
-        self.assertEqual(codex_command[schema_index], str(REVIEW_FINDINGS_SCHEMA_PATH))
+        self.assertNotIn("--output-schema", codex_command)
+        self.assertEqual(payload["policy"]["divide"], "dimensions")
+        self.assertEqual(payload["policy"]["perspectives"], {"codex": "Focus on security"})
 
     def test_dry_run_empty_provider_context_reaches_command_template(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

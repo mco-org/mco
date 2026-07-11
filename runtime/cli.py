@@ -27,7 +27,7 @@ from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
 from .skill_manager import read_bundled_skill, skill_status, sync_bundled_skill
 from . import __version__
-from .review_engine import REVIEW_FINDINGS_SCHEMA_PATH, ReviewRequest, provider_policy_preview, run_review
+from .review_engine import ReviewRequest, provider_policy_preview, run_review
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "cursor", "gemini", "grok", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
@@ -304,7 +304,7 @@ def _build_stream_callback(stream_mode: Optional[str], *, chain_mode: bool = Fal
     return None, None, None
 
 
-def _resolve_prompt(args: argparse.Namespace) -> str:
+def _resolve_prompt(args: argparse.Namespace, default_prompt: str = "") -> str:
     """Resolve prompt from --prompt, --file, or piped stdin.
 
     Raises ValueError with a human-readable message on failure.
@@ -332,9 +332,14 @@ def _resolve_prompt(args: argparse.Namespace) -> str:
     # Check for piped stdin
     if not sys.stdin.isatty():
         text = sys.stdin.read().strip()
-        if not text:
-            raise ValueError("Empty input from stdin.")
-        return text
+        if text:
+            return text
+        if default_prompt:
+            return default_prompt
+        raise ValueError("Empty input from stdin.")
+
+    if default_prompt:
+        return default_prompt
 
     raise ValueError("Either --prompt or --file is required.")
 
@@ -474,8 +479,6 @@ def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest
     applied_context = policy.get("applied_context", {})
     if provider in req.policy.provider_context:
         metadata["provider_context"] = dict(applied_context) if isinstance(applied_context, dict) else {}
-    if review_mode and provider == "codex" and REVIEW_FINDINGS_SCHEMA_PATH.exists():
-        metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
     preview_command = getattr(adapter, "preview_command", None)
     if callable(preview_command):
         permissions = policy.get("applied_permissions", {})
@@ -2429,11 +2432,20 @@ def main(argv: List[str] | None = None) -> int:
         diff_mode = "unstaged"
 
     try:
-        prompt = _resolve_prompt(args)
+        prompt = _resolve_prompt(
+            args,
+            default_prompt=(
+                "Review the selected scope and report any concerns in natural language."
+                if args.command == "review"
+                else ""
+            ),
+        )
     except ValueError as exc:
         return _stream_error_exit("input_error", str(exc))
     raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
-    use_invocation_runtime = not getattr(args, "dry_run", False) and (bool(raw_invocation_agents) or providers_was_explicit)
+    use_invocation_runtime = not getattr(args, "dry_run", False) and (
+        args.command == "review" or bool(raw_invocation_agents) or providers_was_explicit
+    )
     if use_invocation_runtime:
         def _invocation_error(code: str, message: str) -> int:
             return _stream_error_exit(code, message, task_failure=True)
