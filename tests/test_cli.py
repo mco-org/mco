@@ -134,7 +134,6 @@ class CliTests(unittest.TestCase):
             {"permission_mode": "accept-edits"},
         )
         self.assertEqual(resolved.policy.divide, "files")
-        self.assertTrue(resolved.policy.enforce_findings_contract)
 
     def test_resolve_config_leaves_dimension_perspectives_empty_until_provider_filtering(self) -> None:
         parser = build_parser()

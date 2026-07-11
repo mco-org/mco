@@ -7,9 +7,9 @@ from typing import Dict, Iterable
 from .contracts import ProviderId
 
 
-ARTIFACT_LAYOUT_VERSION = "stage-a-v1"
-ROOT_FILES = ("summary.md", "decision.md", "findings.json", "run.json")
-ROOT_DIRS = ("providers", "raw")
+ARTIFACT_LAYOUT_VERSION = "invocation-v1"
+ROOT_FILES = ("run.json",)
+ROOT_DIRS = ("stages", "provider-runs")
 
 # Allowed task-id characters: alphanumeric, hyphens, underscores, dots.
 # Rejects: absolute paths, .. traversal, path separators, empty, control chars.
@@ -70,4 +70,3 @@ def expected_paths(base_dir: str, task_id: str, providers: Iterable[ProviderId])
         paths[f"raw/{provider}.stderr.log"] = raw_dir / f"{provider}.stderr.log"
 
     return paths
-

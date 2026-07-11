@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import List
 
-from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
-from .parsing import normalize_findings_from_text
+from ..contracts import CapabilitySet, TaskInput
 from .shim import ShimAdapterBase
 
 
@@ -65,7 +64,3 @@ class ClaudeAdapter(ShimAdapterBase):
             return False
         text = f"{stdout_text}\n{stderr_text}".lower()
         return "api error" not in text
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        text = raw if isinstance(raw, str) else ""
-        return normalize_findings_from_text(text, ctx, "claude")

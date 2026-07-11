@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import signal
 import sys
 import threading
@@ -13,11 +12,6 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from .adapters import adapter_registry
 from .config import ReviewConfig, ReviewPolicy, load_agent_registrations
 from .contracts import ProviderPresence, TaskInput
-from .formatters import (
-    LiveStreamRenderer,
-    _consensus_badge,
-    _consensus_level_label,
-)
 from .execution_modes import EXECUTION_MODES, execution_permissions
 from .invocation_runtime import default_invocations, parse_invocations, run_invocation_workflow, validate_execution_scope
 from .models import discover_models
@@ -166,28 +160,6 @@ DOCTOR_EPILOG = (
     "  2 = invalid input"
 )
 
-FINDINGS_EPILOG = (
-    "Examples:\n"
-    "  mco findings list --repo .\n"
-    "  mco findings list --repo . --status open --json\n"
-    "  mco findings confirm sha256:abc123 --status accepted --repo .\n\n"
-    "Exit codes:\n"
-    "  0 = success\n"
-    "  2 = input/config/runtime failure"
-)
-
-MEMORY_EPILOG = (
-    "Examples:\n"
-    "  mco memory agent-stats --repo .\n"
-    "  mco memory agent-stats --repo . --space my-repo --json\n"
-    "  mco memory priors --repo . --category security\n"
-    "  mco memory status --repo .\n\n"
-    "Exit codes:\n"
-    "  0 = success\n"
-    "  2 = input/config/runtime failure"
-)
-
-
 def _doctor_adapter_registry(transport: str = "shim", extra_agents=None, configured_agents=None) -> Mapping[str, object]:
     return adapter_registry(transport=transport, extra_agents=extra_agents, configured_agents=configured_agents)
 
@@ -294,8 +266,7 @@ def _build_stream_callback(stream_mode: Optional[str], *, chain_mode: bool = Fal
     if stream_mode == "live":
         if not _stdout_is_tty():
             return _build_stream_callback("jsonl", chain_mode=chain_mode)
-        renderer = LiveStreamRenderer(sys.stdout, chain_mode=chain_mode)
-        return renderer.handle_event, "live", renderer
+        return None, "live", None
 
     return None, None, None
 
@@ -504,9 +475,6 @@ def _build_dry_run_payload(
     result_mode: str,
     write_artifacts: bool,
     transport: str,
-    diff_mode: Optional[str],
-    diff_base: str,
-    memory_space: str,
     synthesize: bool,
     synth_provider: str,
 ) -> Dict[str, object]:
@@ -574,8 +542,6 @@ def _build_dry_run_payload(
         },
         "providers_detail": provider_details,
         "execution_mode": req.policy.execution_mode,
-        "diff": {"mode": diff_mode, "base": diff_base or None},
-        "memory": {"enabled": bool(getattr(args, "memory", False)), "space": memory_space or None},
         "synthesis": {"enabled": synthesize, "provider": synth_provider or None},
     }
 
@@ -603,185 +569,6 @@ def _render_dry_run_report(payload: Dict[str, object]) -> str:
             command = item.get("command_template", [])
             if isinstance(command, list) and command:
                 lines.append("  command=" + " ".join(str(part) for part in command))
-    return "\n".join(lines)
-
-
-def _finding_location_from_dict(finding: Dict[str, object]) -> str:
-    evidence = finding.get("evidence")
-    if not isinstance(evidence, dict):
-        return ""
-    file_path = str(evidence.get("file", ""))
-    line = evidence.get("line")
-    if file_path and isinstance(line, int):
-        return f"{file_path}:{line}"
-    return file_path
-
-
-def _consensus_badge_text(detected_by: list, total_providers: int, chain_mode: bool = False) -> str:
-    """Return a space-prefixed consensus badge or empty string."""
-    badge = _consensus_badge(detected_by, total_providers, chain_mode=chain_mode)
-    return "  " + badge if badge else ""
-
-
-def _consensus_summary_text(finding: Dict[str, object], total_providers: int, chain_mode: bool = False) -> str:
-    parts: List[str] = []
-    level = _consensus_level_label(finding.get("consensus_level"), chain_mode=chain_mode)
-    if level:
-        parts.append(f"level={level}")
-    score = finding.get("consensus_score")
-    if isinstance(score, (int, float)):
-        parts.append(f"score={float(score):.2f}")
-    badge = _consensus_badge_text(finding.get("detected_by", []), total_providers, chain_mode=chain_mode).strip()
-    if badge:
-        parts.append(badge)
-    source_scopes = finding.get("source_scopes")
-    if isinstance(source_scopes, list) and source_scopes:
-        parts.append("scope=" + "; ".join(str(item) for item in source_scopes))
-    return ("  " + " ".join(parts)) if parts else ""
-
-
-def _render_debate_table(debate_round: Dict[str, object]) -> List[str]:
-    finding_rows = debate_round.get("findings", [])
-    if not isinstance(finding_rows, list) or not finding_rows:
-        return ["Debate Round", "- no debate votes recorded"]
-
-    lines = ["Debate Round", "Finding                                   Votes        Score", "-" * 72]
-    for item in finding_rows:
-        if not isinstance(item, dict):
-            continue
-        title = str(item.get("title", "-")).strip() or "-"
-        location = str(item.get("location", "-")).strip() or "-"
-        vote_summary = item.get("vote_summary", {})
-        if isinstance(vote_summary, dict):
-            votes = "A:{}/D:{}/R:{}".format(
-                vote_summary.get("agree", 0),
-                vote_summary.get("disagree", 0),
-                vote_summary.get("refine", 0),
-            )
-        else:
-            votes = "A:0/D:0/R:0"
-        score_text = "{} -> {}".format(
-            "{:.2f}".format(float(item.get("consensus_score_before", 0.0))),
-            "{:.2f}".format(float(item.get("consensus_score_after", 0.0))),
-        )
-        label = f"{title} @ {location}"
-        lines.append(f"{label[:40]:40s}  {votes:10s}  {score_text}")
-    return lines
-
-
-def _render_user_readable_report(
-    command: str,
-    result_mode: str,
-    providers: List[str],
-    payload: Dict[str, object],
-    provider_results: Dict[str, Dict[str, object]],
-    findings: Optional[List[Dict[str, object]]] = None,
-    chain_mode: bool = False,
-) -> str:
-    lines: List[str] = []
-    title = "Review" if command == "review" else "Run"
-    lines.append(f"{title} Result")
-    lines.append("")
-    lines.append("Execution Summary")
-    lines.append(f"- task_id: {payload['task_id']}")
-    lines.append(f"- decision: {payload['decision']}")
-    lines.append(f"- terminal_state: {payload['terminal_state']}")
-    if payload.get("division_strategy"):
-        lines.append(f"- division_strategy: {payload['division_strategy']}")
-    lines.append(f"- providers: {', '.join(providers)}")
-    lines.append(
-        f"- provider_success/failure: {payload['provider_success_count']}/{payload['provider_failure_count']}"
-    )
-    lines.append(f"- findings_count: {payload['findings_count']}")
-    lines.append(f"- parse_success/failure: {payload['parse_success_count']}/{payload['parse_failure_count']}")
-    lines.append(f"- schema_valid_count: {payload['schema_valid_count']}")
-    token_usage_summary = payload.get("token_usage_summary")
-    if isinstance(token_usage_summary, dict):
-        totals = token_usage_summary.get("totals", {})
-        if isinstance(totals, dict):
-            lines.append(
-                "- token_usage: "
-                f"completeness={token_usage_summary.get('completeness')}, "
-                f"providers_with_usage={token_usage_summary.get('providers_with_usage')}/{token_usage_summary.get('provider_count')}, "
-                f"prompt={totals.get('prompt_tokens', 0)}, completion={totals.get('completion_tokens', 0)}, total={totals.get('total_tokens', 0)}"
-            )
-    synthesis = payload.get("synthesis")
-    if isinstance(synthesis, dict):
-        lines.append(
-            "- synthesis: "
-            f"provider={synthesis.get('provider')}, success={synthesis.get('success')}, reason={synthesis.get('reason')}"
-        )
-    lines.append("")
-    lines.append("Provider Details")
-    for provider in sorted(provider_results.keys()):
-        details = provider_results.get(provider, {})
-        success = bool(details.get("success"))
-        attempts = details.get("attempts")
-        final_error = details.get("final_error")
-        parse_reason = details.get("parse_reason")
-        findings_count = details.get("findings_count")
-        assigned_scope = details.get("assigned_scope")
-        lines.append(
-            f"- {provider}: success={success}, attempts={attempts}, final_error={final_error}, parse_reason={parse_reason}, findings={findings_count}, assigned_scope={assigned_scope}"
-        )
-        output_text = str(details.get("final_text", "")) or str(details.get("output_text", ""))
-        if output_text:
-            lines.append("  output:")
-            for raw_line in output_text.splitlines():
-                lines.append(f"    {raw_line}")
-        token_usage = details.get("token_usage")
-        if isinstance(token_usage, dict):
-            lines.append(
-                "  token_usage: "
-                f"completeness={details.get('token_usage_completeness')}, "
-                f"prompt={token_usage.get('prompt_tokens', '-')}, "
-                f"completion={token_usage.get('completion_tokens', '-')}, "
-                f"total={token_usage.get('total_tokens', '-')}"
-            )
-    lines.append("")
-    if result_mode in ("artifact", "both"):
-        lines.append("Artifacts")
-        lines.append(f"- artifact_root: {payload['artifact_root']}")
-    else:
-        lines.append("Artifacts")
-        lines.append("- artifact files are skipped in stdout mode")
-
-    debate_round = payload.get("debate_round")
-    if isinstance(debate_round, dict):
-        lines.append("")
-        lines.extend(_render_debate_table(debate_round))
-
-    # Diff scope findings breakdown (only when findings have diff_scope tags)
-    total_provider_count = len(providers)
-    if findings and any(f.get("diff_scope") for f in findings):
-        in_diff = [f for f in findings if f.get("diff_scope") == "in_diff"]
-        related = [f for f in findings if f.get("diff_scope") == "related"]
-
-        if in_diff:
-            lines.append("")
-            lines.append(f"In Diff ({len(in_diff)} findings)")
-            for f in in_diff:
-                consensus = _consensus_summary_text(f, total_provider_count, chain_mode=chain_mode)
-                lines.append(
-                    f"  {str(f.get('severity', '-')).upper():8s} "
-                    f"{str(f.get('category', '-')):15s} "
-                    f"{f.get('title', '-')}  "
-                    f"{_finding_location_from_dict(f)}"
-                    f"{consensus}"
-                )
-        if related:
-            lines.append("")
-            lines.append(f"Related ({len(related)} findings)")
-            for f in related:
-                consensus = _consensus_summary_text(f, total_provider_count, chain_mode=chain_mode)
-                lines.append(
-                    f"  {str(f.get('severity', '-')).upper():8s} "
-                    f"{str(f.get('category', '-')):15s} "
-                    f"{f.get('title', '-')}  "
-                    f"{_finding_location_from_dict(f)}"
-                    f"{consensus}"
-                )
-
     return "\n".join(lines)
 
 
@@ -1203,7 +990,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     output.add_argument(
         "--format",
         default="report",
-        help="Legacy findings format; use raw text, JSON, JSONL, or artifacts instead",
+        help=argparse.SUPPRESS,
     )
     output.add_argument(
         "--include-token-usage",
@@ -1213,7 +1000,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     output.add_argument(
         "--synthesize",
         action="store_true",
-        help="Run one extra synthesis pass to produce consensus/divergence summary (default: disabled)",
+        help="Run one extra read-only synthesis pass over prior raw answers (default: disabled)",
     )
     output.add_argument(
         "--synth-provider",
@@ -1278,7 +1065,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     review_flow.add_argument(
         "--debate",
         action="store_true",
-        help="Debate mode: run providers independently, then challenge each other's findings in a second round",
+        help="Debate mode: run a second read-only stage over prior raw answers",
     )
     review_flow.add_argument(
         "--divide",
@@ -1289,7 +1076,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     access.add_argument(
         "--strict-contract",
         action="store_true",
-        help="Removed legacy findings contract flag; use the provider's raw answer instead",
+        help=argparse.SUPPRESS,
     )
 
     memory = parser.add_argument_group("Memory")
@@ -1297,37 +1084,19 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--memory",
         action="store_true",
         default=argparse.SUPPRESS,
-        help="Enable memory layer (requires evermemos-mcp). Injects history context and writes back findings",
+        help=argparse.SUPPRESS,
     )
     memory.add_argument(
         "--space",
         default="",
-        help="Space slug, e.g. 'my-repo' (default: auto-inferred from git remote). "
-             "Do NOT include 'coding:' prefix — it is added automatically. Requires --memory",
+        help=argparse.SUPPRESS,
     )
 
-    diff_group = parser.add_argument_group("Diff Mode")
-    diff_exclusive = diff_group.add_mutually_exclusive_group()
-    diff_exclusive.add_argument(
-        "--diff",
-        action="store_true",
-        help="Review only changes vs merge-base with main/master branch",
-    )
-    diff_exclusive.add_argument(
-        "--staged",
-        action="store_true",
-        help="Review only staged changes (git diff --cached)",
-    )
-    diff_exclusive.add_argument(
-        "--unstaged",
-        action="store_true",
-        help="Review only unstaged working tree changes (git diff)",
-    )
-    diff_group.add_argument(
-        "--diff-base",
-        default="",
-        help="Git ref for branch diff comparison (e.g. origin/main, HEAD~3). Implies --diff",
-    )
+    legacy_scope = parser.add_argument_group("Legacy options")
+    legacy_scope.add_argument("--diff", action="store_true", help=argparse.SUPPRESS)
+    legacy_scope.add_argument("--staged", action="store_true", help=argparse.SUPPRESS)
+    legacy_scope.add_argument("--unstaged", action="store_true", help=argparse.SUPPRESS)
+    legacy_scope.add_argument("--diff-base", default="", help=argparse.SUPPRESS)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1420,7 +1189,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser(
         "run",
         help="Run general multi-provider task execution",
-        description="Run a prompt across multiple providers without enforcing findings schema.",
+        description="Run a prompt across multiple providers and return opaque raw answers.",
         epilog=RUN_EPILOG,
         formatter_class=_HelpFormatter,
     )
@@ -1443,42 +1212,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     findings.add_argument("legacy_args", nargs=argparse.REMAINDER)
     findings.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
-
-    # ── memory subcommand ──────────────────────────────────────
-    memory_cmd = subparsers.add_parser(
-        "memory",
-        help="View agent stats, priors, and memory space status",
-        description="Inspect memory layer data: agent scores, blended priors, and space status.",
-        epilog=MEMORY_EPILOG,
-        formatter_class=_HelpFormatter,
-    )
-    memory_sub = memory_cmd.add_subparsers(dest="memory_action", required=True)
-
-    mem_agent_stats = memory_sub.add_parser(
-        "agent-stats",
-        help="Show agent reliability scores",
-        formatter_class=_HelpFormatter,
-    )
-    mem_agent_stats.add_argument("--repo", default=".", help="Repository root path")
-    mem_agent_stats.add_argument("--space", default="", help="Space slug override")
-    mem_agent_stats.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
-
-    mem_priors = memory_sub.add_parser(
-        "priors",
-        help="Show blended agent weight priors",
-        formatter_class=_HelpFormatter,
-    )
-    mem_priors.add_argument("--repo", default=".", help="Repository root path")
-    mem_priors.add_argument("--category", required=True, help="Task category for display context")
-    mem_priors.add_argument("--space", default="", help="Space slug override")
-
-    mem_status = memory_sub.add_parser(
-        "status",
-        help="Show memory space status overview",
-        formatter_class=_HelpFormatter,
-    )
-    mem_status.add_argument("--repo", default=".", help="Repository root path")
-    mem_status.add_argument("--space", default="", help="Space slug override")
 
     skills_cmd = subparsers.add_parser(
         "skills",
@@ -1691,8 +1424,6 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     review_hard_timeout_seconds = getattr(args, "review_hard_timeout", None)
     if review_hard_timeout_seconds is None:
         review_hard_timeout_seconds = fc_policy.get("review_hard_timeout_seconds", cfg.policy.review_hard_timeout_seconds)
-    enforce_findings_contract = bool(args.strict_contract)
-
     # Parse perspectives from CLI or config
     perspectives: Dict[str, str] = {}
     perspectives_json = getattr(args, "perspectives_json", "")
@@ -1721,10 +1452,6 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         stall_timeout_seconds=stall_timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
         review_hard_timeout_seconds=review_hard_timeout_seconds,
-        enforce_findings_contract=enforce_findings_contract,
-        max_retries=cfg.policy.max_retries,
-        high_escalation_threshold=cfg.policy.high_escalation_threshold,
-        require_non_empty_findings=cfg.policy.require_non_empty_findings,
         max_provider_parallelism=max_provider_parallelism,
         provider_timeouts=provider_timeouts,
         allow_paths=allow_paths,
@@ -1739,51 +1466,6 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         execution_mode=execution_mode,
     )
     return ReviewConfig(providers=providers, artifact_base=artifact_base, policy=policy)
-
-
-def _handle_findings(args: argparse.Namespace) -> int:
-    """Handle the findings subcommand (list / confirm)."""
-    from .bridge.evermemos_client import EverMemosClient
-    from .bridge.space import infer_space_slug
-    from .findings_cli import confirm_finding, list_findings, render_findings_table
-
-    api_key = os.environ.get("EVERMEMOS_API_KEY", "")
-    if not api_key:
-        print("EVERMEMOS_API_KEY environment variable is required for findings.", file=sys.stderr)
-        return 2
-
-    repo_root = str(Path(args.repo).resolve())
-    space_override = args.space.strip() if isinstance(args.space, str) else ""
-    slug = infer_space_slug(repo_root, explicit=space_override or None)
-    findings_space = f"coding:{slug}--findings"
-
-    client = EverMemosClient(api_key=api_key)
-
-    if args.findings_action == "list":
-        status_filter = args.status if args.status else None
-        findings = list_findings(client, findings_space, status_filter=status_filter)
-        if getattr(args, "json", False):
-            print(json.dumps(findings, ensure_ascii=True))
-        else:
-            if not findings:
-                print("No findings found.")
-            else:
-                print(render_findings_table(findings))
-        return 0
-
-    if args.findings_action == "confirm":
-        finding_hash = args.hash
-        new_status = args.status
-        ok = confirm_finding(client, findings_space, finding_hash, new_status)
-        if ok:
-            print(f"Finding {finding_hash} updated to '{new_status}'.")
-            return 0
-        else:
-            print(f"Finding with hash '{finding_hash}' not found.", file=sys.stderr)
-            return 2
-
-    print("Unknown findings action.", file=sys.stderr)
-    return 2
 
 
 def _removed_surface_error(args: argparse.Namespace, message: str) -> int:
@@ -1871,54 +1553,6 @@ def _handle_skills(args: argparse.Namespace) -> int:
         return 0 if payload["ok"] else 1
 
     print("Unknown skills action.", file=sys.stderr)
-    return 2
-
-
-def _handle_memory(args: argparse.Namespace) -> int:
-    """Handle the memory subcommand (agent-stats / priors / status)."""
-    from .bridge.evermemos_client import EverMemosClient
-    from .bridge.space import infer_space_slug
-    from .memory_cli import show_agent_stats, show_priors, show_status
-
-    api_key = os.environ.get("EVERMEMOS_API_KEY", "")
-    if not api_key:
-        print("EVERMEMOS_API_KEY environment variable is required for memory.", file=sys.stderr)
-        return 2
-
-    repo_root = str(Path(args.repo).resolve())
-    space_override = args.space.strip() if isinstance(args.space, str) else ""
-    slug = infer_space_slug(repo_root, explicit=space_override or None)
-
-    client = EverMemosClient(api_key=api_key)
-
-    if args.memory_action == "agent-stats":
-        agents_space = f"coding:{slug}--agents"
-        if getattr(args, "json", False):
-            # For JSON output, fetch raw scores
-            raw = client.fetch_history(space=agents_space, memory_type="episodic_memory", limit=100)
-            scores = []
-            for item in raw:
-                content = item.get("content", "")
-                if EverMemosClient.is_agent_score_entry(content):
-                    try:
-                        scores.append(EverMemosClient.deserialize_agent_score(content))
-                    except (ValueError, json.JSONDecodeError):
-                        continue
-            print(json.dumps(scores, ensure_ascii=True))
-        else:
-            print(show_agent_stats(client, agents_space))
-        return 0
-
-    if args.memory_action == "priors":
-        category = args.category
-        print(show_priors(client, repo_root, slug, category))
-        return 0
-
-    if args.memory_action == "status":
-        print(show_status(client, slug))
-        return 0
-
-    print("Unknown memory action.", file=sys.stderr)
     return 2
 
 
@@ -2256,9 +1890,6 @@ def main(argv: List[str] | None = None) -> int:
             "or --result-mode artifact.",
         )
 
-    if args.command == "memory":
-        return _handle_memory(args)
-
     if args.command == "skills":
         return _handle_skills(args)
 
@@ -2364,6 +1995,11 @@ def main(argv: List[str] | None = None) -> int:
             "removed_surface",
             "--memory/--space were removed with the findings memory layer. Persist raw answers with --result-mode artifact.",
         )
+    if getattr(args, "diff", False) or getattr(args, "staged", False) or getattr(args, "unstaged", False) or str(getattr(args, "diff_base", "") or "").strip():
+        return _stream_error_exit(
+            "removed_surface",
+            "diff review flags were removed. Put the desired scope in --target-paths or the prompt.",
+        )
 
     configured_agents = file_config.get("agents", []) if isinstance(file_config.get("agents"), list) else []
 
@@ -2406,29 +2042,6 @@ def main(argv: List[str] | None = None) -> int:
     synthesize = bool(args.synthesize or synth_provider)
     if synth_provider and synth_provider not in providers:
         return _stream_error_exit("invalid_config", "--synth-provider must be one of selected providers")
-
-    memory_space = args.space.strip() if isinstance(args.space, str) else ""
-    if memory_space and not args.memory:
-        return _stream_error_exit("invalid_config", "--space requires --memory")
-    if memory_space and ":" in memory_space:
-        return _stream_error_exit(
-            "invalid_config",
-            "--space takes a slug (e.g. 'my-repo'), not a full space_id.\n"
-            "The 'coding:' prefix and '--findings'/'--context' suffixes are added automatically.",
-        )
-    # Normalize diff flags
-    diff_base_arg = args.diff_base.strip() if isinstance(args.diff_base, str) else ""
-    if diff_base_arg and args.staged:
-        return _stream_error_exit("invalid_config", "--diff-base cannot be used with --staged")
-    if diff_base_arg and args.unstaged:
-        return _stream_error_exit("invalid_config", "--diff-base cannot be used with --unstaged")
-    diff_mode = None
-    if args.diff or diff_base_arg:
-        diff_mode = "branch"
-    elif args.staged:
-        diff_mode = "staged"
-    elif args.unstaged:
-        diff_mode = "unstaged"
 
     try:
         prompt = _resolve_prompt(
@@ -2648,9 +2261,6 @@ def main(argv: List[str] | None = None) -> int:
                 result_mode=effective_result_mode,
                 write_artifacts=write_artifacts,
                 transport=transport,
-                diff_mode=diff_mode,
-                diff_base=diff_base_arg,
-                memory_space=memory_space,
                 synthesize=synthesize,
                 synth_provider=synth_provider,
             )

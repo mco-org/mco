@@ -3,8 +3,7 @@ from __future__ import annotations
 import shlex
 from typing import Any, List
 
-from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, ProviderPresence, TaskInput
-from .parsing import normalize_findings_from_text
+from ..contracts import CapabilitySet, ProviderPresence, TaskInput
 from .shim import ShimAdapterBase
 
 
@@ -72,8 +71,4 @@ class CommandShimAdapter(ShimAdapterBase):
 
     def _build_command_for_record(self) -> List[str]:
         return [*self._command, "<prompt>"]
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        text = raw if isinstance(raw, str) else ""
-        return normalize_findings_from_text(text, ctx, self.id)  # type: ignore[arg-type]
 

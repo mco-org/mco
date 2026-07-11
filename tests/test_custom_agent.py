@@ -17,7 +17,7 @@ class TestAgentFlag(unittest.TestCase):
     def test_agent_registration_does_not_implicitly_select_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run:
                 with contextlib.redirect_stdout(stdout_buf):
                     exit_code = main([
                         "run", "--repo", tmp, "--prompt", "test",

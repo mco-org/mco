@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import Any, List
 
 from ..answer_transport import AnswerTransport, decode_json_text_events
-from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
-from .parsing import normalize_findings_from_text
+from ..contracts import CapabilitySet, TaskInput
 from .shim import ShimAdapterBase
 
 
@@ -63,7 +62,3 @@ class OpenCodeAdapter(ShimAdapterBase):
             "opencode", "run", "--agent", "plan", "<prompt>",
             "--format", "json", "--dir", "<repo_root>",
         ]
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        text = raw if isinstance(raw, str) else ""
-        return normalize_findings_from_text(text, ctx, "opencode")

@@ -79,7 +79,7 @@ def _read_output(artifact_path: str, provider: str) -> tuple:
 
 def _extract_response(raw_stdout: str, raw_stderr: str) -> str:
     """Extract human-readable text from raw provider output."""
-    from ..adapters.parsing import extract_final_text_from_output
+    from ..output_text import extract_final_text_from_output
     combined = raw_stdout
     if raw_stderr:
         combined = combined + "\n" + raw_stderr if combined else raw_stderr
@@ -156,7 +156,7 @@ def _run_single_attempt(
     }
 
 
-# Retryable error kinds (matches orchestrator.RETRYABLE_ERRORS values)
+# Retryable error kinds from the shared error taxonomy.
 _RETRYABLE_ERROR_KINDS = {"retryable_timeout", "retryable_rate_limit", "retryable_transient_network"}
 
 

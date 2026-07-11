@@ -20,8 +20,6 @@ from ..answer_transport import AnswerTransport, decode_acp_events, decode_plain_
 from ..artifacts import expected_paths
 from ..contracts import (
     CapabilitySet,
-    NormalizeContext,
-    NormalizedFinding,
     ProviderId,
     ProviderPresence,
     TaskInput,
@@ -281,7 +279,7 @@ class AcpAdapter:
         self._runs.pop(ref.run_id, None)
 
         attempt_state = "SUCCEEDED" if handle.success else "FAILED"
-        error_kind = None if handle.success else ErrorKind.NORMALIZATION_ERROR
+        error_kind = None if handle.success else ErrorKind.PROVIDER_FAILURE
 
         return TaskStatus(
             task_id=ref.task_id,
@@ -314,9 +312,3 @@ class AcpAdapter:
         handle.success = False
         handle.error_message = "Cancelled"
         self._runs.pop(ref.run_id, None)
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        """Normalize findings — delegates to parsing module."""
-        from ..adapters.parsing import normalize_findings_from_text
-        text = raw if isinstance(raw, str) else ""
-        return normalize_findings_from_text(text, ctx, self.id)
