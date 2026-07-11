@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
-from .parsing import normalize_findings_from_text
+from ..contracts import CapabilitySet, TaskInput
 from .shim import ShimAdapterBase
 
 
@@ -63,7 +62,3 @@ class CopilotAdapter(ShimAdapterBase):
         if return_code != 0:
             return False
         return len(stdout_text.strip()) > 0
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        text = raw if isinstance(raw, str) else ""
-        return normalize_findings_from_text(text, ctx, "copilot")

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 
 from runtime.acp.handlers import handle_fs_read, handle_fs_write
 
@@ -53,6 +54,29 @@ class TestFsWriteHandler(unittest.TestCase):
                 cwd="/tmp",
                 allow_paths=["src"],
             )
+
+    def test_context_allowlist_is_readable_but_not_writable(self) -> None:
+        """A file-backed context scope must never inherit repository write access."""
+        with tempfile.TemporaryDirectory() as tmp:
+            context_dir = Path(tmp) / "context"
+            context_dir.mkdir()
+            context_file = context_dir / "prior-answer.md"
+            context_file.write_text("complete prior answer", encoding="utf-8")
+
+            result = handle_fs_read(
+                {"path": str(context_file)},
+                cwd=tmp,
+                allow_paths=[str(context_dir)],
+            )
+
+            self.assertEqual(result["content"], "complete prior answer")
+            with self.assertRaisesRegex(PermissionError, "read-only"):
+                handle_fs_write(
+                    {"path": str(context_file), "content": "tampered"},
+                    cwd=tmp,
+                    allow_paths=[str(context_dir)],
+                    read_only_paths=[str(context_dir)],
+                )
 
 
 class TestTerminalManager(unittest.TestCase):

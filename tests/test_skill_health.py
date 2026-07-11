@@ -32,11 +32,12 @@ class SkillHealthTests(unittest.TestCase):
             install_path = install_dir / "SKILL.md"
             install_path.write_text(skill_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-            health, drift = check_skill_health(
-                enabled=True,
-                package_root=root,
-                cwd=root,
-            )
+            with patch("runtime.skill_health.Path.home", return_value=root):
+                health, drift = check_skill_health(
+                    enabled=True,
+                    package_root=root,
+                    cwd=root,
+                )
 
         self.assertEqual(health["status"], "ok")
         self.assertEqual(drift["status"], "ok")
@@ -234,7 +235,9 @@ class CliDoctorSkillTests(unittest.TestCase):
             (skill_dir / "SKILL.md").write_text("skill-body\n", encoding="utf-8")
 
             output = io.StringIO()
-            with patch("runtime.cli._doctor_provider_presence", return_value={}):
+            with patch("runtime.cli._doctor_provider_presence", return_value={}), patch(
+                "runtime.skill_health.Path.home", return_value=root
+            ):
                 with redirect_stdout(output):
                     exit_code = main([
                         "doctor",
@@ -262,7 +265,9 @@ class CliDoctorSkillTests(unittest.TestCase):
             (skill_dir / "SKILL.md").write_text("skill-body\n", encoding="utf-8")
 
             output = io.StringIO()
-            with patch("runtime.cli._doctor_provider_presence", return_value={}):
+            with patch("runtime.cli._doctor_provider_presence", return_value={}), patch(
+                "runtime.skill_health.Path.home", return_value=root
+            ):
                 with redirect_stdout(output):
                     exit_code = main([
                         "doctor",

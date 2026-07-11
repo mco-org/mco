@@ -16,7 +16,7 @@
 
 <p align="center">English · <a href="./README.zh-CN.md">简体中文</a></p>
 
-MCO is a lightweight, CLI-first orchestration layer for AI coding agents. Give one task to the agents you choose, run them in parallel, and compare the results before you act.
+MCO is a lightweight, CLI-first orchestration layer for AI coding agents. Give one task to the agents and models you choose, run them in parallel, and compare their raw answers before you act.
 
 Use MCO for code review, implementation, architecture analysis, CI checks, and any workflow where one model's blind spots matter.
 
@@ -57,7 +57,7 @@ mco run \
   --execution-mode write
 ```
 
-MCO never silently chooses a provider team. If `--providers` is missing, ask the user which agents to use.
+MCO never silently chooses a provider/model team. If neither `--providers` nor `--agent` is supplied, ask the user which agents and models to use.
 
 ## Why MCO
 
@@ -65,10 +65,12 @@ One agent gives you one perspective. MCO turns selected agents into a review or 
 
 1. **Choose** — explicitly select the agents for the task.
 2. **Dispatch** — run them in parallel, chain their work, or divide the scope.
-3. **Compare** — retain provider-level output and merge duplicate findings.
-4. **Decide** — inspect evidence, consensus, disagreements, and failures before acting.
+3. **Compare** — retain each invocation's complete raw answer and operational status.
+4. **Decide** — inspect evidence, disagreements, and failures before acting.
 
-For structured reviews, MCO normalizes findings, preserves `detected_by` provenance, and assigns consensus levels. Agreement is evidence to investigate, not automatic truth.
+MCO keeps answer text opaque. It does not turn natural-language output into findings, severity, confidence, consensus, or an automatic decision.
+
+For explicit review coordination, `--perspectives-json` adds a Provider-specific prompt focus. `--divide files` excludes ignored/local/build directories and round-robins the remaining sorted repository files without overlap, while `--divide dimensions` rotates review lenses in declaration order without changing target paths. These choices are visible in dry-run and arrange only the prompt or scope; the returned invocation answers remain raw.
 
 ## Built-in providers
 
@@ -92,16 +94,16 @@ Each provider CLI remains responsible for its own installation, authentication, 
 | Goal | Command |
 |------|---------|
 | General multi-agent task | `mco run --providers claude,codex --prompt "..."` |
-| Structured code review | `mco review --providers claude,codex --prompt "..."` |
-| Review current branch diff | `mco review --providers claude,codex --diff` |
+| Thin raw-answer code review | `mco review --providers claude,codex --prompt "..."` |
+| Compare multiple models | `mco run --agent fast=pi:model-a --agent careful=pi:model-b --prompt "..."` |
 | Preview without execution | `mco review --providers claude,pi --dry-run --json` |
-| PR-ready Markdown | `mco review --providers claude,codex --format markdown-pr` |
-| GitHub Code Scanning | `mco review --providers claude,codex --format sarif` |
 | Live terminal progress | `mco review --providers claude,codex --stream live` |
 | Machine-readable events | `mco review --providers claude,codex --stream jsonl` |
+| File-backed chain | `mco run --agent first=pi:model-a --agent next=pi:model-b --chain --result-mode artifact` |
+| Debate and synthesis | `mco review --providers claude,codex --debate --synthesize --result-mode both` |
 | Discover provider models | `mco agent models --providers codex,pi --json` |
 
-Pin a model for one run without changing the provider CLI's default:
+Pin models for one run without changing provider CLI defaults:
 
 ```bash
 mco review \
@@ -126,7 +128,7 @@ Important boundaries:
 - Provider sandbox strength depends on the underlying CLI.
 - Hermes oneshot bypasses approvals and therefore requires explicit `--execution-mode yolo`.
 - ACP terminal access is a trusted-agent capability. Use isolation for untrusted agents or prompts.
-- Run parallel writers in separate worktrees; do not let multiple agents edit one working tree concurrently.
+- MCO does not create or manage worktrees. If the user selects parallel writers, partition ownership with non-overlapping `--target-paths` and warn about edit conflicts.
 
 See [Provider and permission reference](./docs/reference/providers.md) for the complete mapping.
 
@@ -156,14 +158,14 @@ You or a calling agent
         │
         ├── Claude ──┐
         ├── Codex    │
-        ├── Gemini   ├──► merge / consensus / synthesis ──► output
+        ├── Gemini   ├──► raw answers / file-backed stages ──► output
         ├── Pi       │
         └── ...   ───┘
                               │
-                       JSON · SARIF · Markdown
+                       text · JSON · JSONL · Markdown artifacts
 ```
 
-Provider processes are isolated behind a shared adapter contract: detect, run, poll, cancel, and normalize. One provider failure does not discard successful provider results.
+Provider processes are isolated behind a shared adapter contract: detect, run, poll, cancel, and transport decode. One invocation failure does not discard successful provider answers.
 
 ## Documentation
 
@@ -174,6 +176,7 @@ Provider processes are isolated behind a shared adapter contract: detect, run, p
 | CLI flags, outputs, artifacts, and exit codes | [CLI reference](./docs/reference/cli.md) |
 | Config files and custom agents | [Configuration reference](./docs/reference/configuration.md) |
 | Machine-readable error contract | [Error contract](./docs/contracts/errors-v0.1.x.md) |
+| Invocation and artifact contract | [Invocation contract](./docs/contracts/invocation-runtime-v1.md) |
 | Provider permission contract | [Permission contract](./docs/contracts/provider-permissions-v0.1.x.md) |
 | Release process | [RELEASING.md](./RELEASING.md) |
 | Release history | [CHANGELOG.md](./CHANGELOG.md) |

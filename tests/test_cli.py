@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +20,49 @@ from runtime import __version__
 
 
 class CliTests(unittest.TestCase):
+    def test_removed_findings_surfaces_return_migration_guidance(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = main(["findings", "list"])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("removed", stderr.getvalue().lower())
+        self.assertIn("raw", stderr.getvalue().lower())
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = main([
+                "review", "--repo", ".", "--prompt", "review", "--providers", "pi",
+                "--format", "markdown-pr",
+            ])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("--format", stderr.getvalue())
+        self.assertIn("removed", stderr.getvalue().lower())
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = main([
+                "review", "--repo", ".", "--prompt", "review", "--providers", "pi",
+                "--strict-contract",
+            ])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("strict-contract", stderr.getvalue())
+        self.assertIn("removed", stderr.getvalue().lower())
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = main([
+                "review", "--repo", ".", "--prompt", "review", "--providers", "pi",
+                "--format", "report", "--dry-run", "--json",
+            ])
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(json.loads(stdout.getvalue())["error"]["subtype"], "removed_surface")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = main(["memory", "status"])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("result-mode artifact", stderr.getvalue())
+
     def test_parse_providers_deduplicates_preserve_order(self) -> None:
         providers = _parse_providers("codex,claude,codex,gemini,claude")
         self.assertEqual(providers, ["codex", "claude", "gemini"])
@@ -68,6 +112,8 @@ class CliTests(unittest.TestCase):
                 "3",
                 "--provider-timeouts",
                 "codex=120,qwen=240",
+                "--invocation-hard-timeout",
+                "240",
                 "--stall-timeout",
                 "700",
                 "--poll-interval",
@@ -92,6 +138,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(resolved.policy.provider_timeouts.get("qwen"), 240)
         self.assertEqual(resolved.policy.provider_timeouts.get("codex"), 120)
         self.assertIsNone(resolved.policy.provider_timeouts.get("claude"))
+        self.assertEqual(resolved.policy.timeout_seconds, 240)
         self.assertEqual(resolved.policy.stall_timeout_seconds, 700)
         self.assertEqual(resolved.policy.poll_interval_seconds, 2.0)
         self.assertEqual(resolved.policy.review_hard_timeout_seconds, 3000)
@@ -106,7 +153,6 @@ class CliTests(unittest.TestCase):
             {"permission_mode": "accept-edits"},
         )
         self.assertEqual(resolved.policy.divide, "files")
-        self.assertTrue(resolved.policy.enforce_findings_contract)
 
     def test_resolve_config_leaves_dimension_perspectives_empty_until_provider_filtering(self) -> None:
         parser = build_parser()
@@ -155,12 +201,32 @@ class CliTests(unittest.TestCase):
         resolved = _resolve_config(args)
         self.assertEqual(resolved.policy.max_provider_parallelism, 0)
 
+    def test_cli_rejects_invalid_runtime_policy_values_before_dispatch(self) -> None:
+        invalid_values = (
+            ("--max-provider-parallelism", "-1"),
+            ("--invocation-hard-timeout", "-1"),
+            ("--stall-timeout", "-1"),
+            ("--poll-interval", "0"),
+            ("--review-hard-timeout", "-1"),
+        )
+        for flag, value in invalid_values:
+            with self.subTest(flag=flag):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    exit_code = main([
+                        "run", "--repo", ".", "--prompt", "x", "--providers", "pi", flag, value,
+                    ])
+
+                self.assertEqual(exit_code, 2)
+                self.assertIn("Configuration error", stderr.getvalue())
+                self.assertIn(flag, stderr.getvalue())
+
     def test_parser_accepts_run_subcommand(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["run", "--prompt", "x"])
         self.assertEqual(args.command, "run")
         self.assertEqual(args.result_mode, "stdout")
-        self.assertEqual(args.format, "report")
+        self.assertEqual(args.format, "")
         self.assertFalse(args.include_token_usage)
         self.assertFalse(args.synthesize)
         self.assertEqual(args.synth_provider, "")
@@ -201,12 +267,11 @@ class CliTests(unittest.TestCase):
         self.assertIn("Timeout and Parallelism:", help_text)
         self.assertIn("Access and Contracts:", help_text)
         self.assertIn("Examples:", help_text)
-        self.assertIn("--format markdown-pr", help_text)
-        self.assertIn("--format sarif", help_text)
+        self.assertIn("raw", help_text.lower())
         self.assertIn("--synthesize", help_text)
         self.assertIn("--synth-provider", help_text)
         self.assertIn("Exit codes:", help_text)
-        self.assertIn("INCONCLUSIVE", help_text)
+        self.assertNotIn("INCONCLUSIVE", help_text)
         # Config-overridable flags use argparse.SUPPRESS, so default isn't shown
         self.assertIn("--stall-timeout", help_text)
         self.assertIn("per-provider", help_text.lower())

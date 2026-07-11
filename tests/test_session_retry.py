@@ -41,10 +41,15 @@ def _send_prompt_request(sock_path: str, prompt: str, timeout: float = 30.0) -> 
 
 class TestRetryableErrorKinds(unittest.TestCase):
     def test_retryable_set_matches_orchestrator(self) -> None:
-        """Session retryable errors should match orchestrator's RETRYABLE_ERRORS."""
-        from runtime.orchestrator import RETRYABLE_ERRORS
-        orchestrator_kinds = {e.value for e in RETRYABLE_ERRORS}
-        self.assertEqual(_RETRYABLE_ERROR_KINDS, orchestrator_kinds)
+        """Session retryable errors should match the shared error taxonomy."""
+        from runtime.types import ErrorKind
+
+        retryable_kinds = {
+            ErrorKind.RETRYABLE_TIMEOUT.value,
+            ErrorKind.RETRYABLE_RATE_LIMIT.value,
+            ErrorKind.RETRYABLE_TRANSIENT_NETWORK.value,
+        }
+        self.assertEqual(_RETRYABLE_ERROR_KINDS, retryable_kinds)
 
 
 class TestErrorClassification(unittest.TestCase):

@@ -33,7 +33,6 @@ for required_path in \
   package/runtime/provider_risk.py \
   package/runtime/skill_health.py \
   package/runtime/skill_manager.py \
-  package/runtime/schemas/review_findings.schema.json \
   package/runtime/data/skill_calling_agents.json \
   package/scripts/install-wizard.js \
   package/scripts/install-runtime.js \

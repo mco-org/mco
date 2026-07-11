@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
-from .parsing import normalize_findings_from_text
+from ..contracts import CapabilitySet, TaskInput
 from .shim import ShimAdapterBase
 
 
@@ -62,7 +61,3 @@ class GrokAdapter(ShimAdapterBase):
 
     def _is_success(self, return_code: int, stdout_text: str, stderr_text: str) -> bool:
         return return_code == 0 and bool(stdout_text.strip())
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        text = raw if isinstance(raw, str) else ""
-        return normalize_findings_from_text(text, ctx, "grok")

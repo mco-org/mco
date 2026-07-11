@@ -1,18 +1,18 @@
-# Error and Preview Contract (`v0.1.x`)
+# Error and preview contract (`v0.1.x` compatibility label)
 
-This document freezes the machine-readable failure and preview surface for `mco run` / `mco review` in `v0.1.x`.
+This document describes input/configuration failures and dry-run behavior for the invocation-native `mco run` / `mco review` CLI.
 
-## Exit Codes
+## Exit codes
 
 | Exit | Meaning |
-|---|---|
-| `0` | Completed successfully, or `--dry-run` preview rendered successfully. |
-| `2` | Input, configuration, provider, or runtime failure. |
-| `3` | Review completed but was inconclusive. |
+|---:|---|
+| `0` | All invocations succeeded, or a dry-run preview completed |
+| `1` | The task is partial: at least one invocation succeeded and another did not |
+| `2` | Input, configuration, provider, or runtime failure; no invocation succeeded |
 
-## Top-Level Error Envelope
+## Top-level error envelope
 
-When `--json` is requested and command parsing, input validation, or configuration fails, stdout contains one JSON object and stderr remains empty:
+When `--json` is requested and validation fails before a normal task result exists, stdout contains one object:
 
 ```json
 {
@@ -29,82 +29,23 @@ When `--json` is requested and command parsing, input validation, or configurati
 }
 ```
 
-The field order above is frozen for `v0.1.x`. `provider` is populated when a top-level failure belongs to one provider. Provider execution failures that occur after dispatch remain in the normal result payload under `provider_results`.
+Provider processes do not start for configuration errors. Provider execution errors are retained in the normal `outputs` array, alongside any successful answers. Diagnostics are written to stderr rather than mixed into JSON stdout.
 
-## Streaming Error Events
+## Removed surfaces and migration errors
 
-Streaming mode emits JSONL events with:
+These commands and flags are removed. They return migration guidance rather than being silently accepted; they do not select a legacy runtime.
 
-```json
-{"type":"error","code":"invalid_config","message":"...","error":{"category":"configuration","subtype":"invalid_config","message":"...","hint":"...","provider":null,"retryable":false,"exit_code":2},"timestamp":"..."}
-```
-
-Known `code` values include:
-
-- `parse_error`
-- `config_error`
-- `invalid_config`
-- `invalid_providers`
-- `input_error`
-- `provider_selection_required`
-
-When neither `--providers` nor a persisted provider selection is present, MCO returns `provider_selection_required` without dispatching. Calling agents should ask the user which installed agents to use, then retry with the explicit selection.
-The MCP `mco_run` and `mco_review` tools use the same fail-closed rule and reject a mixed valid/unknown list instead of silently dropping unknown names.
-
-## Provider Result Failure Reasons
-
-Provider-level failures appear in `provider_results[provider].reason`:
-
-| Reason | Meaning |
+| Removed surface | Invocation-native replacement |
 |---|---|
-| `adapter_not_implemented` | Selected provider has no adapter. |
-| `provider_unavailable` | Binary/auth probe failed. |
-| `permission_enforcement_failed` | Strict permission policy requested unsupported keys. |
-| `model_selection_failed` | Strict model policy requested unsupported keys. |
-| `context_policy_enforcement_failed` | Strict context policy requested unsupported or incompatible keys. |
-| `executor_timeout` | Provider executor did not finish before the global executor wait ended. |
-| `internal_error` | Unexpected orchestrator-side exception. |
+| `mco findings` | Use `mco run` / `mco review` output records or persistent Markdown artifacts. |
+| `--format`, `--strict-contract` | Use raw text, `--json`, or `--stream jsonl`. |
+| `--memory`, `--space` | Persist raw answers with `--result-mode artifact`, then pass them through a file-backed stage when needed. |
+| `--diff`, `--staged`, `--unstaged`, `--diff-base` | Put scope in `--target-paths` and the raw prompt. |
 
-Policy failures include audit fields such as `requested_permissions`, `unknown_permission_keys`, `requested_model`, `unknown_model_keys`, `requested_context`, `unknown_context_keys`, `incompatible_context_keys`, and `dropped_context_keys` when relevant.
+## JSONL errors
 
-Provider failures classified after execution use `final_error`, including `retryable_timeout`, `retryable_rate_limit`, `retryable_transient_network`, `non_retryable_auth`, `non_retryable_invalid_input`, `non_retryable_unsupported_capability`, and `normalization_error`. Timeout details remain in `cancel_reason`; parse/normalization details remain in `parse_reason`.
+In streaming mode, error events use the same operational shape and keep diagnostics on stderr. A successful invocation can still be followed by an error event for another invocation; the final `task_finished` event reports `complete`, `partial`, or `failed`.
 
-## Dry Run Preview
+## Dry run
 
-`--dry-run --json` returns without starting agent processes:
-
-```json
-{
-  "dry_run": true,
-  "would_execute": false,
-  "providers_detail": {
-    "pi": {
-      "risk": {"level": "read_only", "reason": "..."},
-      "policy": {"would_fail_strict": false, "failure_reason": ""},
-      "command_template": ["pi", "-p", "--mode", "json", "...", "<prompt>"]
-    }
-  }
-}
-```
-
-Provider policy preview uses the same permission, model, and context validation path as execution. If a selected provider would fail under `enforcement_mode=strict`, `policy.would_fail_strict=true` and `policy.failure_reason` is set, but the dry run itself still exits `0` because no provider was executed.
-
-## Provider Risk Levels
-
-Risk metadata is normally descriptive. Strict ACP execution additionally fails closed when its effective risk remains `unknown`.
-
-| Level | Meaning |
-|---|---|
-| `read_only` | Default adapter command is intended to avoid write/shell tools. |
-| `workspace_write` | Default adapter command may write inside the workspace. |
-| `elevated` | Default adapter command may use broader local capabilities. |
-| `approval_bypass` | Default adapter command or provider semantics bypass interactive approvals. |
-| `unknown` | Custom or unclassified provider. Inspect its command before execution. |
-
-`mco doctor --json`, MCP doctor, `mco agent list --json`, `mco agent check --json`, and `--dry-run --json` expose risk metadata for orchestrating agents. Discovery surfaces report default shim risk. Dry-run also reports `default_risk` and uses `risk` for the effective risk after supported permission overrides are resolved. ACP transport is classified as `unknown` unless a supported explicit permission override makes its launch policy auditable; strict previews then report `risk_classification_unknown` instead of assuming the shim default.
-
-## Gates
-
-- `tests/test_cli_json_contract.py` freezes top-level error envelopes, provider failure records, and exit codes.
-- `tests/test_error_taxonomy.py` freezes retryable, auth, input, capability, and normalization classifications.
-- `tests/test_review_engine.py` covers provider readiness, policy enforcement, timeout, cancellation, and parse results.
+`--dry-run --json` resolves providers, invocations, permissions, model routing, context policy, risk, command templates, result mode, and stage flags without starting Agent processes. It exits `0` when the preview itself rendered successfully, even when a strict policy preview reports that execution would fail.

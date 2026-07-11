@@ -1,6 +1,6 @@
 # CLI reference
 
-This page is a compact reference for stable MCO concepts. The installed help output remains authoritative:
+The installed help output is authoritative:
 
 ```bash
 mco --help
@@ -12,104 +12,100 @@ mco review --help
 
 | Command | Purpose |
 |---------|---------|
-| `mco run` | General multi-agent execution |
-| `mco review` | Structured findings and review decisions |
-| `mco doctor` | Provider presence, auth, version, and risk checks |
+| `mco run` | General multi-Agent invocation |
+| `mco review` | Thin read-only raw-answer preset over the same invocation runtime |
+| `mco doctor` | Provider presence, auth, version, risk, and Skill checks |
 | `mco agent` | List, inspect, and discover provider models |
 | `mco skills` | Read, inspect, and sync the bundled Skill |
 | `mco session` | Persistent multi-turn provider sessions |
-| `mco memory` | Inspect optional cross-session memory |
-| `mco findings` | Query stored findings |
 | `mco serve` | Run the MCP server |
 
-## Runtime options
+The old findings command and findings-oriented memory commands were removed. Calling them returns migration guidance and does not start a provider.
+
+## Invocation selection
+
+| Option | Purpose |
+|--------|---------|
+| `--agent [alias=]provider:model` | Repeatable explicit invocation declaration |
+| `--providers provider,...` | Invocation-native shorthand: one configured/default model per provider |
+| `--provider-models-json` | Model mapping used by the provider shorthand |
+| `--target-paths` | Comma-separated task scope paths |
+| `--task-id` | Safe stable task/artifact identifier |
+| `--prompt` / `--file` | Inline prompt, prompt file, or stdin with `--file -` |
+
+Aliases must be unique. Repeating the same provider/model without distinct aliases is rejected. Configuration and provider/model validation happen before any Agent invocation starts.
+
+## Runtime and access options
 
 | Option | Default | Purpose |
 |--------|---------|---------|
-| `--providers` | required | Explicit comma-separated provider IDs |
-| `--execution-mode` | run: `write`; review: `read_only` | Unified permission profile |
-| `--repo` | `.` | Repository root |
-| `--prompt` / `--file` | unset | Inline, file, or stdin prompt |
-| `--target-paths` | `.` | Task scope |
-| `--allow-paths` | `.` | Orchestrator-level allowed scope |
-| `--enforcement-mode` | `strict` | Fail closed or use best effort |
-| `--stall-timeout` | `900` | Cancel a provider after no output progress |
-| `--review-hard-timeout` | `1800` | Global review deadline; `0` disables |
-| `--max-provider-parallelism` | `0` | `0` runs all selected providers concurrently |
-| `--provider-timeouts` | unset | Provider-specific stall timeout overrides |
-| `--provider-models-json` | unset | Model routing by provider ID |
-| `--provider-context-json` | unset | Skills, context file, and plugin policy |
-| `--provider-permissions-json` | unset | Expert provider permission overrides |
-| `--perspectives-json` | unset | Review focus by provider |
-| `--dry-run` | off | Resolve policy and commands without execution |
-| `--task-id` | generated | Stable task and artifact identifier |
+| `--execution-mode` | run: `write`; review: `read_only` | Provider permission profile |
+| `--allow-paths` | `.` | Fail-closed MCO scope boundary |
+| `--enforcement-mode` | `strict` | Reject unsupported provider policy or use `best_effort` |
+| `--provider-permissions-json` | unset | Provider-specific permission overrides |
+| `--provider-context-json` | unset | Provider context policy |
+| `--provider-timeouts` | unset | Provider-specific invocation hard-timeout overrides |
+| `--invocation-hard-timeout` | `180` | Per-invocation wall-clock deadline; `0` disables |
+| `--stall-timeout` | `900` | Maximum time without Provider output progress |
+| `--review-hard-timeout` | `1800` | Global task deadline; `0` disables |
+| `--max-provider-parallelism` | `0` | Parallelism policy for configured execution |
 
 ## Output options
 
 | Option | Purpose |
 |--------|---------|
-| `--json` | Machine-readable final envelope |
-| `--quiet` | Final text only |
-| `--stream jsonl` | Machine-readable progress events |
-| `--stream live` | Human-readable live terminal progress |
-| `--format report` | Human-readable review report |
-| `--format markdown-pr` | PR-ready Markdown |
-| `--format sarif` | SARIF 2.1.0 for code scanning |
-| `--include-token-usage` | Best-effort provider and aggregate usage |
+| `--result-mode stdout` | Stream/return answers and clean up temporary artifacts |
+| `--result-mode artifact` | Persist artifacts and return the operational result |
+| `--result-mode both` | Persist artifacts and stream/return answers |
+| `--save-artifacts` | Upgrade the default stdout mode to `both` |
+| `--json` | Print one final machine-readable envelope |
+| `--stream jsonl` | Print machine-readable event lines as invocations progress |
+| `--stream live` | Human live mode; non-TTY output falls back to JSONL |
+| `--include-token-usage` | Preserve reliable provider usage metadata when available |
 
-`--quiet`, `--json`, and `--stream` are mutually exclusive output surfaces.
+`--json`, `--quiet`, and `--stream` are mutually exclusive. In JSON/JSONL modes stdout contains only the selected protocol. Provider diagnostics and progress warnings go to stderr.
 
-## Coordination options
+## Multi-stage options
 
-| Option | Purpose |
-|--------|---------|
-| `--chain` | Feed each provider's output into the next |
-| `--debate` | Add a challenge round after initial merging |
-| `--divide files` | Split files across providers |
-| `--divide dimensions` | Assign review dimensions |
-| `--synthesize` | Run an extra consensus/divergence summary |
-| `--synth-provider` | Choose the synthesis provider |
+| Option | Behavior |
+|--------|----------|
+| `--chain` | Run invocations sequentially and pass complete prior Markdown through a manifest |
+| `--debate` | Add a read-only stage over prior raw answers |
+| `--synthesize` | Add a read-only synthesis stage over the available run/debate raw records |
+| `--synth-provider` | Select the provider invocation used for synthesis |
+| `--perspectives-json` | Add an explicit per-provider prompt perspective |
+| `--divide files\|dimensions` | Assign non-overlapping scope files, or declaration-ordered rotating review lenses, without interpreting answers |
 
-Chain, debate, and divide modes are mutually exclusive.
+Chain, debate, and division are mutually exclusive. Perspectives and division are explicit prompt/scope coordination only: `--perspectives-json` prepends a Provider-specific `Review Perspective`; `--divide files` sorts repository files in the selected scope, excludes ignored/local/build directories, and assigns the remaining files round-robin in declaration order; `--divide dimensions` rotates the fixed review lenses in that order without changing `target_paths`. Dry-run shows the complete resolved invocation prompts and target paths. These options preserve raw invocation answers and never derive semantic findings or consensus. Debate and synthesis mark earlier answer files as untrusted reference material. A valid earlier answer allows later stages to continue after a partial failure; no valid input produces an explicit dependent-stage failure.
 
-## Result modes and artifacts
+`mco review` uses the same runtime. Its default prompt is a short natural-language review request, and an explicit `--prompt` is passed unchanged. It never injects a findings schema.
 
-| Mode | Stdout | Persistent artifacts |
-|------|--------|----------------------|
-| `stdout` | complete result | no |
-| `artifact` | summary | yes |
-| `both` | complete result | yes |
+## Artifacts
 
-`--save-artifacts` upgrades stdout mode to preserve artifacts as well.
+With persistent result mode, `<artifact-base>/<task-id>/` contains:
 
 ```text
-reports/review/<task_id>/
-  summary.md
-  decision.md
-  findings.json
-  run.json
-  providers/
-  raw/
+result.md
+run.json
+stages/<stage>/invocations/<invocation-id>.md
+stages/<stage>/context/manifest.json
+stages/<stage>/result.md
+stages/<stage>/run.json
+provider-runs/                 # internal transport/provider evidence
 ```
 
-Review artifacts include normalized findings. Run mode does not enforce the review findings schema.
+Each stage is deterministic in declaration order. Root `result.md` groups the stages that actually ran; synthesis comes first when present, while every raw answer and explicit failure record remains below it. Per-invocation Markdown preserves the decoded Agent answer body. Temporary execution removes its task directory and reports `artifact_root: null`.
 
-## Exit codes
+## Exit codes and task status
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success |
-| `2` | Input, configuration, policy, or runtime failure |
-| `3` | Inconclusive strict review contract |
+| `0` | All invocations completed successfully (`complete`) |
+| `1` | At least one invocation succeeded and at least one did not (`partial`) |
+| `2` | No invocation completed successfully, or input/configuration failed (`failed`) |
 
-Machine-readable failures follow the contract in [errors-v0.1.x.md](../contracts/errors-v0.1.x.md).
+Invocation-level status remains explicit: `success`, `failed`, `timeout`, or `cancelled`. The task status is only `complete`, `partial`, or `failed`.
 
-## Consensus fields
+## Removed surfaces and migration
 
-Merged review findings can include:
-
-- `agreement_ratio = detected_by_count / total_providers_ran`
-- `consensus_score = agreement_ratio × max_confidence`
-- `consensus_level = confirmed | needs-verification | unverified`
-
-Consensus reflects model agreement. It does not replace source inspection or tests.
+The findings command/schema, semantic normalization, deduplication, confidence, consensus, passive lifecycle, findings-driven memory, Markdown-PR, SARIF, and content-based `INCONCLUSIVE` surfaces are gone. The old `--format`, `--strict-contract`, `--memory`, `--space`, `--diff`, `--staged`, `--unstaged`, and `--diff-base` flags return migration errors. Use `--target-paths` and a raw prompt for scope, then select text, JSON, JSONL, or file-backed artifacts.

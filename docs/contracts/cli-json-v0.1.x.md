@@ -1,56 +1,70 @@
-# CLI JSON Contract (`v0.1.x`)
+# CLI JSON Contract (`v0.1.x` compatibility label)
 
-This document freezes the machine-readable payload contract returned by:
+This document describes the raw operational envelope emitted by `mco run --json` and `mco review --json` in the invocation-native runtime. The payload is deliberately not a findings or semantic decision contract.
 
-- `mco review --json`
-- `mco run --json`
-
-## Contract Version
-
-- Scope: `v0.1.x`
-- Compatibility rule: additive-only changes are allowed in `v0.1.x`; removal/rename/type change requires a new contract version.
-
-## Payload Shape
-
-Top-level JSON object with required fields:
+## Final envelope
 
 ```json
 {
-  "command": "review|run",
-  "task_id": "string",
-  "artifact_root": "string",
-  "decision": "string",
-  "terminal_state": "string",
-  "provider_success_count": 0,
-  "provider_failure_count": 0,
-  "findings_count": 0,
-  "parse_success_count": 0,
-  "parse_failure_count": 0,
-  "schema_valid_count": 0,
-  "dropped_findings_count": 0
+  "stage": "run",
+  "task_id": "task-123",
+  "status": "complete",
+  "outputs": [
+    {
+      "stage": "run",
+      "invocation_id": "fast",
+      "provider": "pi",
+      "model": "model-a",
+      "status": "success",
+      "output": "raw Agent answer",
+      "error": null,
+      "exit_code": 0,
+      "deltas": ["raw ", "Agent answer"],
+      "transport_status": "succeeded",
+      "artifact_path": null
+    }
+  ],
+  "exit_code": 0,
+  "artifact_root": null
 }
 ```
 
-## Semantics
+The `outputs` array preserves declaration order. Reliable `usage` appears only when `--include-token-usage` is requested and a provider supplied it. The JSON CLI envelope omits provider `stderr` from stdout; diagnostics remain available on stderr. `artifact_root` is `null` for temporary execution and is the persistent task directory for `artifact` or `both` result modes.
 
-- `command`:
-  - `review` for review-specialized flow.
-  - `run` for generalized execution flow.
-- `findings_count` is retained canonical findings count.
-- `parse_success_count` / `parse_failure_count` are review parsing health counters.
-- Failures before a normal result is available use the envelope frozen in `docs/contracts/errors-v0.1.x.md`.
-- If no provider selection is supplied, `provider_selection_required` tells the calling agent to ask the user and retry with `--providers`; no provider process starts.
+## Status and exit code
 
-## Exit Code Notes
+| Task status | Exit code | Meaning |
+|---|---:|---|
+| `complete` | `0` | Every invocation succeeded |
+| `partial` | `1` | At least one invocation succeeded and at least one did not |
+| `failed` | `2` | No invocation succeeded, or input/configuration failed |
 
-- `mco run`:
-  - returns non-zero only when `decision == FAIL`.
-- `mco review`:
-  - returns non-zero for `FAIL`.
-  - returns `3` for `INCONCLUSIVE`.
+Invocation status is operational: `success`, `failed`, `timeout`, or `cancelled`. A task never invents a semantic conclusion from an Agent answer.
 
-## Gate
+## Invocation selection
 
-Contract enforcement tests:
+`--providers a,b` expands to one default/configured model invocation per provider. Repeated `--agent [alias=]provider:model` declarations create explicit invocation records. Invalid aliases, duplicate invocations, unknown providers, and confirmed invalid configuration fail before dispatch.
 
-- `tests/test_cli_json_contract.py`
+## JSONL stream
+
+`--stream jsonl` emits events with the same invocation identifiers. For any invocation, concatenate its `output_delta` event `delta` fields in order to reconstruct the formal answer. `invocation_started`, `invocation_finished`, and `task_finished` carry operational metadata only.
+
+## Stages and artifacts
+
+Chain, debate, and synthesis events include `stage`. Persistent artifacts use:
+
+```text
+<artifact-base>/<task-id>/
+  result.md
+  run.json
+  stages/<stage>/invocations/<invocation-id>.md
+  stages/<stage>/context/manifest.json
+  stages/<stage>/result.md
+  stages/<stage>/run.json
+```
+
+Earlier stage answers are passed by file path and manifest. Their bodies are not silently summarized or truncated. Root `result.md` groups the actual stages, puts synthesis first when present, and preserves raw answers plus operational failure records.
+
+## Compatibility
+
+This is a breaking replacement for the former structured findings payload. Removed fields include findings counts, schema validity, parse counters, decisions, consensus, and dropped-finding counts. Callers must consume raw `output` plus operational status, or use the file-backed artifacts.

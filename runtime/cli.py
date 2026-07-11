@@ -3,27 +3,24 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
+import subprocess
+import signal
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .adapters import adapter_registry
-from .config import ReviewConfig, ReviewPolicy, load_agent_registrations
+from .config import DIVISION_DIMENSIONS, ReviewConfig, ReviewPolicy, load_agent_registrations
 from .contracts import ProviderPresence, TaskInput
-from .formatters import (
-    LiveStreamRenderer,
-    _consensus_badge,
-    _consensus_level_label,
-    format_markdown_pr,
-    format_sarif,
-)
 from .execution_modes import EXECUTION_MODES, execution_permissions
+from .invocation_runtime import AgentInvocation, default_invocations, parse_invocations, run_invocation_workflow, validate_execution_scope
+from .models import discover_models
 from .provider_risk import effective_provider_risk, provider_risk
 from .skill_health import check_skill_health
 from .skill_manager import read_bundled_skill, skill_status, sync_bundled_skill
 from . import __version__
-from .review_engine import REVIEW_FINDINGS_SCHEMA_PATH, ReviewRequest, provider_policy_preview, run_review
+from .policy import ExecutionPreviewRequest, provider_policy_preview
 
 SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "cursor", "gemini", "grok", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
@@ -40,6 +37,7 @@ _ERROR_DETAILS = {
     "config_error": ("configuration", "Correct the project/global configuration and retry."),
     "invalid_config": ("configuration", "Remove the incompatible flags or configuration values and retry."),
     "agent_selection_required": ("configuration", "Choose one or more calling agents for the mco-cli Skill."),
+    "removed_surface": ("input", "Use the invocation-native raw text, JSON, JSONL, or artifact output instead."),
     "runtime_error": ("runtime", "Inspect provider results and logs before retrying."),
 }
 
@@ -114,7 +112,7 @@ class _StreamSafeParser(argparse.ArgumentParser):
 
 TOP_LEVEL_DESCRIPTION = (
     "MCO - Orchestrate AI Coding Agents. Any Prompt. Any Agent. Any IDE.\n"
-    "Use `run` for general tasks and `review` for structured findings with consensus, debate, division, and streaming."
+    "Use `run` for general tasks and `review` for a thin read-only raw-answer preset."
 )
 
 TOP_LEVEL_EPILOG = (
@@ -123,7 +121,6 @@ TOP_LEVEL_EPILOG = (
     "  mco run --repo . --prompt \"Summarize this repo.\" --providers claude,codex\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --json\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --debate\n"
-    "  mco review --repo . --prompt \"Review for bugs.\" --divide dimensions\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --stream live\n"
     "  mco agent list\n\n"
     "Use `mco doctor -h`, `mco run -h`, or `mco review -h` for full command options."
@@ -136,8 +133,9 @@ RUN_EPILOG = (
     "  mco run --repo . --prompt \"Compare provider outputs.\" --providers claude,codex,qwen --synthesize\n"
     "  mco run --repo . --prompt \"Analyze runtime.\" --save-artifacts --json\n\n"
     "Exit codes:\n"
-    "  0 = success\n"
-    "  2 = input/config/runtime failure"
+    "  0 = complete (all invocations succeeded)\n"
+    "  1 = partial (at least one invocation succeeded)\n"
+    "  2 = failed or input/configuration error"
 )
 
 REVIEW_EPILOG = (
@@ -145,13 +143,11 @@ REVIEW_EPILOG = (
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex\n"
     "  mco review --repo . --prompt \"Review for security issues.\" --providers claude,codex,qwen --json\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --synthesize --synth-provider claude\n"
-    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format markdown-pr\n"
-    "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format sarif\n"
-    "  mco review --repo . --prompt \"Review runtime/ only.\" --target-paths runtime --strict-contract\n\n"
+    "  mco review --repo . --prompt \"Review runtime/ only.\" --target-paths runtime --stream jsonl\n\n"
     "Exit codes:\n"
-    "  0 = success\n"
-    "  2 = FAIL / input / config / runtime failure\n"
-    "  3 = INCONCLUSIVE (review mode only)"
+    "  0 = complete (all invocations succeeded)\n"
+    "  1 = partial (at least one invocation succeeded)\n"
+    "  2 = failed / input / config / runtime failure\n"
 )
 
 DOCTOR_EPILOG = (
@@ -163,28 +159,6 @@ DOCTOR_EPILOG = (
     "  0 = command completed (read overall_ok in output)\n"
     "  2 = invalid input"
 )
-
-FINDINGS_EPILOG = (
-    "Examples:\n"
-    "  mco findings list --repo .\n"
-    "  mco findings list --repo . --status open --json\n"
-    "  mco findings confirm sha256:abc123 --status accepted --repo .\n\n"
-    "Exit codes:\n"
-    "  0 = success\n"
-    "  2 = input/config/runtime failure"
-)
-
-MEMORY_EPILOG = (
-    "Examples:\n"
-    "  mco memory agent-stats --repo .\n"
-    "  mco memory agent-stats --repo . --space my-repo --json\n"
-    "  mco memory priors --repo . --category security\n"
-    "  mco memory status --repo .\n\n"
-    "Exit codes:\n"
-    "  0 = success\n"
-    "  2 = input/config/runtime failure"
-)
-
 
 def _doctor_adapter_registry(transport: str = "shim", extra_agents=None, configured_agents=None) -> Mapping[str, object]:
     return adapter_registry(transport=transport, extra_agents=extra_agents, configured_agents=configured_agents)
@@ -292,13 +266,12 @@ def _build_stream_callback(stream_mode: Optional[str], *, chain_mode: bool = Fal
     if stream_mode == "live":
         if not _stdout_is_tty():
             return _build_stream_callback("jsonl", chain_mode=chain_mode)
-        renderer = LiveStreamRenderer(sys.stdout, chain_mode=chain_mode)
-        return renderer.handle_event, "live", renderer
+        return None, "live", None
 
     return None, None, None
 
 
-def _resolve_prompt(args: argparse.Namespace) -> str:
+def _resolve_prompt(args: argparse.Namespace, default_prompt: str = "") -> str:
     """Resolve prompt from --prompt, --file, or piped stdin.
 
     Raises ValueError with a human-readable message on failure.
@@ -326,9 +299,14 @@ def _resolve_prompt(args: argparse.Namespace) -> str:
     # Check for piped stdin
     if not sys.stdin.isatty():
         text = sys.stdin.read().strip()
-        if not text:
-            raise ValueError("Empty input from stdin.")
-        return text
+        if text:
+            return text
+        if default_prompt:
+            return default_prompt
+        raise ValueError("Empty input from stdin.")
+
+    if default_prompt:
+        return default_prompt
 
     raise ValueError("Either --prompt or --file is required.")
 
@@ -455,7 +433,132 @@ def _render_doctor_report(payload: Dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest, review_mode: bool, policy: Dict[str, object]) -> List[str]:
+_DIVISION_EXCLUDED_NAMES = {
+    ".git",
+    ".golutra",
+    ".hermes",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "artifacts",
+    "build",
+    "coverage",
+    "dist",
+    "htmlcov",
+    "node_modules",
+    "reports",
+    "venv",
+}
+_DIVISION_EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+
+
+def _division_path_is_excluded(root: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    return (
+        any(part in _DIVISION_EXCLUDED_NAMES for part in relative.parts)
+        or path.suffix in _DIVISION_EXCLUDED_SUFFIXES
+    )
+
+
+def _git_files_for_division(root: Path, scope: Path) -> Optional[List[Path]]:
+    relative_scope = scope.relative_to(root)
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(root), "ls-files", "--cached", "--others",
+                "--exclude-standard", "-z", "--", str(relative_scope) or ".",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return [
+        root / raw.decode("utf-8", errors="surrogateescape")
+        for raw in result.stdout.split(b"\0")
+        if raw
+    ]
+
+
+def _files_for_division(repo_root: str, execution_scope: List[str]) -> List[str]:
+    root = Path(repo_root).resolve()
+    files = set()
+    for scope in execution_scope:
+        candidate = (root / scope).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            files.add(str(candidate.relative_to(root)))
+        elif candidate.is_dir():
+            discovered = _git_files_for_division(root, candidate)
+            children = discovered if discovered is not None else candidate.rglob("*")
+            for child in children:
+                if child.is_symlink() or not child.is_file() or _division_path_is_excluded(root, child):
+                    continue
+                try:
+                    files.add(str(child.relative_to(root)))
+                except ValueError:
+                    continue
+    return sorted(files)
+
+
+def _apply_file_division(
+    repo_root: str,
+    invocations: List[AgentInvocation],
+    divide: str,
+) -> List[AgentInvocation]:
+    if divide != "files" or not invocations:
+        return list(invocations)
+    files = _files_for_division(repo_root, list(invocations[0].execution_scope))
+    assignments = [[] for _ in invocations]
+    for index, path in enumerate(files):
+        assignments[index % len(invocations)].append(path)
+    return [
+        AgentInvocation(
+            invocation_id=invocation.invocation_id,
+            provider=invocation.provider,
+            model=invocation.model,
+            declaration_order=invocation.declaration_order,
+            execution_scope=tuple(assignments[index]),
+        )
+        for index, invocation in enumerate(invocations)
+    ]
+
+
+def _invocation_prompts(
+    prompt: str,
+    invocations: List[AgentInvocation],
+    policy: ReviewPolicy,
+) -> Dict[str, str]:
+    prompts: Dict[str, str] = {}
+    for index, invocation in enumerate(invocations):
+        additions = []
+        perspective = policy.perspectives.get(invocation.provider, "")
+        if perspective:
+            additions.append("## Review Perspective\n{}".format(perspective))
+        if policy.divide == "files":
+            assigned = "\n".join("- {}".format(path) for path in invocation.execution_scope)
+            additions.append(
+                "## Coordination\nAssigned files (non-overlapping):\n{}".format(assigned or "- (no files assigned)")
+            )
+        elif policy.divide == "dimensions":
+            dimension = DIVISION_DIMENSIONS[index % len(DIVISION_DIMENSIONS)]
+            additions.append("## Coordination\nAssigned review dimension: {}".format(dimension))
+        prompts[invocation.invocation_id] = "\n\n".join([*additions, prompt]) if additions else prompt
+    return prompts
+
+
+def _dry_run_command_template(provider: str, adapter: object, req: ExecutionPreviewRequest, review_mode: bool, policy: Dict[str, object]) -> List[str]:
     metadata: Dict[str, object] = {
         "artifact_root": "<artifact_root>",
         "allow_paths": req.policy.allow_paths,
@@ -468,8 +571,6 @@ def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest
     applied_context = policy.get("applied_context", {})
     if provider in req.policy.provider_context:
         metadata["provider_context"] = dict(applied_context) if isinstance(applied_context, dict) else {}
-    if review_mode and provider == "codex" and REVIEW_FINDINGS_SCHEMA_PATH.exists():
-        metadata["output_schema_path"] = str(REVIEW_FINDINGS_SCHEMA_PATH)
     preview_command = getattr(adapter, "preview_command", None)
     if callable(preview_command):
         permissions = policy.get("applied_permissions", {})
@@ -491,7 +592,7 @@ def _dry_run_command_template(provider: str, adapter: object, req: ReviewRequest
 
 def _build_dry_run_payload(
     args: argparse.Namespace,
-    req: ReviewRequest,
+    req: ExecutionPreviewRequest,
     *,
     providers: List[str],
     adapters: Mapping[str, object],
@@ -499,11 +600,10 @@ def _build_dry_run_payload(
     result_mode: str,
     write_artifacts: bool,
     transport: str,
-    diff_mode: Optional[str],
-    diff_base: str,
-    memory_space: str,
     synthesize: bool,
     synth_provider: str,
+    invocations: Optional[List[AgentInvocation]] = None,
+    invocation_prompts: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, object]:
     provider_details: Dict[str, object] = {}
     for provider in providers:
@@ -538,6 +638,8 @@ def _build_dry_run_payload(
             "policy": policy,
             "command_template": _dry_run_command_template(provider, adapter, req, review_mode, policy),
         }
+    resolved_invocations = invocations or []
+    resolved_prompts = invocation_prompts or {}
     return {
         "command": args.command,
         "dry_run": True,
@@ -568,9 +670,21 @@ def _build_dry_run_payload(
             "divide": req.policy.divide,
         },
         "providers_detail": provider_details,
+        "provider_prompts": {
+            invocation.provider: resolved_prompts.get(invocation.invocation_id, req.prompt)
+            for invocation in resolved_invocations
+        },
+        "invocations": [
+            {
+                "invocation_id": invocation.invocation_id,
+                "provider": invocation.provider,
+                "model": invocation.model,
+                "target_paths": list(invocation.execution_scope),
+                "prompt": resolved_prompts.get(invocation.invocation_id, req.prompt),
+            }
+            for invocation in resolved_invocations
+        ],
         "execution_mode": req.policy.execution_mode,
-        "diff": {"mode": diff_mode, "base": diff_base or None},
-        "memory": {"enabled": bool(getattr(args, "memory", False)), "space": memory_space or None},
         "synthesis": {"enabled": synthesize, "provider": synth_provider or None},
     }
 
@@ -598,185 +712,21 @@ def _render_dry_run_report(payload: Dict[str, object]) -> str:
             command = item.get("command_template", [])
             if isinstance(command, list) and command:
                 lines.append("  command=" + " ".join(str(part) for part in command))
-    return "\n".join(lines)
-
-
-def _finding_location_from_dict(finding: Dict[str, object]) -> str:
-    evidence = finding.get("evidence")
-    if not isinstance(evidence, dict):
-        return ""
-    file_path = str(evidence.get("file", ""))
-    line = evidence.get("line")
-    if file_path and isinstance(line, int):
-        return f"{file_path}:{line}"
-    return file_path
-
-
-def _consensus_badge_text(detected_by: list, total_providers: int, chain_mode: bool = False) -> str:
-    """Return a space-prefixed consensus badge or empty string."""
-    badge = _consensus_badge(detected_by, total_providers, chain_mode=chain_mode)
-    return "  " + badge if badge else ""
-
-
-def _consensus_summary_text(finding: Dict[str, object], total_providers: int, chain_mode: bool = False) -> str:
-    parts: List[str] = []
-    level = _consensus_level_label(finding.get("consensus_level"), chain_mode=chain_mode)
-    if level:
-        parts.append(f"level={level}")
-    score = finding.get("consensus_score")
-    if isinstance(score, (int, float)):
-        parts.append(f"score={float(score):.2f}")
-    badge = _consensus_badge_text(finding.get("detected_by", []), total_providers, chain_mode=chain_mode).strip()
-    if badge:
-        parts.append(badge)
-    source_scopes = finding.get("source_scopes")
-    if isinstance(source_scopes, list) and source_scopes:
-        parts.append("scope=" + "; ".join(str(item) for item in source_scopes))
-    return ("  " + " ".join(parts)) if parts else ""
-
-
-def _render_debate_table(debate_round: Dict[str, object]) -> List[str]:
-    finding_rows = debate_round.get("findings", [])
-    if not isinstance(finding_rows, list) or not finding_rows:
-        return ["Debate Round", "- no debate votes recorded"]
-
-    lines = ["Debate Round", "Finding                                   Votes        Score", "-" * 72]
-    for item in finding_rows:
-        if not isinstance(item, dict):
-            continue
-        title = str(item.get("title", "-")).strip() or "-"
-        location = str(item.get("location", "-")).strip() or "-"
-        vote_summary = item.get("vote_summary", {})
-        if isinstance(vote_summary, dict):
-            votes = "A:{}/D:{}/R:{}".format(
-                vote_summary.get("agree", 0),
-                vote_summary.get("disagree", 0),
-                vote_summary.get("refine", 0),
-            )
-        else:
-            votes = "A:0/D:0/R:0"
-        score_text = "{} -> {}".format(
-            "{:.2f}".format(float(item.get("consensus_score_before", 0.0))),
-            "{:.2f}".format(float(item.get("consensus_score_after", 0.0))),
-        )
-        label = f"{title} @ {location}"
-        lines.append(f"{label[:40]:40s}  {votes:10s}  {score_text}")
-    return lines
-
-
-def _render_user_readable_report(
-    command: str,
-    result_mode: str,
-    providers: List[str],
-    payload: Dict[str, object],
-    provider_results: Dict[str, Dict[str, object]],
-    findings: Optional[List[Dict[str, object]]] = None,
-    chain_mode: bool = False,
-) -> str:
-    lines: List[str] = []
-    title = "Review" if command == "review" else "Run"
-    lines.append(f"{title} Result")
-    lines.append("")
-    lines.append("Execution Summary")
-    lines.append(f"- task_id: {payload['task_id']}")
-    lines.append(f"- decision: {payload['decision']}")
-    lines.append(f"- terminal_state: {payload['terminal_state']}")
-    if payload.get("division_strategy"):
-        lines.append(f"- division_strategy: {payload['division_strategy']}")
-    lines.append(f"- providers: {', '.join(providers)}")
-    lines.append(
-        f"- provider_success/failure: {payload['provider_success_count']}/{payload['provider_failure_count']}"
-    )
-    lines.append(f"- findings_count: {payload['findings_count']}")
-    lines.append(f"- parse_success/failure: {payload['parse_success_count']}/{payload['parse_failure_count']}")
-    lines.append(f"- schema_valid_count: {payload['schema_valid_count']}")
-    token_usage_summary = payload.get("token_usage_summary")
-    if isinstance(token_usage_summary, dict):
-        totals = token_usage_summary.get("totals", {})
-        if isinstance(totals, dict):
+    invocations = payload.get("invocations", [])
+    if isinstance(invocations, list) and invocations:
+        lines.extend(["", "Invocation Instructions"])
+        for invocation in invocations:
+            if not isinstance(invocation, dict):
+                continue
             lines.append(
-                "- token_usage: "
-                f"completeness={token_usage_summary.get('completeness')}, "
-                f"providers_with_usage={token_usage_summary.get('providers_with_usage')}/{token_usage_summary.get('provider_count')}, "
-                f"prompt={totals.get('prompt_tokens', 0)}, completion={totals.get('completion_tokens', 0)}, total={totals.get('total_tokens', 0)}"
-            )
-    synthesis = payload.get("synthesis")
-    if isinstance(synthesis, dict):
-        lines.append(
-            "- synthesis: "
-            f"provider={synthesis.get('provider')}, success={synthesis.get('success')}, reason={synthesis.get('reason')}"
-        )
-    lines.append("")
-    lines.append("Provider Details")
-    for provider in sorted(provider_results.keys()):
-        details = provider_results.get(provider, {})
-        success = bool(details.get("success"))
-        attempts = details.get("attempts")
-        final_error = details.get("final_error")
-        parse_reason = details.get("parse_reason")
-        findings_count = details.get("findings_count")
-        assigned_scope = details.get("assigned_scope")
-        lines.append(
-            f"- {provider}: success={success}, attempts={attempts}, final_error={final_error}, parse_reason={parse_reason}, findings={findings_count}, assigned_scope={assigned_scope}"
-        )
-        output_text = str(details.get("final_text", "")) or str(details.get("output_text", ""))
-        if output_text:
-            lines.append("  output:")
-            for raw_line in output_text.splitlines():
-                lines.append(f"    {raw_line}")
-        token_usage = details.get("token_usage")
-        if isinstance(token_usage, dict):
-            lines.append(
-                "  token_usage: "
-                f"completeness={details.get('token_usage_completeness')}, "
-                f"prompt={token_usage.get('prompt_tokens', '-')}, "
-                f"completion={token_usage.get('completion_tokens', '-')}, "
-                f"total={token_usage.get('total_tokens', '-')}"
-            )
-    lines.append("")
-    if result_mode in ("artifact", "both"):
-        lines.append("Artifacts")
-        lines.append(f"- artifact_root: {payload['artifact_root']}")
-    else:
-        lines.append("Artifacts")
-        lines.append("- artifact files are skipped in stdout mode")
-
-    debate_round = payload.get("debate_round")
-    if isinstance(debate_round, dict):
-        lines.append("")
-        lines.extend(_render_debate_table(debate_round))
-
-    # Diff scope findings breakdown (only when findings have diff_scope tags)
-    total_provider_count = len(providers)
-    if findings and any(f.get("diff_scope") for f in findings):
-        in_diff = [f for f in findings if f.get("diff_scope") == "in_diff"]
-        related = [f for f in findings if f.get("diff_scope") == "related"]
-
-        if in_diff:
-            lines.append("")
-            lines.append(f"In Diff ({len(in_diff)} findings)")
-            for f in in_diff:
-                consensus = _consensus_summary_text(f, total_provider_count, chain_mode=chain_mode)
-                lines.append(
-                    f"  {str(f.get('severity', '-')).upper():8s} "
-                    f"{str(f.get('category', '-')):15s} "
-                    f"{f.get('title', '-')}  "
-                    f"{_finding_location_from_dict(f)}"
-                    f"{consensus}"
+                "- {} ({}:{}) paths={}".format(
+                    invocation.get("invocation_id"),
+                    invocation.get("provider"),
+                    invocation.get("model"),
+                    ",".join(str(path) for path in invocation.get("target_paths", [])),
                 )
-        if related:
-            lines.append("")
-            lines.append(f"Related ({len(related)} findings)")
-            for f in related:
-                consensus = _consensus_summary_text(f, total_provider_count, chain_mode=chain_mode)
-                lines.append(
-                    f"  {str(f.get('severity', '-')).upper():8s} "
-                    f"{str(f.get('category', '-')):15s} "
-                    f"{f.get('title', '-')}  "
-                    f"{_finding_location_from_dict(f)}"
-                    f"{consensus}"
-                )
-
+            )
+            lines.append("  prompt=" + str(invocation.get("prompt", "")))
     return "\n".join(lines)
 
 
@@ -1139,10 +1089,17 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     scope.add_argument(
         "--agent",
+        action="append",
+        dest="invocation_agents",
+        metavar="[ALIAS=]PROVIDER:MODEL",
+        help="Repeatable model-qualified invocation. For example: --agent fast=pi:gpt-5.4",
+    )
+    scope.add_argument(
+        "--custom-agent",
         nargs=2,
         metavar=("NAME", "COMMAND"),
         default=None,
-        help='Register a temporary ACP agent; select it separately with --providers mybot',
+        help="Register a temporary ACP agent; select it separately with --providers NAME",
     )
 
     timeouts = parser.add_argument_group("Timeout and Parallelism")
@@ -1155,7 +1112,13 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     timeouts.add_argument(
         "--provider-timeouts",
         default="",
-        help="Provider-specific stall-timeout overrides, e.g. claude=120,codex=90",
+        help="Provider-specific invocation hard-timeout overrides, e.g. claude=120,codex=90",
+    )
+    timeouts.add_argument(
+        "--invocation-hard-timeout",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=f"Per-invocation hard timeout in seconds (default: {DEFAULT_POLICY.timeout_seconds}; 0 disables)",
     )
     timeouts.add_argument(
         "--stall-timeout",
@@ -1190,9 +1153,8 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     )
     output.add_argument(
         "--format",
-        choices=("report", "markdown-pr", "sarif"),
-        default="report",
-        help="Output format when --json is not set. markdown-pr/sarif are review-only",
+        default="",
+        help=argparse.SUPPRESS,
     )
     output.add_argument(
         "--include-token-usage",
@@ -1202,7 +1164,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     output.add_argument(
         "--synthesize",
         action="store_true",
-        help="Run one extra synthesis pass to produce consensus/divergence summary (default: disabled)",
+        help="Run one extra read-only synthesis pass over prior raw answers (default: disabled)",
     )
     output.add_argument(
         "--synth-provider",
@@ -1256,7 +1218,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     access.add_argument(
         "--perspectives-json",
         default="",
-        help="Per-provider review perspective JSON, e.g. '{\"claude\":\"Focus on security issues\",\"codex\":\"Focus on performance\"}'",
+        help="Per-provider explicit prompt addition JSON, e.g. '{\"codex\":\"Focus on security\"}'",
     )
     review_flow = access.add_mutually_exclusive_group()
     review_flow.add_argument(
@@ -1267,18 +1229,18 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
     review_flow.add_argument(
         "--debate",
         action="store_true",
-        help="Debate mode: run providers independently, then challenge each other's findings in a second round",
+        help="Debate mode: run a second read-only stage over prior raw answers",
     )
     review_flow.add_argument(
         "--divide",
         choices=("files", "dimensions"),
         default="",
-        help="Divide review work by file slices or review dimensions across providers",
+        help="Explicit non-semantic task division: files assigns non-overlapping files; dimensions assigns review lenses",
     )
     access.add_argument(
         "--strict-contract",
         action="store_true",
-        help="Review mode only: enforce strict findings JSON contract",
+        help=argparse.SUPPRESS,
     )
 
     memory = parser.add_argument_group("Memory")
@@ -1286,37 +1248,19 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
         "--memory",
         action="store_true",
         default=argparse.SUPPRESS,
-        help="Enable memory layer (requires evermemos-mcp). Injects history context and writes back findings",
+        help=argparse.SUPPRESS,
     )
     memory.add_argument(
         "--space",
         default="",
-        help="Space slug, e.g. 'my-repo' (default: auto-inferred from git remote). "
-             "Do NOT include 'coding:' prefix — it is added automatically. Requires --memory",
+        help=argparse.SUPPRESS,
     )
 
-    diff_group = parser.add_argument_group("Diff Mode")
-    diff_exclusive = diff_group.add_mutually_exclusive_group()
-    diff_exclusive.add_argument(
-        "--diff",
-        action="store_true",
-        help="Review only changes vs merge-base with main/master branch",
-    )
-    diff_exclusive.add_argument(
-        "--staged",
-        action="store_true",
-        help="Review only staged changes (git diff --cached)",
-    )
-    diff_exclusive.add_argument(
-        "--unstaged",
-        action="store_true",
-        help="Review only unstaged working tree changes (git diff)",
-    )
-    diff_group.add_argument(
-        "--diff-base",
-        default="",
-        help="Git ref for branch diff comparison (e.g. origin/main, HEAD~3). Implies --diff",
-    )
+    legacy_scope = parser.add_argument_group("Legacy options")
+    legacy_scope.add_argument("--diff", action="store_true", help=argparse.SUPPRESS)
+    legacy_scope.add_argument("--staged", action="store_true", help=argparse.SUPPRESS)
+    legacy_scope.add_argument("--unstaged", action="store_true", help=argparse.SUPPRESS)
+    legacy_scope.add_argument("--diff-base", default="", help=argparse.SUPPRESS)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1409,7 +1353,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser(
         "run",
         help="Run general multi-provider task execution",
-        description="Run a prompt across multiple providers without enforcing findings schema.",
+        description="Run a prompt across multiple providers and return opaque raw answers.",
         epilog=RUN_EPILOG,
         formatter_class=_HelpFormatter,
     )
@@ -1418,81 +1362,11 @@ def build_parser() -> argparse.ArgumentParser:
     review = subparsers.add_parser(
         "review",
         help="Run multi-provider review",
-        description="Run structured multi-provider review with normalized findings and decisions.",
+        description="Run a thin read-only multi-provider review and return raw answers.",
         epilog=REVIEW_EPILOG,
         formatter_class=_HelpFormatter,
     )
     _add_common_execution_args(review)
-
-    findings = subparsers.add_parser(
-        "findings",
-        help="List and manage persisted findings",
-        description="List and confirm findings stored in evermemos memory.",
-        epilog=FINDINGS_EPILOG,
-        formatter_class=_HelpFormatter,
-    )
-    findings_sub = findings.add_subparsers(dest="findings_action", required=True)
-
-    findings_list = findings_sub.add_parser(
-        "list",
-        help="List findings",
-        formatter_class=_HelpFormatter,
-    )
-    findings_list.add_argument("--repo", default=".", help="Repository root path")
-    findings_list.add_argument("--status", default=None, help="Filter by status (e.g. open, accepted, rejected)")
-    findings_list.add_argument("--space", default="", help="Space slug override")
-    findings_list.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
-
-    findings_confirm = findings_sub.add_parser(
-        "confirm",
-        help="Update finding status",
-        formatter_class=_HelpFormatter,
-    )
-    findings_confirm.add_argument("hash", help="Finding hash to confirm")
-    findings_confirm.add_argument(
-        "--status",
-        required=True,
-        choices=("accepted", "rejected", "wontfix"),
-        help="New status for the finding",
-    )
-    findings_confirm.add_argument("--repo", default=".", help="Repository root path")
-    findings_confirm.add_argument("--space", default="", help="Space slug override")
-
-    # ── memory subcommand ──────────────────────────────────────
-    memory_cmd = subparsers.add_parser(
-        "memory",
-        help="View agent stats, priors, and memory space status",
-        description="Inspect memory layer data: agent scores, blended priors, and space status.",
-        epilog=MEMORY_EPILOG,
-        formatter_class=_HelpFormatter,
-    )
-    memory_sub = memory_cmd.add_subparsers(dest="memory_action", required=True)
-
-    mem_agent_stats = memory_sub.add_parser(
-        "agent-stats",
-        help="Show agent reliability scores",
-        formatter_class=_HelpFormatter,
-    )
-    mem_agent_stats.add_argument("--repo", default=".", help="Repository root path")
-    mem_agent_stats.add_argument("--space", default="", help="Space slug override")
-    mem_agent_stats.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
-
-    mem_priors = memory_sub.add_parser(
-        "priors",
-        help="Show blended agent weight priors",
-        formatter_class=_HelpFormatter,
-    )
-    mem_priors.add_argument("--repo", default=".", help="Repository root path")
-    mem_priors.add_argument("--category", required=True, help="Task category for display context")
-    mem_priors.add_argument("--space", default="", help="Space slug override")
-
-    mem_status = memory_sub.add_parser(
-        "status",
-        help="Show memory space status overview",
-        formatter_class=_HelpFormatter,
-    )
-    mem_status.add_argument("--repo", default=".", help="Repository root path")
-    mem_status.add_argument("--space", default="", help="Space slug override")
 
     skills_cmd = subparsers.add_parser(
         "skills",
@@ -1699,14 +1573,45 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     stall_timeout_seconds = getattr(args, "stall_timeout", None)
     if stall_timeout_seconds is None:
         stall_timeout_seconds = fc_policy.get("stall_timeout_seconds", cfg.policy.stall_timeout_seconds)
+    invocation_hard_timeout_seconds = getattr(args, "invocation_hard_timeout", None)
+    if invocation_hard_timeout_seconds is None:
+        invocation_hard_timeout_seconds = fc_policy.get("timeout_seconds", cfg.policy.timeout_seconds)
     poll_interval_seconds = getattr(args, "poll_interval", None)
     if poll_interval_seconds is None:
         poll_interval_seconds = fc_policy.get("poll_interval_seconds", cfg.policy.poll_interval_seconds)
     review_hard_timeout_seconds = getattr(args, "review_hard_timeout", None)
     if review_hard_timeout_seconds is None:
         review_hard_timeout_seconds = fc_policy.get("review_hard_timeout_seconds", cfg.policy.review_hard_timeout_seconds)
-    enforce_findings_contract = bool(args.strict_contract)
-
+    if (
+        not isinstance(max_provider_parallelism, int)
+        or isinstance(max_provider_parallelism, bool)
+        or max_provider_parallelism < 0
+    ):
+        raise ValueError("--max-provider-parallelism must be an integer greater than or equal to 0")
+    if (
+        not isinstance(stall_timeout_seconds, int)
+        or isinstance(stall_timeout_seconds, bool)
+        or stall_timeout_seconds < 0
+    ):
+        raise ValueError("--stall-timeout must be a non-negative integer")
+    if (
+        not isinstance(invocation_hard_timeout_seconds, int)
+        or isinstance(invocation_hard_timeout_seconds, bool)
+        or invocation_hard_timeout_seconds < 0
+    ):
+        raise ValueError("--invocation-hard-timeout must be an integer greater than or equal to 0")
+    if (
+        not isinstance(poll_interval_seconds, (int, float))
+        or isinstance(poll_interval_seconds, bool)
+        or poll_interval_seconds <= 0
+    ):
+        raise ValueError("--poll-interval must be a positive number")
+    if (
+        not isinstance(review_hard_timeout_seconds, int)
+        or isinstance(review_hard_timeout_seconds, bool)
+        or review_hard_timeout_seconds < 0
+    ):
+        raise ValueError("--review-hard-timeout must be an integer greater than or equal to 0")
     # Parse perspectives from CLI or config
     perspectives: Dict[str, str] = {}
     perspectives_json = getattr(args, "perspectives_json", "")
@@ -1731,14 +1636,10 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
         raise ValueError("--divide must be one of: files, dimensions")
 
     policy = ReviewPolicy(
-        timeout_seconds=cfg.policy.timeout_seconds,
+        timeout_seconds=invocation_hard_timeout_seconds,
         stall_timeout_seconds=stall_timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
         review_hard_timeout_seconds=review_hard_timeout_seconds,
-        enforce_findings_contract=enforce_findings_contract,
-        max_retries=cfg.policy.max_retries,
-        high_escalation_threshold=cfg.policy.high_escalation_threshold,
-        require_non_empty_findings=cfg.policy.require_non_empty_findings,
         max_provider_parallelism=max_provider_parallelism,
         provider_timeouts=provider_timeouts,
         allow_paths=allow_paths,
@@ -1755,48 +1656,12 @@ def _resolve_config(args: argparse.Namespace, file_config: Optional[Dict] = None
     return ReviewConfig(providers=providers, artifact_base=artifact_base, policy=policy)
 
 
-def _handle_findings(args: argparse.Namespace) -> int:
-    """Handle the findings subcommand (list / confirm)."""
-    from .bridge.evermemos_client import EverMemosClient
-    from .bridge.space import infer_space_slug
-    from .findings_cli import confirm_finding, list_findings, render_findings_table
-
-    api_key = os.environ.get("EVERMEMOS_API_KEY", "")
-    if not api_key:
-        print("EVERMEMOS_API_KEY environment variable is required for findings.", file=sys.stderr)
-        return 2
-
-    repo_root = str(Path(args.repo).resolve())
-    space_override = args.space.strip() if isinstance(args.space, str) else ""
-    slug = infer_space_slug(repo_root, explicit=space_override or None)
-    findings_space = f"coding:{slug}--findings"
-
-    client = EverMemosClient(api_key=api_key)
-
-    if args.findings_action == "list":
-        status_filter = args.status if args.status else None
-        findings = list_findings(client, findings_space, status_filter=status_filter)
-        if getattr(args, "json", False):
-            print(json.dumps(findings, ensure_ascii=True))
-        else:
-            if not findings:
-                print("No findings found.")
-            else:
-                print(render_findings_table(findings))
-        return 0
-
-    if args.findings_action == "confirm":
-        finding_hash = args.hash
-        new_status = args.status
-        ok = confirm_finding(client, findings_space, finding_hash, new_status)
-        if ok:
-            print(f"Finding {finding_hash} updated to '{new_status}'.")
-            return 0
-        else:
-            print(f"Finding with hash '{finding_hash}' not found.", file=sys.stderr)
-            return 2
-
-    print("Unknown findings action.", file=sys.stderr)
+def _removed_surface_error(args: argparse.Namespace, message: str) -> int:
+    if getattr(args, "json", False):
+        payload = _error_envelope("removed_surface", message)
+        print(json.dumps(payload, ensure_ascii=True))
+    else:
+        print(message, file=sys.stderr)
     return 2
 
 
@@ -1876,54 +1741,6 @@ def _handle_skills(args: argparse.Namespace) -> int:
         return 0 if payload["ok"] else 1
 
     print("Unknown skills action.", file=sys.stderr)
-    return 2
-
-
-def _handle_memory(args: argparse.Namespace) -> int:
-    """Handle the memory subcommand (agent-stats / priors / status)."""
-    from .bridge.evermemos_client import EverMemosClient
-    from .bridge.space import infer_space_slug
-    from .memory_cli import show_agent_stats, show_priors, show_status
-
-    api_key = os.environ.get("EVERMEMOS_API_KEY", "")
-    if not api_key:
-        print("EVERMEMOS_API_KEY environment variable is required for memory.", file=sys.stderr)
-        return 2
-
-    repo_root = str(Path(args.repo).resolve())
-    space_override = args.space.strip() if isinstance(args.space, str) else ""
-    slug = infer_space_slug(repo_root, explicit=space_override or None)
-
-    client = EverMemosClient(api_key=api_key)
-
-    if args.memory_action == "agent-stats":
-        agents_space = f"coding:{slug}--agents"
-        if getattr(args, "json", False):
-            # For JSON output, fetch raw scores
-            raw = client.fetch_history(space=agents_space, memory_type="episodic_memory", limit=100)
-            scores = []
-            for item in raw:
-                content = item.get("content", "")
-                if EverMemosClient.is_agent_score_entry(content):
-                    try:
-                        scores.append(EverMemosClient.deserialize_agent_score(content))
-                    except (ValueError, json.JSONDecodeError):
-                        continue
-            print(json.dumps(scores, ensure_ascii=True))
-        else:
-            print(show_agent_stats(client, agents_space))
-        return 0
-
-    if args.memory_action == "priors":
-        category = args.category
-        print(show_priors(client, repo_root, slug, category))
-        return 0
-
-    if args.memory_action == "status":
-        print(show_status(client, slug))
-        return 0
-
-    print("Unknown memory action.", file=sys.stderr)
     return 2
 
 
@@ -2126,11 +1943,28 @@ def _handle_session(args: argparse.Namespace) -> int:
 
 
 def main(argv: List[str] | None = None) -> int:
+    _raw_argv = argv if argv is not None else sys.argv[1:]
+    _wants_json = "--json" in _raw_argv
+    if _raw_argv and _raw_argv[0] in ("findings", "memory"):
+        if _raw_argv[0] == "findings":
+            message = (
+                "The findings command was removed. Use mco run/review with raw text, --json, "
+                "--stream jsonl, or --result-mode artifact."
+            )
+        else:
+            message = (
+                "The memory command was removed with the findings memory layer. Persist raw answers with "
+                "--result-mode artifact or pass them through --chain, --debate, or --synthesize."
+            )
+        if _wants_json:
+            print(json.dumps(_error_envelope("removed_surface", message), ensure_ascii=True))
+        else:
+            print(message, file=sys.stderr)
+        return 2
+
     parser = build_parser()
     # If streaming is requested, suppress argparse stderr and emit a machine-readable error.
-    _raw_argv = argv if argv is not None else sys.argv[1:]
     _wants_stream = "--stream" in _raw_argv and any(mode in _raw_argv for mode in ("jsonl", "live"))
-    _wants_json = "--json" in _raw_argv
     _parse_error_msg = ""
     if _wants_stream or _wants_json:
         def _capture_parse_error(message: str) -> None:
@@ -2231,13 +2065,13 @@ def main(argv: List[str] | None = None) -> int:
             return 0
 
         if args.agent_action == "models":
-            from .models import discover_models
+            from .models import discover_models as _discover_models
 
             providers_str = getattr(args, "providers", "codex,hermes,pi")
             providers = [p.strip() for p in providers_str.split(",") if p.strip()]
             results: Dict[str, object] = {}
             for provider in providers:
-                result = discover_models(provider)
+                result = _discover_models(provider)
                 results[provider] = result
                 if not getattr(args, "json", False):
                     status = "OK" if result.get("ok") else "FAIL"
@@ -2255,10 +2089,18 @@ def main(argv: List[str] | None = None) -> int:
             return 0
 
     if args.command == "findings":
-        return _handle_findings(args)
+        return _removed_surface_error(
+            args,
+            "The findings command was removed. Use mco run/review with raw text, --json, --stream jsonl, "
+            "or --result-mode artifact.",
+        )
 
     if args.command == "memory":
-        return _handle_memory(args)
+        return _removed_surface_error(
+            args,
+            "The memory command was removed with the findings memory layer. Persist raw answers with "
+            "--result-mode artifact or pass them through --chain, --debate, or --synthesize.",
+        )
 
     if args.command == "skills":
         return _handle_skills(args)
@@ -2291,6 +2133,7 @@ def main(argv: List[str] | None = None) -> int:
 
     policy_cfg = file_config.get("policy", {}) if isinstance(file_config.get("policy"), dict) else {}
 
+    providers_was_explicit = hasattr(args, "providers")
     # Group 1: top-level flags
     _TOP_LEVEL_DEFAULTS = {
         "providers": ",".join(DEFAULT_CONFIG.providers),
@@ -2309,6 +2152,7 @@ def main(argv: List[str] | None = None) -> int:
 
     # Group 2: policy flags (config key names differ from args attr names)
     _POLICY_DEFAULTS = {
+        "invocation_hard_timeout": ("timeout_seconds", DEFAULT_POLICY.timeout_seconds),
         "stall_timeout": ("stall_timeout_seconds", DEFAULT_POLICY.stall_timeout_seconds),
         "max_provider_parallelism": ("max_provider_parallelism", DEFAULT_POLICY.max_provider_parallelism),
         "poll_interval": ("poll_interval_seconds", DEFAULT_POLICY.poll_interval_seconds),
@@ -2329,24 +2173,48 @@ def main(argv: List[str] | None = None) -> int:
         chain_mode=bool(getattr(args, "chain", False)),
     )
 
-    def _stream_error_exit(code: str, message: str) -> int:
+    def _stream_error_exit(code: str, message: str, *, task_failure: bool = False) -> int:
         """Emit a stable machine error when requested, otherwise use stderr."""
         if stream_callback:
-            stream_callback(_stream_error_event(code, message))
+            event = _stream_error_event(code, message)
+            if task_failure:
+                event.update({"stage": "run", "status": "failed", "exit_code": 2, "artifact_root": None})
+            stream_callback(event)
         elif getattr(args, "json", False):
-            print(json.dumps(_error_envelope(code, message), ensure_ascii=True))
+            payload = _error_envelope(code, message)
+            if task_failure:
+                payload.update({"stage": "run", "status": "failed", "exit_code": 2, "outputs": [], "artifact_root": None})
+            print(json.dumps(payload, ensure_ascii=True))
         else:
             print(message, file=sys.stderr)
         return 2
 
-    # Validate --stream / --format mutual exclusion (--stream vs --json is handled by argparse)
-    if stream_mode and args.format not in ("report",):
-        return _stream_error_exit("invalid_config", "--stream and --format are mutually exclusive")
-
+    format_value = str(getattr(args, "format", "") or "").strip()
+    if format_value:
+        return _stream_error_exit(
+            "removed_surface",
+            "--format {} was removed with the findings contract. Use raw text, --json, --stream jsonl, "
+            "or --result-mode artifact.".format(format_value),
+        )
+    if getattr(args, "strict_contract", False):
+        return _stream_error_exit(
+            "removed_surface",
+            "--strict-contract was removed with the findings contract. Provider answers are now opaque raw text.",
+        )
+    if getattr(args, "memory", False) or str(getattr(args, "space", "") or "").strip():
+        return _stream_error_exit(
+            "removed_surface",
+            "--memory/--space were removed with the findings memory layer. Persist raw answers with --result-mode artifact.",
+        )
+    if getattr(args, "diff", False) or getattr(args, "staged", False) or getattr(args, "unstaged", False) or str(getattr(args, "diff_base", "") or "").strip():
+        return _stream_error_exit(
+            "removed_surface",
+            "diff review flags were removed. Put the desired scope in --target-paths or the prompt.",
+        )
     configured_agents = file_config.get("agents", []) if isinstance(file_config.get("agents"), list) else []
 
-    # Build extra_agents from --agent flag
-    extra_agents = _normalize_cli_agent_pairs(getattr(args, "agent", None))
+    # Build extra_agents from --custom-agent flag.
+    extra_agents = _normalize_cli_agent_pairs(getattr(args, "custom_agent", None))
     if not extra_agents:
         extra_agents = None
 
@@ -2356,10 +2224,6 @@ def main(argv: List[str] | None = None) -> int:
         return _stream_error_exit("config_error", "Configuration error: {}".format(exc))
     if cfg.policy.chain and cfg.policy.debate:
         return _stream_error_exit("invalid_config", "--debate and --chain are mutually exclusive")
-    if cfg.policy.divide and cfg.policy.chain:
-        return _stream_error_exit("invalid_config", "--divide and --chain are mutually exclusive")
-    if cfg.policy.divide and cfg.policy.debate:
-        return _stream_error_exit("invalid_config", "--divide and --debate are mutually exclusive")
     repo_root = str(Path(args.repo).resolve())
 
     # Valid providers = built-in providers + custom agent names
@@ -2385,41 +2249,207 @@ def main(argv: List[str] | None = None) -> int:
     if synth_provider and synth_provider not in providers:
         return _stream_error_exit("invalid_config", "--synth-provider must be one of selected providers")
 
-    memory_space = args.space.strip() if isinstance(args.space, str) else ""
-    if memory_space and not args.memory:
-        return _stream_error_exit("invalid_config", "--space requires --memory")
-    if memory_space and ":" in memory_space:
-        return _stream_error_exit(
-            "invalid_config",
-            "--space takes a slug (e.g. 'my-repo'), not a full space_id.\n"
-            "The 'coding:' prefix and '--findings'/'--context' suffixes are added automatically.",
+    try:
+        prompt = _resolve_prompt(
+            args,
+            default_prompt=(
+                "Review the selected scope and report any concerns in natural language."
+                if args.command == "review"
+                else ""
+            ),
         )
+    except ValueError as exc:
+        return _stream_error_exit("input_error", str(exc))
+    raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
+    use_invocation_runtime = not getattr(args, "dry_run", False)
+    if use_invocation_runtime:
+        def _invocation_error(code: str, message: str) -> int:
+            return _stream_error_exit(code, message, task_failure=True)
+
+        if providers_was_explicit:
+            if raw_invocation_agents:
+                return _invocation_error("invalid_config", "--agent and --providers are mutually exclusive")
+        try:
+            execution_scope = validate_execution_scope(
+                repo_root,
+                _parse_paths(args.target_paths),
+                cfg.policy.allow_paths,
+            )
+            invocations = (
+                parse_invocations(raw_invocation_agents, execution_scope)
+                if raw_invocation_agents
+                else default_invocations(providers, execution_scope, cfg.policy.provider_models)
+            )
+            invocations = _apply_file_division(repo_root, invocations, cfg.policy.divide)
+        except ValueError as exc:
+            return _invocation_error("input_error", str(exc))
+        if not invocations:
+            return _invocation_error(
+                "provider_selection_required",
+                "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
+                "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
+            )
+        invocation_prompts = _invocation_prompts(prompt, invocations, cfg.policy)
+        adapter_map = _doctor_adapter_registry(
+            transport=getattr(args, "transport", "shim"),
+            extra_agents=extra_agents,
+            configured_agents=configured_agents,
+        )
+        unknown = [item.provider for item in invocations if item.provider not in adapter_map]
+        if unknown:
+            return _invocation_error("invalid_providers", "Unknown providers: {}".format(", ".join(dict.fromkeys(unknown))))
+        effective_provider_context: Dict[str, Dict[str, object]] = {}
+        for invocation in invocations:
+            preview = provider_policy_preview(invocation.provider, adapter_map[invocation.provider], cfg.policy)
+            if preview["would_fail_strict"]:
+                if getattr(args, "transport", "shim") == "acp" and cfg.policy.enforcement_mode == "strict":
+                    applied_permissions = preview.get("applied_permissions", {})
+                    risk = effective_provider_risk(
+                        invocation.provider,
+                        applied_permissions if isinstance(applied_permissions, dict) else {},
+                        transport="acp",
+                    )
+                    if risk["level"] == "unknown":
+                        return _invocation_error(
+                            "invalid_config",
+                            "risk_classification_unknown: strict ACP execution requires an explicit supported "
+                            "permission override for provider(s): {}".format(invocation.provider),
+                        )
+                return _invocation_error(
+                    "config_error",
+                    "invocation '{}': {}".format(invocation.invocation_id, preview["failure_reason"]),
+                )
+            discovery = discover_models(invocation.provider)
+            models = discovery.get("models", []) if isinstance(discovery, dict) else []
+            known_model_ids = {
+                str(item.get("id", ""))
+                for item in models
+                if isinstance(item, dict) and str(item.get("id", ""))
+            }
+            if discovery.get("ok") and known_model_ids and invocation.model != "default" and invocation.model not in known_model_ids:
+                return _invocation_error(
+                    "input_error",
+                    "unknown model '{}' for provider '{}'".format(invocation.model, invocation.provider),
+                )
+            if invocation.provider in cfg.policy.provider_context:
+                applied_context = preview.get("applied_context", {})
+                effective_provider_context[invocation.provider] = (
+                    dict(applied_context) if isinstance(applied_context, Mapping) else {}
+                )
+        cancel_event = threading.Event()
+        previous_sigint = signal.getsignal(signal.SIGINT)
+
+        def _cancel_invocations(_signum: int, _frame: object) -> None:
+            cancel_event.set()
+
+        signal.signal(signal.SIGINT, _cancel_invocations)
+        invocation_result_mode = getattr(args, "result_mode", "stdout")
+        if getattr(args, "save_artifacts", False) and invocation_result_mode == "stdout":
+            invocation_result_mode = "both"
+        persist_invocation_artifacts = invocation_result_mode in ("artifact", "both")
+        output_to_stdout = invocation_result_mode in ("stdout", "both")
+        event_callback = None
+        if not args.json and (stream_mode == "jsonl" or output_to_stdout):
+            event_lock = threading.Lock()
+            if stream_mode == "jsonl":
+                def _emit_jsonl(event: Dict[str, object]) -> None:
+                    with event_lock:
+                        event_payload = dict(event)
+                        diagnostic = event_payload.pop("stderr", "")
+                        print(json.dumps(event_payload, ensure_ascii=True), flush=True)
+                        if isinstance(diagnostic, str) and diagnostic:
+                            print(diagnostic, file=sys.stderr, end="" if diagnostic.endswith("\n") else "\n", flush=True)
+
+                event_callback = _emit_jsonl
+            else:
+                source_labels = {
+                    item.invocation_id: "{} ({}:{})".format(item.invocation_id, item.provider, item.model)
+                    for item in invocations
+                }
+                active_source = [None]
+
+                def _emit_text(event: Dict[str, object]) -> None:
+                    with event_lock:
+                        if event.get("type") == "invocation_finished":
+                            diagnostic = event.get("stderr", "")
+                            if isinstance(diagnostic, str) and diagnostic:
+                                print(diagnostic, file=sys.stderr, end="" if diagnostic.endswith("\n") else "\n", flush=True)
+                            if event.get("status") != "success" and event.get("error"):
+                                print(
+                                    "[mco] {} {}: {}".format(
+                                        event.get("invocation_id", "invocation"),
+                                        event.get("status", "failed"),
+                                        event.get("error"),
+                                    ),
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                            return
+                        if event.get("type") != "output_delta":
+                            return
+                        source = str(event.get("invocation_id", ""))
+                        delta = event.get("delta", "")
+                        if not isinstance(delta, str):
+                            return
+                        if len(invocations) > 1 and active_source[0] != source:
+                            prefix = "" if active_source[0] is None else "\n"
+                            print("{}── {} ──\n".format(prefix, source_labels.get(source, source)), end="", flush=True)
+                            active_source[0] = source
+                        print(delta, end="", flush=True)
+
+                event_callback = _emit_text
+        try:
+            payload = run_invocation_workflow(
+                invocations=invocations,
+                adapters=adapter_map,
+                repo_root=repo_root,
+                prompt=prompt,
+                timeout_seconds=cfg.policy.stall_timeout_seconds,
+                hard_timeout_seconds=cfg.policy.timeout_seconds,
+                provider_permissions=cfg.policy.provider_permissions,
+                provider_context=effective_provider_context,
+                provider_timeouts=cfg.policy.provider_timeouts,
+                max_provider_parallelism=cfg.policy.max_provider_parallelism,
+                poll_interval_seconds=cfg.policy.poll_interval_seconds,
+                include_token_usage=bool(args.include_token_usage),
+                allow_paths=cfg.policy.allow_paths,
+                global_timeout_seconds=(
+                    cfg.policy.review_hard_timeout_seconds
+                    if cfg.policy.review_hard_timeout_seconds > 0
+                    else None
+                ),
+                cancel_event=cancel_event,
+                event_callback=event_callback,
+                artifact_base=str(Path(cfg.artifact_base).resolve()),
+                task_id=args.task_id or "",
+                persist_artifacts=persist_invocation_artifacts,
+                chain=cfg.policy.chain,
+                debate=cfg.policy.debate,
+                synthesize=synthesize,
+                synthesis_provider=synth_provider or None,
+                invocation_prompts=invocation_prompts,
+            )
+        except ValueError as exc:
+            return _invocation_error("input_error", str(exc))
+        finally:
+            signal.signal(signal.SIGINT, previous_sigint)
+            if stream_renderer is not None:
+                stream_renderer.close()
+        if args.json:
+            json_payload = dict(payload)
+            json_payload["outputs"] = [
+                {key: value for key, value in item.items() if key != "stderr"}
+                for item in payload["outputs"]
+            ]
+            print(json.dumps(json_payload, ensure_ascii=True))
+        return int(payload["exit_code"])
     if not providers:
         return _stream_error_exit(
             "provider_selection_required",
             "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
             "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
         )
-
-    # Normalize diff flags
-    diff_base_arg = args.diff_base.strip() if isinstance(args.diff_base, str) else ""
-    if diff_base_arg and args.staged:
-        return _stream_error_exit("invalid_config", "--diff-base cannot be used with --staged")
-    if diff_base_arg and args.unstaged:
-        return _stream_error_exit("invalid_config", "--diff-base cannot be used with --unstaged")
-    diff_mode = None
-    if args.diff or diff_base_arg:
-        diff_mode = "branch"
-    elif args.staged:
-        diff_mode = "staged"
-    elif args.unstaged:
-        diff_mode = "unstaged"
-
-    try:
-        prompt = _resolve_prompt(args)
-    except ValueError as exc:
-        return _stream_error_exit("input_error", str(exc))
-    req = ReviewRequest(
+    req = ExecutionPreviewRequest(
         repo_root=repo_root,
         prompt=prompt,
         providers=providers,  # type: ignore[arg-type]
@@ -2427,21 +2457,8 @@ def main(argv: List[str] | None = None) -> int:
         policy=cfg.policy,
         task_id=args.task_id or None,
         target_paths=[item.strip() for item in args.target_paths.split(",") if item.strip()],
-        include_token_usage=bool(args.include_token_usage),
-        synthesize=synthesize,
-        synthesis_provider=synth_provider or None,
-        memory_enabled=bool(args.memory),
-        memory_space=memory_space or None,
-        diff_mode=diff_mode,
-        diff_base=diff_base_arg or None,
-        stream_callback=stream_callback,
     )
     review_mode = args.command == "review"
-    if args.format in ("markdown-pr", "sarif") and not review_mode:
-        return _stream_error_exit(
-            "invalid_config",
-            f"--format {args.format} is supported only for review command",
-        )
     effective_result_mode = args.result_mode
     if args.save_artifacts and effective_result_mode == "stdout":
         effective_result_mode = "both"
@@ -2451,6 +2468,14 @@ def main(argv: List[str] | None = None) -> int:
     if getattr(args, "dry_run", False):
         preview_adapters = adapters or _doctor_adapter_registry()
         try:
+            preview_scope = req.target_paths or ["."]
+            preview_invocations = (
+                parse_invocations(raw_invocation_agents, preview_scope)
+                if raw_invocation_agents
+                else default_invocations(providers, preview_scope, cfg.policy.provider_models)
+            )
+            preview_invocations = _apply_file_division(repo_root, preview_invocations, cfg.policy.divide)
+            preview_prompts = _invocation_prompts(prompt, preview_invocations, cfg.policy)
             payload = _build_dry_run_payload(
                 args,
                 req,
@@ -2460,11 +2485,10 @@ def main(argv: List[str] | None = None) -> int:
                 result_mode=effective_result_mode,
                 write_artifacts=write_artifacts,
                 transport=transport,
-                diff_mode=diff_mode,
-                diff_base=diff_base_arg,
-                memory_space=memory_space,
                 synthesize=synthesize,
                 synth_provider=synth_provider,
+                invocations=preview_invocations,
+                invocation_prompts=preview_prompts,
             )
         except (KeyError, TypeError, ValueError) as exc:
             if stream_renderer is not None:
@@ -2480,134 +2504,9 @@ def main(argv: List[str] | None = None) -> int:
         else:
             print(_render_dry_run_report(payload))
         return 0
-    if transport == "acp" and req.policy.enforcement_mode == "strict":
-        execution_adapters = adapters or _doctor_adapter_registry(transport=transport)
-        unknown_risk_providers: List[str] = []
-        for provider in providers:
-            adapter = execution_adapters.get(provider)
-            if adapter is None:
-                continue
-            policy = provider_policy_preview(provider, adapter, req.policy)
-            applied_permissions = policy.get("applied_permissions", {})
-            risk = effective_provider_risk(
-                provider,
-                applied_permissions if isinstance(applied_permissions, dict) else {},
-                transport=transport,
-            )
-            if risk["level"] == "unknown":
-                unknown_risk_providers.append(provider)
-        if unknown_risk_providers:
-            if stream_renderer is not None:
-                stream_renderer.close()
-            return _stream_error_exit(
-                "invalid_config",
-                "risk_classification_unknown: strict ACP execution requires an explicit supported "
-                "permission override for provider(s): {}".format(",".join(unknown_risk_providers)),
-            )
-    try:
-        result = run_review(req, adapters=adapters, review_mode=review_mode, write_artifacts=write_artifacts)
-    except ValueError as exc:
-        return _stream_error_exit("input_error", "Input error: {}".format(exc))
-    finally:
-        if stream_renderer is not None:
-            stream_renderer.close()
-
-    # In stream mode, events were already emitted — just return exit code
-    if stream_mode:
-        if result.decision == "FAIL":
-            return 2
-        if review_mode and result.decision == "INCONCLUSIVE":
-            return 3
-        return 0
-
-    if getattr(args, "quiet", False):
-        for prov_id, prov_data in result.provider_results.items():
-            text = prov_data.get("final_text", "") or prov_data.get("output_text", "")
-            if text:
-                print(text)
-        if result.decision == "FAIL":
-            return 2
-        if review_mode and result.decision == "INCONCLUSIVE":
-            return 3
-        return 0
-
-    payload = {
-        "command": args.command,
-        "task_id": result.task_id,
-        "artifact_root": result.artifact_root,
-        "decision": result.decision,
-        "terminal_state": result.terminal_state,
-        "provider_success_count": sum(1 for item in result.provider_results.values() if bool(item.get("success"))),
-        "provider_failure_count": sum(1 for item in result.provider_results.values() if not bool(item.get("success"))),
-        "findings_count": result.findings_count,
-        "parse_success_count": result.parse_success_count,
-        "parse_failure_count": result.parse_failure_count,
-        "schema_valid_count": result.schema_valid_count,
-        "dropped_findings_count": result.dropped_findings_count,
-        "findings": result.findings,
-    }
-    if result.division_strategy:
-        payload["division_strategy"] = result.division_strategy
-        payload["provider_scopes"] = {
-            provider: details.get("assigned_scope")
-            for provider, details in result.provider_results.items()
-            if details.get("assigned_scope") is not None
-        }
-    if result.token_usage_summary is not None:
-        payload["token_usage_summary"] = result.token_usage_summary
-    if result.debate_round is not None:
-        payload["debate_round"] = result.debate_round
-    if result.synthesis is not None:
-        payload["synthesis"] = result.synthesis
-    if effective_result_mode == "artifact":
-        if args.json:
-            print(json.dumps(payload, ensure_ascii=True))
-        else:
-            if args.format == "markdown-pr":
-                print(format_markdown_pr(payload, result.findings, total_providers=len(providers), chain_mode=getattr(args, "chain", False)))
-            elif args.format == "sarif":
-                print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
-            else:
-                print(
-                    _render_user_readable_report(
-                        args.command,
-                        effective_result_mode,
-                        providers,
-                        payload,
-                        result.provider_results,
-                        result.findings,
-                        chain_mode=getattr(args, "chain", False),
-                    )
-                )
-    else:
-        detailed_payload = dict(payload)
-        detailed_payload["result_mode"] = effective_result_mode
-        detailed_payload["provider_results"] = result.provider_results
-        if args.json:
-            print(json.dumps(detailed_payload, ensure_ascii=True))
-        else:
-            if args.format == "markdown-pr":
-                print(format_markdown_pr(payload, result.findings, total_providers=len(providers), chain_mode=getattr(args, "chain", False)))
-            elif args.format == "sarif":
-                print(json.dumps(format_sarif(payload, result.findings), ensure_ascii=True, indent=2))
-            else:
-                print(
-                    _render_user_readable_report(
-                        args.command,
-                        effective_result_mode,
-                        providers,
-                        payload,
-                        result.provider_results,
-                        result.findings,
-                        chain_mode=getattr(args, "chain", False),
-                    )
-                )
-
-    if result.decision == "FAIL":
-        return 2
-    if review_mode and result.decision == "INCONCLUSIVE":
-        return 3
-    return 0
+    if stream_renderer is not None:
+        stream_renderer.close()
+    return _stream_error_exit("runtime_error", "Execution did not enter the invocation-native runtime")
 
 
 if __name__ == "__main__":

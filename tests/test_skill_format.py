@@ -59,6 +59,16 @@ class SkillFormatTests(unittest.TestCase):
             errors = validate_skill_dir(skill_dir)
             self.assertTrue(any("invalid --execution-mode" in item for item in errors))
 
+    def test_model_qualified_agent_example_is_explicit_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skill_dir = self._write_skill(
+                root,
+                "---\nname: mco-cli\ndescription: test\n---\n"
+                "```bash\nmco run --agent fast=pi:model --prompt \"task\"\n```\n",
+            )
+            self.assertEqual(validate_skill_dir(skill_dir), [])
+
 
 if __name__ == "__main__":
     unittest.main()

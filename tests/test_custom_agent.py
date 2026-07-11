@@ -1,5 +1,5 @@
 # tests/test_custom_agent.py
-"""Tests for --agent custom ACP server."""
+"""Tests for --custom-agent custom ACP server."""
 from __future__ import annotations
 
 import unittest
@@ -17,11 +17,11 @@ class TestAgentFlag(unittest.TestCase):
     def test_agent_registration_does_not_implicitly_select_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run:
                 with contextlib.redirect_stdout(stdout_buf):
                     exit_code = main([
                         "run", "--repo", tmp, "--prompt", "test",
-                        "--agent", "mybot", "mybot --acp", "--json",
+                        "--custom-agent", "mybot", "mybot --acp", "--json",
                     ])
         self.assertEqual(exit_code, 2)
         self.assertEqual(json.loads(stdout_buf.getvalue())["error"]["subtype"], "provider_selection_required")
@@ -31,15 +31,15 @@ class TestAgentFlag(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args([
             "run", "--prompt", "test",
-            "--agent", "mybot", "mybot --acp --stdio",
+            "--custom-agent", "mybot", "mybot --acp --stdio",
             "--transport", "acp",
         ])
-        self.assertEqual(args.agent, ["mybot", "mybot --acp --stdio"])
+        self.assertEqual(args.custom_agent, ["mybot", "mybot --acp --stdio"])
 
     def test_agent_flag_optional(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["run", "--prompt", "test", "--providers", "claude"])
-        self.assertIsNone(args.agent)
+        self.assertIsNone(args.custom_agent)
 
 
 class TestAcpPermissionKeys(unittest.TestCase):

@@ -16,11 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..answer_transport import AnswerTransport, decode_acp_events, decode_plain_text
 from ..artifacts import expected_paths
 from ..contracts import (
     CapabilitySet,
-    NormalizeContext,
-    NormalizedFinding,
     ProviderId,
     ProviderPresence,
     TaskInput,
@@ -124,8 +123,16 @@ class AcpAdapter:
     def capabilities(self) -> CapabilitySet:
         return self._capability_set
 
+    def decode_transport(self, updates: Any) -> AnswerTransport:
+        if isinstance(updates, str):
+            return decode_plain_text(updates)
+        return decode_acp_events(updates)
+
     def supported_permission_keys(self) -> List[str]:
         return list(self._permission_keys)
+
+    def supported_context_keys(self) -> List[str]:
+        return ["context_files"]
 
     def preview_command(
         self,
@@ -155,8 +162,16 @@ class AcpAdapter:
 
         # Extract allow_paths and permissions from task metadata
         allow_paths = input_task.metadata.get("allow_paths", [])
+        if not isinstance(allow_paths, list):
+            allow_paths = []
+        read_only_paths = input_task.metadata.get("context_read_only_paths", [])
+        if not isinstance(read_only_paths, list):
+            read_only_paths = []
+        for path in read_only_paths:
+            if isinstance(path, str) and path and path not in allow_paths:
+                allow_paths.append(path)
         provider_perms = input_task.metadata.get("provider_permissions", {})
-        enable_terminal = provider_perms.get("terminal", "") != ""
+        enable_terminal = provider_perms.get("terminal", "") != "" and not read_only_paths
 
         # Build ACP command with permission flags applied
         acp_cmd = self.preview_command(provider_perms)
@@ -168,7 +183,11 @@ class AcpAdapter:
         )
 
         try:
-            client.start(allow_paths=allow_paths, enable_terminal=enable_terminal)
+            client.start(
+                allow_paths=allow_paths,
+                read_only_paths=[path for path in read_only_paths if isinstance(path, str) and path],
+                enable_terminal=enable_terminal,
+            )
             agent_info = client.initialize(timeout=30.0)
             session_id = client.new_session(
                 working_directory=input_task.repo_root,
@@ -275,7 +294,7 @@ class AcpAdapter:
         self._runs.pop(ref.run_id, None)
 
         attempt_state = "SUCCEEDED" if handle.success else "FAILED"
-        error_kind = None if handle.success else ErrorKind.NORMALIZATION_ERROR
+        error_kind = None if handle.success else ErrorKind.PROVIDER_FAILURE
 
         return TaskStatus(
             task_id=ref.task_id,
@@ -308,9 +327,3 @@ class AcpAdapter:
         handle.success = False
         handle.error_message = "Cancelled"
         self._runs.pop(ref.run_id, None)
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        """Normalize findings — delegates to parsing module."""
-        from ..adapters.parsing import normalize_findings_from_text
-        text = raw if isinstance(raw, str) else ""
-        return normalize_findings_from_text(text, ctx, self.id)

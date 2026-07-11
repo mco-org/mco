@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
-from .parsing import normalize_findings_from_text
+from ..answer_transport import AnswerTransport, decode_pi_events
+from ..contracts import CapabilitySet, TaskInput
 from .shim import ShimAdapterBase
 
 
@@ -36,6 +36,9 @@ class PiAdapter(ShimAdapterBase):
     def supported_context_keys(self) -> List[str]:
         return ["skills", "context_files"]
 
+    def decode_transport(self, raw: str) -> AnswerTransport:
+        return decode_pi_events(raw)
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         # Strict read-only tool allowlist: read files, search content,
         # find by name, list directories.  No bash / edit / write.
@@ -66,7 +69,7 @@ class PiAdapter(ShimAdapterBase):
         else:
             cmd.append("--no-skills")
         # Extensions: always disabled. The extensions key is not supported
-        # by Pi's supported_context_keys — the review_engine will reject it
+        # by Pi's supported_context_keys so context policy stays explicit.
         # in strict mode or drop it in best_effort.
         cmd.append("--no-extensions")
         permissions = input_task.metadata.get("provider_permissions", {})
@@ -168,15 +171,3 @@ class PiAdapter(ShimAdapterBase):
                     break
                 break
         return "".join(text_parts)
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        text = raw if isinstance(raw, str) else ""
-        if not text:
-            return []
-        # Extract final text from JSONL event stream
-        final_text = self._extract_final_text_from_jsonl(text)
-        if not final_text:
-            final_text = self._extract_from_agent_end(text)
-        if not final_text:
-            return []
-        return normalize_findings_from_text(final_text, ctx, "pi")

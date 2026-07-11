@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Protocol, Sequence, runtime_checkable
 
+from .answer_transport import AnswerTransport
 from .types import ErrorKind
 
 
 ProviderId = Literal["claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor"]
 CapabilityTier = Literal["C0", "C1", "C2", "C3", "C4", "C5", "C6"]
 TaskAttemptState = Literal["PENDING", "STARTED", "SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"]
-ConsensusLevel = Literal["confirmed", "needs-verification", "unverified"]
 
 PROVIDER_IDS: Sequence[ProviderId] = ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor")
 CAPABILITY_TIERS: Sequence[CapabilityTier] = ("C0", "C1", "C2", "C3", "C4", "C5", "C6")
@@ -73,37 +73,6 @@ class TaskStatus:
     message: str = ""
 
 
-@dataclass(frozen=True)
-class NormalizeContext:
-    task_id: str
-    provider: ProviderId
-    repo_root: str
-    raw_ref: str
-
-
-@dataclass(frozen=True)
-class Evidence:
-    file: str
-    line: Optional[int]
-    snippet: str
-    symbol: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class NormalizedFinding:
-    task_id: str
-    provider: ProviderId
-    finding_id: str
-    severity: Literal["critical", "high", "medium", "low"]
-    category: Literal["bug", "security", "performance", "maintainability", "test-gap"]
-    title: str
-    evidence: Evidence
-    recommendation: str
-    confidence: float
-    fingerprint: str
-    raw_ref: str
-
-
 @runtime_checkable
 class ProviderAdapter(Protocol):
     id: ProviderId
@@ -123,5 +92,5 @@ class ProviderAdapter(Protocol):
     def cancel(self, ref: TaskRunRef) -> None:
         ...
 
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
+    def decode_transport(self, raw: Any) -> AnswerTransport:
         ...

@@ -26,7 +26,7 @@ class ErrorTaxonomyTests(unittest.TestCase):
         self.assertEqual(classify_error(1, "unknown arguments: --output-format"), ErrorKind.NON_RETRYABLE_UNSUPPORTED_CAPABILITY)
 
     def test_normalization_error_fallback(self) -> None:
-        self.assertEqual(classify_error(1, "unexpected malformed output"), ErrorKind.NORMALIZATION_ERROR)
+        self.assertEqual(classify_error(1, "unexpected malformed output"), ErrorKind.PROVIDER_FAILURE)
 
     def test_mcp_warning_detection(self) -> None:
         warnings = detect_warnings("MCP client failed to start: Auth required")
@@ -35,4 +35,3 @@ class ErrorTaxonomyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

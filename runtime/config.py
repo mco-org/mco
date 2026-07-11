@@ -26,10 +26,6 @@ class ReviewPolicy:
     stall_timeout_seconds: int = 900
     poll_interval_seconds: float = 1.0
     review_hard_timeout_seconds: int = 1800
-    enforce_findings_contract: bool = False
-    max_retries: int = 1
-    high_escalation_threshold: int = 1
-    require_non_empty_findings: bool = True
     max_provider_parallelism: int = 0
     provider_timeouts: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_PROVIDER_TIMEOUTS))
     allow_paths: List[str] = field(default_factory=lambda: ["."])

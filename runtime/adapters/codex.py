@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from ..contracts import CapabilitySet, NormalizeContext, NormalizedFinding, TaskInput
-from .parsing import normalize_findings_from_text
+from ..answer_transport import AnswerTransport, decode_codex_events
+from ..contracts import CapabilitySet, TaskInput
 from .shim import ShimAdapterBase
 
 
@@ -35,6 +35,9 @@ class CodexAdapter(ShimAdapterBase):
     def supported_context_keys(self) -> List[str]:
         return ["context_files"]
 
+    def decode_transport(self, raw: str) -> AnswerTransport:
+        return decode_codex_events(raw)
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
         sandbox = "workspace-write"
         raw_permissions = input_task.metadata.get("provider_permissions")
@@ -44,6 +47,16 @@ class CodexAdapter(ShimAdapterBase):
                 sandbox = value.strip()
         approval_policy = raw_permissions.get("approval_policy") if isinstance(raw_permissions, dict) else None
         bypass = raw_permissions.get("bypass") if isinstance(raw_permissions, dict) else None
+        context_read_only_paths = input_task.metadata.get("context_read_only_paths", [])
+        has_context_read_only_paths = (
+            isinstance(context_read_only_paths, list)
+            and any(isinstance(path, str) and path for path in context_read_only_paths)
+        )
+        if has_context_read_only_paths:
+            # Codex --add-dir would make the context writable. A file-backed
+            # stage therefore uses the built-in read-only sandbox instead.
+            sandbox = "read-only"
+            bypass = None
         cmd = [
             "codex",
         ]
@@ -98,7 +111,3 @@ class CodexAdapter(ShimAdapterBase):
         if "mcp client" in stderr_text.lower() and stdout_text.strip():
             return True
         return False
-
-    def normalize(self, raw: Any, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        text = raw if isinstance(raw, str) else ""
-        return normalize_findings_from_text(text, ctx, "codex")

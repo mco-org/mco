@@ -1,6 +1,6 @@
 {
   "name": "@tt-a1i/mco",
-  "version": "0.10.9",
+  "version": "0.11.0",
   "description": "Node wrapper for the mco CLI (Python runtime required).",
   "license": "MIT",
   "bin": {
@@ -28,7 +28,6 @@
     "bin/mco.js",
     "mco",
     "runtime/**/*.py",
-    "runtime/schemas/*.json",
     "scripts/install-wizard.js",
     "scripts/install-runtime.js",
     "skills/mco-cli/**"

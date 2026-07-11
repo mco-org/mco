@@ -13,11 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, TextIO
 
+from ..answer_transport import AnswerTransport, decode_plain_text
 from ..artifacts import expected_paths
 from ..contracts import (
     CapabilitySet,
-    NormalizeContext,
-    NormalizedFinding,
     ProviderId,
     ProviderPresence,
     TaskInput,
@@ -95,6 +94,9 @@ class ShimAdapterBase:
 
     def supported_model_keys(self) -> List[str]:
         return []
+
+    def decode_transport(self, raw: str) -> AnswerTransport:
+        return decode_plain_text(raw)
 
     def run(self, input_task: TaskInput) -> TaskRunRef:
         command_override = input_task.metadata.get("command_override")
@@ -256,9 +258,6 @@ class ShimAdapterBase:
         if handle.process.poll() is not None:
             self._close_io(handle)
             self._runs.pop(ref.run_id, None)
-
-    def normalize(self, raw: object, ctx: NormalizeContext) -> List[NormalizedFinding]:
-        raise NotImplementedError
 
     def _resolve_binary(self) -> Optional[str]:
         env = _sanitize_env()

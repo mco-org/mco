@@ -15,7 +15,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.policy.stall_timeout_seconds, 900)
         self.assertEqual(cfg.policy.poll_interval_seconds, 1.0)
         self.assertEqual(cfg.policy.review_hard_timeout_seconds, 1800)
-        self.assertFalse(cfg.policy.enforce_findings_contract)
         self.assertEqual(cfg.policy.allow_paths, ["."])
         self.assertEqual(cfg.policy.provider_permissions, {})
         self.assertEqual(cfg.policy.enforcement_mode, "strict")

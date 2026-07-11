@@ -1,10 +1,16 @@
 """Tests for ACP CLI integration."""
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from runtime.cli import build_parser
 from runtime.adapters import adapter_registry
+from runtime.acp.adapter import AcpAdapter
+from runtime.adapters.codex import CodexAdapter
+from runtime.contracts import TaskInput
 
 
 class TestTransportFlag(unittest.TestCase):
@@ -45,3 +51,76 @@ class TestAdapterRegistryTransport(unittest.TestCase):
         # Providers without ACP still get shim adapters
         self.assertIn("opencode", reg)
         self.assertIn("qwen", reg)
+
+
+class TestAcpContextAllowlist(unittest.TestCase):
+    def test_adapter_forwards_context_directory_as_read_only(self) -> None:
+        class RecordingClient:
+            started = []
+
+            def __init__(self, **_kwargs: object) -> None:
+                self.pid = None
+
+            def start(self, **kwargs: object) -> None:
+                type(self).started.append(kwargs)
+
+            def initialize(self, **_kwargs: object) -> object:
+                return object()
+
+            def new_session(self, **_kwargs: object) -> str:
+                return "session"
+
+            def prompt(self, *_args: object, **_kwargs: object) -> None:
+                return None
+
+            def collect_text(self) -> str:
+                return ""
+
+            def close(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            context_dir = Path(tmp) / "context"
+            context_dir.mkdir()
+            with patch("runtime.acp.adapter.AcpClient", RecordingClient):
+                adapter = AcpAdapter("claude", "claude", acp_command=["claude", "acp"])
+                adapter.run(TaskInput(
+                    task_id="context",
+                    prompt="read context",
+                    repo_root=tmp,
+                    target_paths=["."],
+                    timeout_seconds=5,
+                    metadata={
+                        "artifact_root": tmp,
+                        "allow_paths": ["."],
+                        "context_read_only_paths": [str(context_dir)],
+                        "provider_permissions": {"terminal": "enabled"},
+                    },
+                ))
+
+        self.assertEqual(RecordingClient.started[-1]["read_only_paths"], [str(context_dir)])
+        self.assertIn(str(context_dir), RecordingClient.started[-1]["allow_paths"])
+        self.assertFalse(RecordingClient.started[-1]["enable_terminal"])
+
+
+class TestCodexContextSandbox(unittest.TestCase):
+    def test_context_stage_uses_read_only_sandbox_without_writable_directory_grant(self) -> None:
+        adapter = CodexAdapter()
+        task = TaskInput(
+            task_id="context",
+            prompt="read context",
+            repo_root="/repo",
+            target_paths=["."],
+            timeout_seconds=5,
+            metadata={
+                "context_read_only_paths": ["/tmp/mco-context"],
+                "provider_permissions": {"bypass": "true"},
+            },
+        )
+
+        command = adapter._build_command(task)
+
+        sandbox_index = command.index("--sandbox")
+        self.assertEqual(command[sandbox_index + 1], "read-only")
+        self.assertNotIn("--add-dir", command)
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)

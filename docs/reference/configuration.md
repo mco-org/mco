@@ -1,6 +1,6 @@
 # Configuration and custom agents
 
-MCO works without a config file once providers are explicitly selected. Configuration is useful for project defaults, model routing, context policy, and custom agents.
+MCO works without a config file once providers or model-qualified invocations are explicitly selected. Configuration is useful for project defaults, model routing, context policy, and custom agents.
 
 ## Runtime configuration
 
@@ -18,6 +18,7 @@ Nested policy objects are deep-merged.
   "providers": ["claude", "codex", "pi"],
   "transport": "shim",
   "policy": {
+    "timeout_seconds": 180,
     "stall_timeout_seconds": 600,
     "enforcement_mode": "strict",
     "max_provider_parallelism": 3,
@@ -31,12 +32,17 @@ Nested policy objects are deep-merged.
     "perspectives": {
       "claude": "security",
       "codex": "performance"
-    }
+    },
+    "divide": "dimensions"
   }
 }
 ```
 
-Calling agents should still confirm the provider team with the user instead of treating a discoverable binary as consent.
+`providers` supplies the `--providers` shorthand. Calling Agents should still confirm the provider/model team with the user instead of treating a discoverable binary as consent. Use repeatable `--agent [alias=]provider:model` when a task needs multiple models from one provider.
+
+`timeout_seconds` is the immutable per-invocation wall-clock deadline; `stall_timeout_seconds` limits time without Provider output progress. `provider_timeouts` overrides the hard deadline for named Providers, while `review_hard_timeout_seconds` caps the complete task.
+
+`perspectives` and `divide` are explicit coordination settings. A perspective adds a Provider prompt focus; `divide: "files"` partitions sorted repository files in the selected target scope without overlap while excluding ignored, local-state, cache, dependency, artifact, and build directories; `divide: "dimensions"` rotates fixed review lenses by invocation declaration order without changing target paths. They are visible in dry-run and never parse, rank, or rewrite Agent answers.
 
 ## Custom agent registry
 
@@ -71,7 +77,7 @@ mco agent check my-ollama
 
 ## Registry transports
 
-- `transport: shim` launches a command and normalizes its stdout.
+- `transport: shim` launches a command and decodes its provider transport into an opaque answer.
 - `transport: acp` launches an ACP-compatible JSON-RPC process.
 - `model: ...` creates an Ollama-backed adapter.
 
@@ -79,12 +85,12 @@ Temporary ACP agents can also be registered for one invocation:
 
 ```bash
 mco run \
-  --agent mybot "mybot --acp" \
+  --custom-agent mybot "mybot --acp" \
   --providers mybot \
   --prompt "Analyze this repository."
 ```
 
-Registration does not select an agent. The agent must still appear in `--providers`.
+Registration does not select an invocation. The registered name must still appear in `--providers` or in an `--agent alias=name:model` declaration.
 
 ## Skill installation
 

@@ -12,18 +12,16 @@
 1. Serial
    - task_id: `$serial_task_id`
    - wall time: `$serial_wall_time`
-   - parse: `$serial_parse_success` success / `$serial_parse_failure` failure
-   - parse success rate: `$serial_parse_ratio`
-   - effective findings: `$serial_effective_findings`
-   - zero-finding providers: `$serial_zero_finding_providers`
+   - successful invocations: `$serial_success_count`
+   - failed invocations: `$serial_failed_count`
+   - success rate: `$serial_success_ratio`
    - command exit: `$serial_exit_code`
 2. Full parallel
    - task_id: `$parallel_task_id`
    - wall time: `$parallel_wall_time`
-   - parse: `$parallel_parse_success` success / `$parallel_parse_failure` failure
-   - parse success rate: `$parallel_parse_ratio`
-   - effective findings: `$parallel_effective_findings`
-   - zero-finding providers: `$parallel_zero_finding_providers`
+   - successful invocations: `$parallel_success_count`
+   - failed invocations: `$parallel_failed_count`
+   - success rate: `$parallel_success_ratio`
    - command exit: `$parallel_exit_code`
 
 ## Delta

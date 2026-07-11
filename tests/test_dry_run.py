@@ -8,14 +8,13 @@ import unittest
 from unittest.mock import patch
 
 from runtime.cli import main
-from runtime.review_engine import REVIEW_FINDINGS_SCHEMA_PATH
 
 
 class DryRunTests(unittest.TestCase):
     def test_run_dry_run_json_does_not_execute_agents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run_review:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
                 with contextlib.redirect_stdout(stdout_buf):
                     exit_code = main([
                         "run",
@@ -29,7 +28,7 @@ class DryRunTests(unittest.TestCase):
                     ])
 
         self.assertEqual(exit_code, 0)
-        mock_run_review.assert_not_called()
+        mock_run_workflow.assert_not_called()
         payload = json.loads(stdout_buf.getvalue())
         self.assertTrue(payload["dry_run"])
         self.assertFalse(payload["would_execute"])
@@ -48,7 +47,7 @@ class DryRunTests(unittest.TestCase):
     def test_dry_run_reports_strict_policy_failure_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run_review:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
                 with contextlib.redirect_stdout(stdout_buf):
                     exit_code = main([
                         "run",
@@ -62,7 +61,7 @@ class DryRunTests(unittest.TestCase):
                     ])
 
         self.assertEqual(exit_code, 0)
-        mock_run_review.assert_not_called()
+        mock_run_workflow.assert_not_called()
         payload = json.loads(stdout_buf.getvalue())
         policy = payload["providers_detail"]["hermes"]["policy"]
         self.assertTrue(policy["would_fail_strict"])
@@ -72,7 +71,7 @@ class DryRunTests(unittest.TestCase):
     def test_dry_run_human_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run_review:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
                 with contextlib.redirect_stdout(stdout_buf):
                     exit_code = main([
                         "review",
@@ -83,38 +82,41 @@ class DryRunTests(unittest.TestCase):
                     ])
 
         self.assertEqual(exit_code, 0)
-        mock_run_review.assert_not_called()
+        mock_run_workflow.assert_not_called()
         output = stdout_buf.getvalue()
         self.assertIn("Dry Run", output)
         self.assertIn("would_execute: False", output)
         self.assertIn("pi: risk=read_only", output)
 
-    def test_dry_run_codex_review_includes_output_schema_when_exists(self) -> None:
+    def test_dry_run_review_exposes_perspective_and_division_prompts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run_review:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
                 with contextlib.redirect_stdout(stdout_buf):
                     exit_code = main([
                         "review",
                         "--repo", tmp,
                         "--prompt", "Review for bugs.",
-                        "--providers", "codex",
+                        "--providers", "codex,pi",
+                        "--perspectives-json", '{"codex":"Focus on security"}',
+                        "--divide", "dimensions",
                         "--dry-run",
                         "--json",
                     ])
 
         self.assertEqual(exit_code, 0)
-        mock_run_review.assert_not_called()
+        mock_run_workflow.assert_not_called()
         payload = json.loads(stdout_buf.getvalue())
-        codex_command = payload["providers_detail"]["codex"]["command_template"]
-        self.assertIn("--output-schema", codex_command)
-        schema_index = codex_command.index("--output-schema") + 1
-        self.assertEqual(codex_command[schema_index], str(REVIEW_FINDINGS_SCHEMA_PATH))
+        self.assertEqual(payload["policy"]["divide"], "dimensions")
+        self.assertEqual(payload["policy"]["perspectives"], {"codex": "Focus on security"})
+        self.assertIn("Focus on security", payload["provider_prompts"]["codex"])
+        self.assertIn("Assigned review dimension: security", payload["provider_prompts"]["codex"])
+        self.assertIn("Assigned review dimension: performance", payload["provider_prompts"]["pi"])
 
     def test_dry_run_empty_provider_context_reaches_command_template(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run_review:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
                 with contextlib.redirect_stdout(stdout_buf):
                     exit_code = main([
                         "run",
@@ -127,7 +129,7 @@ class DryRunTests(unittest.TestCase):
                     ])
 
         self.assertEqual(exit_code, 0)
-        mock_run_review.assert_not_called()
+        mock_run_workflow.assert_not_called()
         payload = json.loads(stdout_buf.getvalue())
         claude_command = payload["providers_detail"]["claude"]["command_template"]
         codex_command = payload["providers_detail"]["codex"]["command_template"]
@@ -138,7 +140,7 @@ class DryRunTests(unittest.TestCase):
     def test_copilot_run_defaults_to_write_without_shell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run_review:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
                 with contextlib.redirect_stdout(stdout_buf):
                     exit_code = main([
                         "run",
@@ -150,7 +152,7 @@ class DryRunTests(unittest.TestCase):
                     ])
 
         self.assertEqual(exit_code, 0)
-        mock_run_review.assert_not_called()
+        mock_run_workflow.assert_not_called()
         detail = json.loads(stdout_buf.getvalue())["providers_detail"]["copilot"]
         self.assertEqual(detail["default_risk"]["level"], "read_only")
         self.assertEqual(detail["risk"]["level"], "workspace_write")
@@ -231,7 +233,7 @@ class DryRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()
             stderr_buf = io.StringIO()
-            with patch("runtime.cli.run_review") as mock_run_review:
+            with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
                 with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
                     exit_code = main([
                         "run",
@@ -244,7 +246,7 @@ class DryRunTests(unittest.TestCase):
                     ])
 
         self.assertEqual(exit_code, 2)
-        mock_run_review.assert_not_called()
+        mock_run_workflow.assert_not_called()
         self.assertEqual(stderr_buf.getvalue(), "")
         error = json.loads(stdout_buf.getvalue())["error"]
         self.assertEqual(error["subtype"], "invalid_config")
@@ -257,7 +259,7 @@ class DryRunTests(unittest.TestCase):
             with patch(
                 "runtime.adapters.copilot.CopilotAdapter._build_command",
                 side_effect=ValueError("unsupported preview configuration"),
-            ), patch("runtime.cli.run_review") as mock_run_review:
+            ), patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
                 with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
                     exit_code = main([
                         "run",
@@ -269,7 +271,7 @@ class DryRunTests(unittest.TestCase):
                     ])
 
         self.assertEqual(exit_code, 2)
-        mock_run_review.assert_not_called()
+        mock_run_workflow.assert_not_called()
         self.assertEqual(stderr_buf.getvalue(), "")
         error = json.loads(stdout_buf.getvalue())["error"]
         self.assertEqual(error["subtype"], "runtime_error")

@@ -43,9 +43,8 @@ def classify_error(exit_code: int, stderr: str) -> ErrorKind:
     if any(token in text for token in ("invalid input", "missing required", "validation failed", "invalid type")):
         return ErrorKind.NON_RETRYABLE_INVALID_INPUT
 
-    # A parsing failure after command success is also represented as normalization error.
+    # A malformed provider response is still an operational provider failure.
     if re.search(r"(parse|deserialize|json).*fail", text) or "normalization" in text:
-        return ErrorKind.NORMALIZATION_ERROR
+        return ErrorKind.PROVIDER_FAILURE
 
-    return ErrorKind.NORMALIZATION_ERROR
-
+    return ErrorKind.PROVIDER_FAILURE
