@@ -44,6 +44,53 @@ class DryRunTests(unittest.TestCase):
         self.assertIn("--model", pi_command)
         self.assertIn("deepseek-v4-pro", pi_command)
 
+    def test_run_dry_run_accepts_agent_without_providers_shorthand(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout_buf = io.StringIO()
+            with patch("runtime.cli.run_invocation_workflow") as mock_run_workflow:
+                with contextlib.redirect_stdout(stdout_buf):
+                    exit_code = main([
+                        "run",
+                        "--repo", tmp,
+                        "--prompt", "Summarize this repo.",
+                        "--agent", "reviewer=codex:gpt-5.4",
+                        "--execution-mode", "read_only",
+                        "--dry-run",
+                        "--json",
+                    ])
+
+        self.assertEqual(exit_code, 0)
+        mock_run_workflow.assert_not_called()
+        payload = json.loads(stdout_buf.getvalue())
+        self.assertEqual(payload["providers"], ["codex"])
+        self.assertEqual(payload["providers_detail"]["codex"]["risk"]["level"], "read_only")
+        self.assertEqual(payload["invocations"], [{
+            "invocation_id": "reviewer",
+            "provider": "codex",
+            "model": "gpt-5.4",
+            "target_paths": ["."],
+            "prompt": "Summarize this repo.",
+        }])
+
+    def test_run_dry_run_rejects_agent_with_providers_shorthand(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = main([
+                    "run",
+                    "--repo", tmp,
+                    "--prompt", "Summarize this repo.",
+                    "--providers", "codex",
+                    "--agent", "reviewer=codex:gpt-5.4",
+                    "--dry-run",
+                    "--json",
+                ])
+
+        self.assertEqual(exit_code, 2)
+        payload = json.loads(stdout_buf.getvalue())
+        self.assertEqual(payload["error"]["subtype"], "invalid_config")
+        self.assertIn("mutually exclusive", payload["error"]["message"])
+
     def test_dry_run_reports_strict_policy_failure_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout_buf = io.StringIO()

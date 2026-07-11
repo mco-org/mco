@@ -20,6 +20,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Removed the findings schema and semantic normalization, decision, consensus, findings-memory, Markdown-PR, SARIF, and content-derived status surfaces. Removed flags return migration guidance rather than running a legacy path.
 
 ### Fixed
+- Made explicit `--agent` selections drive Provider policy resolution before dry-run and execution preflight, preserving requested read-only permissions without requiring `--providers`.
 - Separated per-invocation hard deadlines from output-progress stall timeouts, and preserved timeout status for queued invocations cancelled by the global deadline.
 - Made stall detection recognize structured Provider progress without exposing protocol noise as answer content.
 - Restored repository-aware `--divide files` filtering for ignored, local-state, dependency, cache, artifact, and build directories.
