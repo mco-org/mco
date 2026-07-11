@@ -6,8 +6,9 @@ import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .contracts import ProviderAdapter, TaskInput
 
@@ -16,6 +17,13 @@ _INVOCATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 COMPLETE_EXIT_CODE = 0
 PARTIAL_EXIT_CODE = 1
 FAILED_EXIT_CODE = 2
+
+
+def _notify(event_callback: Optional[Callable[[dict[str, object]], None]], event: dict[str, object]) -> None:
+    if event_callback is None:
+        return
+    event["timestamp"] = datetime.now(timezone.utc).isoformat()
+    event_callback(event)
 
 
 @dataclass(frozen=True)
@@ -96,6 +104,7 @@ def _run_one_invocation(
     allow_paths: Sequence[str],
     cancel_event: threading.Event,
     cancel_state: Mapping[str, str],
+    event_callback: Optional[Callable[[dict[str, object]], None]],
 ) -> dict[str, object]:
     task_id = "invocation-{}".format(invocation.invocation_id)
     task = TaskInput(
@@ -139,21 +148,46 @@ def _run_one_invocation(
         }
 
     deadline = time.monotonic() + timeout_seconds
+    emitted_answer = ""
+    emitted_deltas: list[str] = []
+
+    def completed_result(
+        invocation_status: str,
+        error: Optional[str],
+        exit_code: Optional[int],
+        output: Optional[str] = None,
+        transport: Any = None,
+    ) -> dict[str, object]:
+        stderr_path = Path(run_ref.artifact_path) / "raw" / "{}.stderr.log".format(invocation.provider)
+        try:
+            stderr = stderr_path.read_text(encoding="utf-8") if stderr_path.exists() else ""
+        except OSError as exc:
+            stderr = "failed to read provider diagnostics: {}".format(exc)
+        return {
+            "invocation_id": invocation.invocation_id,
+            "provider": invocation.provider,
+            "model": invocation.model,
+            "status": invocation_status,
+            "output": output if output is not None else (emitted_answer or None),
+            "error": error,
+            "exit_code": exit_code,
+            "deltas": [delta.text for delta in transport.deltas] if transport is not None else list(emitted_deltas),
+            "transport_status": transport.status if transport is not None else ("succeeded" if invocation_status == "success" else invocation_status),
+            "usage": transport.usage if transport is not None else None,
+            "stderr": stderr,
+        }
+
     while True:
         if cancel_event.is_set():
             try:
                 adapter.cancel(run_ref)
             except Exception:
                 pass
-            return {
-                "invocation_id": invocation.invocation_id,
-                "provider": invocation.provider,
-                "model": invocation.model,
-                "status": cancel_state.get("reason", "cancelled"),
-                "output": None,
-                "error": "task stopped while invocation was running",
-                "exit_code": None,
-            }
+            return completed_result(
+                cancel_state.get("reason", "cancelled"),
+                "task stopped while invocation was running",
+                None,
+            )
         try:
             status = adapter.poll(run_ref)
         except Exception as exc:
@@ -161,85 +195,64 @@ def _run_one_invocation(
                 adapter.cancel(run_ref)
             except Exception:
                 pass
-            return {
-                "invocation_id": invocation.invocation_id,
-                "provider": invocation.provider,
-                "model": invocation.model,
-                "status": "failed",
-                "output": None,
-                "error": str(exc),
-                "exit_code": None,
-            }
+            return completed_result("failed", str(exc), None)
+        output_path = Path(run_ref.artifact_path) / "raw" / "{}.stdout.log".format(invocation.provider)
+        try:
+            raw_output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+        except OSError as exc:
+            return completed_result("failed", "failed to read provider output: {}".format(exc), status.exit_code)
+        try:
+            decode_transport = getattr(adapter, "decode_transport", None)
+            transport_snapshot = decode_transport(raw_output) if callable(decode_transport) else None
+            streamed_answer = (
+                "".join(delta.text for delta in transport_snapshot.deltas)
+                if transport_snapshot is not None
+                else raw_output
+            )
+        except Exception:
+            transport_snapshot = None
+            streamed_answer = ""
+        if streamed_answer:
+            delta = streamed_answer[len(emitted_answer):] if streamed_answer.startswith(emitted_answer) else streamed_answer
+            if delta:
+                _notify(event_callback, {
+                    "type": "output_delta",
+                    "stage": "run",
+                    "invocation_id": invocation.invocation_id,
+                    "provider": invocation.provider,
+                    "model": invocation.model,
+                    "delta": delta,
+                })
+                emitted_deltas.append(delta)
+                emitted_answer = streamed_answer
         if status.completed:
             if status.attempt_state == "SUCCEEDED":
-                output_path = Path(run_ref.artifact_path) / "raw" / "{}.stdout.log".format(invocation.provider)
-                raw_output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
                 decode_transport = getattr(adapter, "decode_transport", None)
                 try:
                     transport = decode_transport(raw_output) if callable(decode_transport) else None
                     output = transport.final_answer if transport is not None else raw_output
                 except Exception as exc:
-                    return {
-                        "invocation_id": invocation.invocation_id,
-                        "provider": invocation.provider,
-                        "model": invocation.model,
-                        "status": "failed",
-                        "output": None,
-                        "error": "transport decode failed: {}".format(exc),
-                        "exit_code": status.exit_code,
-                    }
+                    return completed_result("failed", "transport decode failed: {}".format(exc), status.exit_code)
                 if transport is not None and transport.status == "failed":
-                    return {
-                        "invocation_id": invocation.invocation_id,
-                        "provider": invocation.provider,
-                        "model": invocation.model,
-                        "status": "failed",
-                        "output": None,
-                        "error": "provider transport reported failure",
-                        "exit_code": status.exit_code,
-                        "deltas": [delta.text for delta in transport.deltas],
-                        "transport_status": transport.status,
-                        "usage": transport.usage,
-                    }
-                return {
-                    "invocation_id": invocation.invocation_id,
-                    "provider": invocation.provider,
-                    "model": invocation.model,
-                    "status": "success",
-                    "output": output,
-                    "error": None,
-                    "exit_code": status.exit_code if status.exit_code is not None else 0,
-                    "deltas": [delta.text for delta in transport.deltas] if transport is not None else ([raw_output] if raw_output else []),
-                    "transport_status": transport.status if transport is not None else "succeeded",
-                    "usage": transport.usage if transport is not None else None,
-                }
+                    return completed_result("failed", "provider transport reported failure", status.exit_code, transport=transport)
+                return completed_result(
+                    "success",
+                    None,
+                    status.exit_code if status.exit_code is not None else 0,
+                    output=output,
+                    transport=transport,
+                )
             if status.attempt_state == "CANCELLED":
                 invocation_status = "cancelled"
             else:
                 invocation_status = "failed"
-            return {
-                "invocation_id": invocation.invocation_id,
-                "provider": invocation.provider,
-                "model": invocation.model,
-                "status": invocation_status,
-                "output": None,
-                "error": status.message or status.attempt_state.lower(),
-                "exit_code": status.exit_code,
-            }
+            return completed_result(invocation_status, status.message or status.attempt_state.lower(), status.exit_code)
         if time.monotonic() >= deadline:
             try:
                 adapter.cancel(run_ref)
             except Exception:
                 pass
-            return {
-                "invocation_id": invocation.invocation_id,
-                "provider": invocation.provider,
-                "model": invocation.model,
-                "status": "timeout",
-                "output": None,
-                "error": "invocation '{}' timed out".format(invocation.invocation_id),
-                "exit_code": None,
-            }
+            return completed_result("timeout", "invocation '{}' timed out".format(invocation.invocation_id), None)
         time.sleep(0.05)
 
 
@@ -254,12 +267,21 @@ def run_invocations(
     allow_paths: Sequence[str],
     global_timeout_seconds: Optional[float] = None,
     cancel_event: Optional[threading.Event] = None,
+    event_callback: Optional[Callable[[dict[str, object]], None]] = None,
 ) -> dict[str, object]:
     outputs: list[Optional[dict[str, object]]] = [None] * len(invocations)
     stop_event = cancel_event or threading.Event()
     stop_state = {"reason": "cancelled"}
     with tempfile.TemporaryDirectory(prefix="mco-invocations-") as artifact_base:
         with ThreadPoolExecutor(max_workers=max(1, len(invocations))) as executor:
+            for invocation in invocations:
+                _notify(event_callback, {
+                    "type": "invocation_started",
+                    "stage": "run",
+                    "invocation_id": invocation.invocation_id,
+                    "provider": invocation.provider,
+                    "model": invocation.model,
+                })
             futures = {
                 executor.submit(
                     _run_one_invocation,
@@ -273,6 +295,7 @@ def run_invocations(
                     allow_paths=allow_paths,
                     cancel_event=stop_event,
                     cancel_state=stop_state,
+                    event_callback=event_callback,
                 ): index
                 for index, invocation in enumerate(invocations)
             }
@@ -288,7 +311,33 @@ def run_invocations(
                     wait_timeout = min(wait_timeout, max(0.0, deadline - time.monotonic()))
                 done, pending = wait(pending, timeout=wait_timeout, return_when=FIRST_COMPLETED)
                 for future in done:
-                    outputs[futures[future]] = future.result()
+                    index = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        invocation = invocations[index]
+                        result = {
+                            "invocation_id": invocation.invocation_id,
+                            "provider": invocation.provider,
+                            "model": invocation.model,
+                            "status": "failed",
+                            "output": None,
+                            "error": str(exc),
+                            "exit_code": None,
+                            "stderr": "",
+                        }
+                    outputs[index] = result
+                    _notify(event_callback, {
+                        "type": "invocation_finished",
+                        "stage": "run",
+                        "invocation_id": result["invocation_id"],
+                        "provider": result["provider"],
+                        "model": result["model"],
+                        "status": result["status"],
+                        "error": result.get("error"),
+                        "exit_code": result.get("exit_code"),
+                        "stderr": result.get("stderr", ""),
+                    })
                 if deadline is not None and pending and time.monotonic() >= deadline:
                     stop_state["reason"] = "timeout"
                     stop_event.set()
@@ -297,6 +346,8 @@ def run_invocations(
                         future.cancel()
 
     resolved_outputs = [item for item in outputs if item is not None]
+    for item in resolved_outputs:
+        item.setdefault("stage", "run")
     successes = sum(1 for item in resolved_outputs if item["status"] == "success")
     if successes == len(resolved_outputs):
         task_status = "complete"
@@ -307,4 +358,10 @@ def run_invocations(
     else:
         task_status = "failed"
         exit_code = FAILED_EXIT_CODE
-    return {"status": task_status, "outputs": resolved_outputs, "exit_code": exit_code}
+    _notify(event_callback, {
+        "type": "task_finished",
+        "stage": "run",
+        "status": task_status,
+        "exit_code": exit_code,
+    })
+    return {"stage": "run", "status": task_status, "outputs": resolved_outputs, "exit_code": exit_code}

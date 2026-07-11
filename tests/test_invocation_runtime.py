@@ -5,6 +5,7 @@ import json
 import io
 import threading
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -91,7 +92,124 @@ class StallFakeAdapter(PartialFakeAdapter):
         self.cancelled.append(ref.task_id)
 
 
+class StreamingFakeAdapter(DeterministicFakeAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.poll_counts: dict[str, int] = {}
+        self.first_output = threading.Event()
+
+    def run(self, input_task: TaskInput) -> TaskRunRef:
+        ref = super().run(input_task)
+        output_path = Path(ref.artifact_path) / "raw" / "pi.stdout.log"
+        output_path.write_text("", encoding="utf-8")
+        return ref
+
+    def poll(self, ref: TaskRunRef) -> TaskStatus:
+        count = self.poll_counts.get(ref.run_id, 0) + 1
+        self.poll_counts[ref.run_id] = count
+        output_path = Path(ref.artifact_path) / "raw" / "pi.stdout.log"
+        if count == 1:
+            output_path.write_text("first", encoding="utf-8")
+            self.first_output.set()
+            return TaskStatus(ref.task_id, "pi", ref.run_id, "STARTED", False, None, None, message="running")
+        if count == 2:
+            output_path.write_text("first answer", encoding="utf-8")
+            return TaskStatus(ref.task_id, "pi", ref.run_id, "STARTED", False, None, None, message="running")
+        return super().poll(ref)
+
+
 class InvocationRuntimeCliTests(unittest.TestCase):
+    def test_output_delta_is_emitted_before_delayed_invocation_completes(self) -> None:
+        adapter = StreamingFakeAdapter()
+        events: list[dict[str, object]] = []
+        result: list[dict[str, object]] = []
+        with tempfile.TemporaryDirectory() as repo:
+            worker = threading.Thread(
+                target=lambda: result.append(run_invocations(
+                    invocations=parse_invocations(["slow=pi:model"], ["."]),
+                    adapters={"pi": adapter},
+                    repo_root=repo,
+                    prompt="stream",
+                    timeout_seconds=10,
+                    provider_permissions={},
+                    allow_paths=["."],
+                    event_callback=events.append,
+                ))
+            )
+            worker.start()
+            self.assertTrue(adapter.first_output.wait(1))
+            for _ in range(50):
+                if any(event["type"] == "output_delta" for event in events):
+                    break
+                time.sleep(0.01)
+            self.assertEqual([event["delta"] for event in events if event["type"] == "output_delta"], ["first"])
+            self.assertTrue(worker.is_alive())
+            worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result[0]["status"], "complete")
+
+    def test_jsonl_stream_reconstructs_each_invocation_answer(self) -> None:
+        adapter = StreamingFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "stream", "--stream", "jsonl",
+                    "--agent", "slow=pi:model",
+                ])
+
+        events = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        deltas = [event["delta"] for event in events if event["type"] == "output_delta"]
+        self.assertEqual(exit_code, 0)
+        self.assertEqual("".join(deltas), "first answer")
+        self.assertEqual(events[-1]["type"], "task_finished")
+
+    def test_default_text_mode_streams_single_answer_without_decorations(self) -> None:
+        adapter = StreamingFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "stream",
+                    "--agent", "pi:model",
+                ])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stdout.getvalue(), "first answer")
+
+    def test_text_mode_keeps_failure_diagnostics_on_stderr(self) -> None:
+        adapter = PartialFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "compare",
+                    "--agent", "good=pi:good-model", "--agent", "bad=pi:bad-model",
+                ])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("answer for good-model", stdout.getvalue())
+        self.assertNotIn("child failed", stdout.getvalue())
+        self.assertIn("child failed", stderr.getvalue())
+
+    def test_multi_invocation_text_mode_adds_source_heading_on_source_switch(self) -> None:
+        adapter = StreamingFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "stream",
+                    "--agent", "one=pi:one", "--agent", "two=pi:two",
+                ])
+
+        text = stdout.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("── one (pi:one) ──", text)
+        self.assertIn("── two (pi:two) ──", text)
+        self.assertEqual(text.count("first"), 2)
+        self.assertEqual(text.count("answer"), 2)
     def test_pre_cancelled_task_does_not_start_any_invocation(self) -> None:
         adapter = DeterministicFakeAdapter()
         cancel_event = threading.Event()
@@ -127,7 +245,9 @@ class InvocationRuntimeCliTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["status"], "partial")
-        self.assertEqual(next(item for item in payload["outputs"] if item["invocation_id"] == "stall")["status"], "timeout")
+        stalled = next(item for item in payload["outputs"] if item["invocation_id"] == "stall")
+        self.assertEqual(stalled["status"], "timeout")
+        self.assertEqual(stalled["output"], "answer for stall")
         self.assertEqual(adapter.cancelled, ["invocation-stall"])
 
     def test_timeout_isolated_to_stalled_invocation(self) -> None:
@@ -225,6 +345,7 @@ class InvocationRuntimeCliTests(unittest.TestCase):
         self.assertEqual(
             json.loads(stdout.getvalue()),
             {
+                "stage": "run",
                 "status": "complete",
                 "outputs": [{
                     "invocation_id": "pi-default",
@@ -237,6 +358,8 @@ class InvocationRuntimeCliTests(unittest.TestCase):
                     "deltas": ["answer for default"],
                     "transport_status": "succeeded",
                     "usage": None,
+                    "stage": "run",
+                    "stderr": "",
                 }],
                 "exit_code": 0,
             },

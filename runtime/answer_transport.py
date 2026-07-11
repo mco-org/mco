@@ -86,9 +86,11 @@ def decode_json_text_events(raw: str) -> AnswerTransport:
     usage: Optional[dict[str, int]] = None
     status = "running"
     saw_text = False
+    saw_payload = False
 
     def visit(payload: Any) -> None:
-        nonlocal usage, status, saw_text
+        nonlocal usage, status, saw_text, saw_payload
+        saw_payload = True
         if isinstance(payload, list):
             for item in payload:
                 visit(item)
@@ -125,8 +127,12 @@ def decode_json_text_events(raw: str) -> AnswerTransport:
 
     for payload in _json_payloads(raw):
         visit(payload)
-    if not saw_text:
+    if not saw_text and status == "failed":
+        return AnswerTransport((), "", "failed", usage)
+    if not saw_text and not saw_payload:
         return decode_plain_text(raw)
+    if not saw_text:
+        return AnswerTransport((), "", status, usage)
     return AnswerTransport(tuple(deltas), "".join(delta.text for delta in deltas), "succeeded" if status == "running" else status, usage)
 
 

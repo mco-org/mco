@@ -26,6 +26,13 @@ class AnswerTransportTests(unittest.TestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(result.usage, {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14})
 
+    def test_structured_error_without_answer_remains_failed(self) -> None:
+        result = CodexAdapter().decode_transport('{"type":"error","message":"provider failed"}')
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.final_answer, "")
+        self.assertEqual(result.deltas, ())
+
     def test_pi_transport_ignores_thinking_and_protocol_logs(self) -> None:
         raw = "\n".join(
             [

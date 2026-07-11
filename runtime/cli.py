@@ -140,8 +140,9 @@ RUN_EPILOG = (
     "  mco run --repo . --prompt \"Compare provider outputs.\" --providers claude,codex,qwen --synthesize\n"
     "  mco run --repo . --prompt \"Analyze runtime.\" --save-artifacts --json\n\n"
     "Exit codes:\n"
-    "  0 = success\n"
-    "  2 = input/config/runtime failure"
+    "  0 = complete (all invocations succeeded)\n"
+    "  1 = partial (at least one invocation succeeded)\n"
+    "  2 = failed or input/configuration error"
 )
 
 REVIEW_EPILOG = (
@@ -153,8 +154,9 @@ REVIEW_EPILOG = (
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex --format sarif\n"
     "  mco review --repo . --prompt \"Review runtime/ only.\" --target-paths runtime --strict-contract\n\n"
     "Exit codes:\n"
-    "  0 = success\n"
-    "  2 = FAIL / input / config / runtime failure\n"
+    "  0 = complete (all invocations succeeded)\n"
+    "  1 = partial (at least one invocation succeeded)\n"
+    "  2 = failed / input / config / runtime failure\n"
     "  3 = INCONCLUSIVE (review mode only)"
 )
 
@@ -2425,7 +2427,7 @@ def main(argv: List[str] | None = None) -> int:
     except ValueError as exc:
         return _stream_error_exit("input_error", str(exc))
     raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
-    use_invocation_runtime = bool(raw_invocation_agents) or providers_was_explicit
+    use_invocation_runtime = not getattr(args, "dry_run", False) and (bool(raw_invocation_agents) or providers_was_explicit)
     if use_invocation_runtime:
         if providers_was_explicit:
             if raw_invocation_agents:
@@ -2460,6 +2462,19 @@ def main(argv: List[str] | None = None) -> int:
         for invocation in invocations:
             preview = provider_policy_preview(invocation.provider, adapter_map[invocation.provider], cfg.policy)
             if preview["would_fail_strict"]:
+                if getattr(args, "transport", "shim") == "acp" and cfg.policy.enforcement_mode == "strict":
+                    applied_permissions = preview.get("applied_permissions", {})
+                    risk = effective_provider_risk(
+                        invocation.provider,
+                        applied_permissions if isinstance(applied_permissions, dict) else {},
+                        transport="acp",
+                    )
+                    if risk["level"] == "unknown":
+                        return _stream_error_exit(
+                            "invalid_config",
+                            "risk_classification_unknown: strict ACP execution requires an explicit supported "
+                            "permission override for provider(s): {}".format(invocation.provider),
+                        )
                 return _stream_error_exit(
                     "config_error",
                     "invocation '{}': {}".format(invocation.invocation_id, preview["failure_reason"]),
@@ -2483,6 +2498,52 @@ def main(argv: List[str] | None = None) -> int:
             cancel_event.set()
 
         signal.signal(signal.SIGINT, _cancel_invocations)
+        event_callback = None
+        if not args.json:
+            event_lock = threading.Lock()
+            if stream_mode == "jsonl":
+                def _emit_jsonl(event: Dict[str, object]) -> None:
+                    with event_lock:
+                        print(json.dumps(event, ensure_ascii=True), flush=True)
+
+                event_callback = _emit_jsonl
+            else:
+                source_labels = {
+                    item.invocation_id: "{} ({}:{})".format(item.invocation_id, item.provider, item.model)
+                    for item in invocations
+                }
+                active_source = [None]
+
+                def _emit_text(event: Dict[str, object]) -> None:
+                    with event_lock:
+                        if event.get("type") == "invocation_finished":
+                            diagnostic = event.get("stderr", "")
+                            if isinstance(diagnostic, str) and diagnostic:
+                                print(diagnostic, file=sys.stderr, end="" if diagnostic.endswith("\n") else "\n", flush=True)
+                            if event.get("status") != "success" and event.get("error"):
+                                print(
+                                    "[mco] {} {}: {}".format(
+                                        event.get("invocation_id", "invocation"),
+                                        event.get("status", "failed"),
+                                        event.get("error"),
+                                    ),
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                            return
+                        if event.get("type") != "output_delta":
+                            return
+                        source = str(event.get("invocation_id", ""))
+                        delta = event.get("delta", "")
+                        if not isinstance(delta, str):
+                            return
+                        if len(invocations) > 1 and active_source[0] != source:
+                            prefix = "" if active_source[0] is None else "\n"
+                            print("{}── {} ──\n".format(prefix, source_labels.get(source, source)), end="", flush=True)
+                            active_source[0] = source
+                        print(delta, end="", flush=True)
+
+                event_callback = _emit_text
         try:
             payload = run_invocations(
                 invocations=invocations,
@@ -2498,15 +2559,16 @@ def main(argv: List[str] | None = None) -> int:
                     else None
                 ),
                 cancel_event=cancel_event,
+                event_callback=event_callback,
             )
         finally:
             signal.signal(signal.SIGINT, previous_sigint)
+            if stream_renderer is not None:
+                stream_renderer.close()
         if args.json:
             print(json.dumps(payload, ensure_ascii=True))
-        else:
-            for item in payload["outputs"]:
-                if item["status"] == "success":
-                    print(item["output"], end="")
+        elif stream_mode != "jsonl":
+            pass
         return int(payload["exit_code"])
     if not providers:
         return _stream_error_exit(
