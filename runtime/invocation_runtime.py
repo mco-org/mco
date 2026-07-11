@@ -9,21 +9,28 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+from uuid import uuid4
 
 from .contracts import ProviderAdapter, TaskInput
+from .invocation_artifacts import InvocationArtifactWriter
 
 
 _INVOCATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 COMPLETE_EXIT_CODE = 0
 PARTIAL_EXIT_CODE = 1
 FAILED_EXIT_CODE = 2
+_EVENT_CALLBACK_LOCK = threading.RLock()
 
 
 def _notify(event_callback: Optional[Callable[[dict[str, object]], None]], event: dict[str, object]) -> None:
     if event_callback is None:
         return
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
-    event_callback(event)
+    try:
+        with _EVENT_CALLBACK_LOCK:
+            event_callback(event)
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -105,6 +112,7 @@ def _run_one_invocation(
     cancel_event: threading.Event,
     cancel_state: Mapping[str, str],
     event_callback: Optional[Callable[[dict[str, object]], None]],
+    answer_path: Optional[Path],
 ) -> dict[str, object]:
     task_id = "invocation-{}".format(invocation.invocation_id)
     task = TaskInput(
@@ -175,6 +183,7 @@ def _run_one_invocation(
             "transport_status": transport.status if transport is not None else ("succeeded" if invocation_status == "success" else invocation_status),
             "usage": transport.usage if transport is not None else None,
             "stderr": stderr,
+            "artifact_path": str(answer_path) if answer_path is not None else None,
         }
 
     while True:
@@ -224,6 +233,10 @@ def _run_one_invocation(
                     "delta": delta,
                 })
                 emitted_deltas.append(delta)
+                if answer_path is not None:
+                    with answer_path.open("a", encoding="utf-8") as handle:
+                        handle.write(delta)
+                        handle.flush()
                 emitted_answer = streamed_answer
         if status.completed:
             if status.attempt_state == "SUCCEEDED":
@@ -265,6 +278,9 @@ def run_invocations(
     timeout_seconds: int,
     provider_permissions: Mapping[str, Mapping[str, str]],
     allow_paths: Sequence[str],
+    artifact_base: Optional[str] = None,
+    task_id: str = "",
+    persist_artifacts: bool = False,
     global_timeout_seconds: Optional[float] = None,
     cancel_event: Optional[threading.Event] = None,
     event_callback: Optional[Callable[[dict[str, object]], None]] = None,
@@ -272,7 +288,22 @@ def run_invocations(
     outputs: list[Optional[dict[str, object]]] = [None] * len(invocations)
     stop_event = cancel_event or threading.Event()
     stop_state = {"reason": "cancelled"}
-    with tempfile.TemporaryDirectory(prefix="mco-invocations-") as artifact_base:
+    resolved_task_id = task_id or "run-{}".format(uuid4().hex[:8])
+    temp_directory = None
+    if persist_artifacts:
+        artifact_root_path = (Path(artifact_base or "reports/review").resolve() / resolved_task_id)
+        artifact_root_path.mkdir(parents=True, exist_ok=True)
+    else:
+        temp_directory = tempfile.TemporaryDirectory(prefix="mco-invocations-")
+        artifact_root_path = Path(temp_directory.name)
+    provider_artifact_base = artifact_root_path / "provider-runs"
+    provider_artifact_base.mkdir(parents=True, exist_ok=True)
+    artifact_writer = InvocationArtifactWriter(artifact_root_path)
+    answer_paths = {
+        invocation.invocation_id: artifact_writer.start(invocation.invocation_id)
+        for invocation in invocations
+    }
+    try:
         with ThreadPoolExecutor(max_workers=max(1, len(invocations))) as executor:
             for invocation in invocations:
                 _notify(event_callback, {
@@ -287,7 +318,7 @@ def run_invocations(
                     _run_one_invocation,
                     invocation=invocation,
                     adapter=adapters[invocation.provider],
-                    artifact_base=artifact_base,
+                    artifact_base=str(provider_artifact_base),
                     repo_root=repo_root,
                     prompt=prompt,
                     timeout_seconds=timeout_seconds,
@@ -296,6 +327,7 @@ def run_invocations(
                     cancel_event=stop_event,
                     cancel_state=stop_state,
                     event_callback=event_callback,
+                    answer_path=answer_paths[invocation.invocation_id],
                 ): index
                 for index, invocation in enumerate(invocations)
             }
@@ -326,6 +358,7 @@ def run_invocations(
                             "exit_code": None,
                             "stderr": "",
                         }
+                    result.setdefault("artifact_path", str(answer_paths[invocations[index].invocation_id]))
                     outputs[index] = result
                     _notify(event_callback, {
                         "type": "invocation_finished",
@@ -345,23 +378,46 @@ def run_invocations(
                     for future in pending:
                         future.cancel()
 
-    resolved_outputs = [item for item in outputs if item is not None]
-    for item in resolved_outputs:
-        item.setdefault("stage", "run")
-    successes = sum(1 for item in resolved_outputs if item["status"] == "success")
-    if successes == len(resolved_outputs):
-        task_status = "complete"
-        exit_code = COMPLETE_EXIT_CODE
-    elif successes > 0:
-        task_status = "partial"
-        exit_code = PARTIAL_EXIT_CODE
-    else:
-        task_status = "failed"
-        exit_code = FAILED_EXIT_CODE
-    _notify(event_callback, {
-        "type": "task_finished",
-        "stage": "run",
-        "status": task_status,
-        "exit_code": exit_code,
-    })
-    return {"stage": "run", "status": task_status, "outputs": resolved_outputs, "exit_code": exit_code}
+        resolved_outputs = [item for item in outputs if item is not None]
+        for item in resolved_outputs:
+            item.setdefault("stage", "run")
+        successes = sum(1 for item in resolved_outputs if item["status"] == "success")
+        if successes == len(resolved_outputs):
+            task_status = "complete"
+            exit_code = COMPLETE_EXIT_CODE
+        elif successes > 0:
+            task_status = "partial"
+            exit_code = PARTIAL_EXIT_CODE
+        else:
+            task_status = "failed"
+            exit_code = FAILED_EXIT_CODE
+        artifact_root_value = str(artifact_root_path) if persist_artifacts else None
+        if persist_artifacts:
+            artifact_writer.write_run(
+                task_id=resolved_task_id,
+                status=task_status,
+                exit_code=exit_code,
+                outputs=resolved_outputs,
+            )
+        else:
+            for item in resolved_outputs:
+                item["artifact_path"] = None
+        payload = {
+            "stage": "run",
+            "task_id": resolved_task_id,
+            "status": task_status,
+            "outputs": resolved_outputs,
+            "exit_code": exit_code,
+            "artifact_root": artifact_root_value,
+        }
+        _notify(event_callback, {
+            "type": "task_finished",
+            "stage": "run",
+            "status": task_status,
+            "exit_code": exit_code,
+            "artifact_root": artifact_root_value,
+        })
+        return payload
+    finally:
+        if temp_directory is not None:
+            temp_directory.cleanup()

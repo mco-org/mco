@@ -2343,12 +2343,18 @@ def main(argv: List[str] | None = None) -> int:
         chain_mode=bool(getattr(args, "chain", False)),
     )
 
-    def _stream_error_exit(code: str, message: str) -> int:
+    def _stream_error_exit(code: str, message: str, *, task_failure: bool = False) -> int:
         """Emit a stable machine error when requested, otherwise use stderr."""
         if stream_callback:
-            stream_callback(_stream_error_event(code, message))
+            event = _stream_error_event(code, message)
+            if task_failure:
+                event.update({"stage": "run", "status": "failed", "exit_code": 2, "artifact_root": None})
+            stream_callback(event)
         elif getattr(args, "json", False):
-            print(json.dumps(_error_envelope(code, message), ensure_ascii=True))
+            payload = _error_envelope(code, message)
+            if task_failure:
+                payload.update({"stage": "run", "status": "failed", "exit_code": 2, "outputs": [], "artifact_root": None})
+            print(json.dumps(payload, ensure_ascii=True))
         else:
             print(message, file=sys.stderr)
         return 2
@@ -2429,9 +2435,12 @@ def main(argv: List[str] | None = None) -> int:
     raw_invocation_agents = list(getattr(args, "invocation_agents", []) or [])
     use_invocation_runtime = not getattr(args, "dry_run", False) and (bool(raw_invocation_agents) or providers_was_explicit)
     if use_invocation_runtime:
+        def _invocation_error(code: str, message: str) -> int:
+            return _stream_error_exit(code, message, task_failure=True)
+
         if providers_was_explicit:
             if raw_invocation_agents:
-                return _stream_error_exit("invalid_config", "--agent and --providers are mutually exclusive")
+                return _invocation_error("invalid_config", "--agent and --providers are mutually exclusive")
         try:
             execution_scope = validate_execution_scope(
                 repo_root,
@@ -2444,9 +2453,9 @@ def main(argv: List[str] | None = None) -> int:
                 else default_invocations(providers, execution_scope, cfg.policy.provider_models)
             )
         except ValueError as exc:
-            return _stream_error_exit("input_error", str(exc))
+            return _invocation_error("input_error", str(exc))
         if not invocations:
-            return _stream_error_exit(
+            return _invocation_error(
                 "provider_selection_required",
                 "No providers selected. Ask the user which agents MCO should use, then pass the choice with "
                 "--providers. Available: {}".format(SUPPORTED_PROVIDER_LIST),
@@ -2458,7 +2467,7 @@ def main(argv: List[str] | None = None) -> int:
         )
         unknown = [item.provider for item in invocations if item.provider not in adapter_map]
         if unknown:
-            return _stream_error_exit("invalid_providers", "Unknown providers: {}".format(", ".join(dict.fromkeys(unknown))))
+            return _invocation_error("invalid_providers", "Unknown providers: {}".format(", ".join(dict.fromkeys(unknown))))
         for invocation in invocations:
             preview = provider_policy_preview(invocation.provider, adapter_map[invocation.provider], cfg.policy)
             if preview["would_fail_strict"]:
@@ -2470,12 +2479,12 @@ def main(argv: List[str] | None = None) -> int:
                         transport="acp",
                     )
                     if risk["level"] == "unknown":
-                        return _stream_error_exit(
+                        return _invocation_error(
                             "invalid_config",
                             "risk_classification_unknown: strict ACP execution requires an explicit supported "
                             "permission override for provider(s): {}".format(invocation.provider),
                         )
-                return _stream_error_exit(
+                return _invocation_error(
                     "config_error",
                     "invocation '{}': {}".format(invocation.invocation_id, preview["failure_reason"]),
                 )
@@ -2487,7 +2496,7 @@ def main(argv: List[str] | None = None) -> int:
                 if isinstance(item, dict) and str(item.get("id", ""))
             }
             if discovery.get("ok") and known_model_ids and invocation.model != "default" and invocation.model not in known_model_ids:
-                return _stream_error_exit(
+                return _invocation_error(
                     "input_error",
                     "unknown model '{}' for provider '{}'".format(invocation.model, invocation.provider),
                 )
@@ -2498,13 +2507,22 @@ def main(argv: List[str] | None = None) -> int:
             cancel_event.set()
 
         signal.signal(signal.SIGINT, _cancel_invocations)
+        invocation_result_mode = getattr(args, "result_mode", "stdout")
+        if getattr(args, "save_artifacts", False) and invocation_result_mode == "stdout":
+            invocation_result_mode = "both"
+        persist_invocation_artifacts = invocation_result_mode in ("artifact", "both")
+        output_to_stdout = invocation_result_mode in ("stdout", "both")
         event_callback = None
-        if not args.json:
+        if not args.json and (stream_mode == "jsonl" or output_to_stdout):
             event_lock = threading.Lock()
             if stream_mode == "jsonl":
                 def _emit_jsonl(event: Dict[str, object]) -> None:
                     with event_lock:
-                        print(json.dumps(event, ensure_ascii=True), flush=True)
+                        event_payload = dict(event)
+                        diagnostic = event_payload.pop("stderr", "")
+                        print(json.dumps(event_payload, ensure_ascii=True), flush=True)
+                        if isinstance(diagnostic, str) and diagnostic:
+                            print(diagnostic, file=sys.stderr, end="" if diagnostic.endswith("\n") else "\n", flush=True)
 
                 event_callback = _emit_jsonl
             else:
@@ -2560,15 +2578,21 @@ def main(argv: List[str] | None = None) -> int:
                 ),
                 cancel_event=cancel_event,
                 event_callback=event_callback,
+                artifact_base=str(Path(cfg.artifact_base).resolve()),
+                task_id=args.task_id or "",
+                persist_artifacts=persist_invocation_artifacts,
             )
         finally:
             signal.signal(signal.SIGINT, previous_sigint)
             if stream_renderer is not None:
                 stream_renderer.close()
         if args.json:
-            print(json.dumps(payload, ensure_ascii=True))
-        elif stream_mode != "jsonl":
-            pass
+            json_payload = dict(payload)
+            json_payload["outputs"] = [
+                {key: value for key, value in item.items() if key != "stderr"}
+                for item in payload["outputs"]
+            ]
+            print(json.dumps(json_payload, ensure_ascii=True))
         return int(payload["exit_code"])
     if not providers:
         return _stream_error_exit(

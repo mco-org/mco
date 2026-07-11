@@ -119,6 +119,91 @@ class StreamingFakeAdapter(DeterministicFakeAdapter):
 
 
 class InvocationRuntimeCliTests(unittest.TestCase):
+    def test_event_callback_failure_does_not_break_invocation_cleanup(self) -> None:
+        adapter = DeterministicFakeAdapter()
+
+        def broken_callback(_event: dict[str, object]) -> None:
+            raise RuntimeError("renderer failed")
+
+        with tempfile.TemporaryDirectory() as repo:
+            result = run_invocations(
+                invocations=parse_invocations(["pi:model"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="callback",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+                event_callback=broken_callback,
+            )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertFalse(Path(adapter.inputs[0].metadata["artifact_root"]).exists())
+
+    def test_persistent_artifacts_preserve_raw_answers_and_deterministic_run_record(self) -> None:
+        adapter = DeterministicFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            with tempfile.TemporaryDirectory() as artifacts:
+                payload = run_invocations(
+                    invocations=parse_invocations(["fast=pi:fast-model", "careful=pi:careful-model"], ["."]),
+                    adapters={"pi": adapter},
+                    repo_root=repo,
+                    prompt="save",
+                    timeout_seconds=10,
+                    provider_permissions={},
+                    allow_paths=["."],
+                    artifact_base=artifacts,
+                    task_id="saved-run",
+                    persist_artifacts=True,
+                )
+
+                artifact_root = Path(payload["artifact_root"])
+                self.assertEqual(payload["artifact_root"], str(artifact_root))
+                self.assertEqual((artifact_root / "stages" / "run" / "invocations" / "fast.md").read_text(encoding="utf-8"), "answer for fast-model")
+                self.assertEqual((artifact_root / "stages" / "run" / "invocations" / "careful.md").read_text(encoding="utf-8"), "answer for careful-model")
+                result_text = (artifact_root / "result.md").read_text(encoding="utf-8")
+                self.assertLess(result_text.index("fast"), result_text.index("careful"))
+                self.assertIn("answer for fast-model", result_text)
+                run_json = json.loads((artifact_root / "run.json").read_text(encoding="utf-8"))
+                self.assertEqual(run_json["status"], "complete")
+                self.assertEqual(run_json["stage"], "run")
+                self.assertNotIn("findings", run_json)
+
+    def test_temporary_execution_cleans_context_and_returns_null_artifact_root(self) -> None:
+        adapter = DeterministicFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            result = run_invocations(
+                invocations=parse_invocations(["pi:model"], ["."]),
+                adapters={"pi": adapter},
+                repo_root=repo,
+                prompt="temporary",
+                timeout_seconds=10,
+                provider_permissions={},
+                allow_paths=["."],
+            )
+            artifact_base = Path(adapter.inputs[0].metadata["artifact_root"])
+
+        self.assertIsNone(result["artifact_root"])
+        self.assertFalse(artifact_base.exists())
+
+    def test_cli_save_artifacts_returns_persistent_artifact_root(self) -> None:
+        adapter = DeterministicFakeAdapter()
+        with tempfile.TemporaryDirectory() as repo:
+            stdout = io.StringIO()
+            with patch("runtime.cli._doctor_adapter_registry", return_value={"pi": adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}), contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "run", "--repo", repo, "--prompt", "save", "--json",
+                    "--artifact-base", str(Path(repo) / "reports"), "--task-id", "saved",
+                    "--result-mode", "artifact", "--agent", "pi:model",
+                ])
+
+            payload = json.loads(stdout.getvalue())
+            artifact_root = Path(payload["artifact_root"])
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(artifact_root.is_dir())
+            self.assertTrue((artifact_root / "result.md").is_file())
+            self.assertTrue((artifact_root / "run.json").is_file())
+
     def test_output_delta_is_emitted_before_delayed_invocation_completes(self) -> None:
         adapter = StreamingFakeAdapter()
         events: list[dict[str, object]] = []
@@ -241,7 +326,7 @@ class InvocationRuntimeCliTests(unittest.TestCase):
                 timeout_seconds=900,
                 provider_permissions={},
                 allow_paths=["."],
-                global_timeout_seconds=0.01,
+                global_timeout_seconds=0.1,
             )
 
         self.assertEqual(payload["status"], "partial")
@@ -342,28 +427,26 @@ class InvocationRuntimeCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual([task.metadata["invocation_id"] for task in adapter.inputs], ["pi-default"])
         self.assertNotIn("model", adapter.inputs[0].metadata)
-        self.assertEqual(
-            json.loads(stdout.getvalue()),
-            {
-                "stage": "run",
-                "status": "complete",
-                "outputs": [{
-                    "invocation_id": "pi-default",
-                    "provider": "pi",
-                    "model": "default",
-                    "status": "success",
-                    "output": "answer for default",
-                    "error": None,
-                    "exit_code": 0,
-                    "deltas": ["answer for default"],
-                    "transport_status": "succeeded",
-                    "usage": None,
-                    "stage": "run",
-                    "stderr": "",
-                }],
-                "exit_code": 0,
-            },
-        )
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["stage"], "run")
+        self.assertTrue(payload["task_id"].startswith("run-"))
+        self.assertEqual(payload["status"], "complete")
+        self.assertEqual(payload["exit_code"], 0)
+        self.assertIsNone(payload["artifact_root"])
+        self.assertEqual(payload["outputs"][0], {
+            "invocation_id": "pi-default",
+            "provider": "pi",
+            "model": "default",
+            "status": "success",
+            "output": "answer for default",
+            "error": None,
+            "exit_code": 0,
+            "deltas": ["answer for default"],
+            "transport_status": "succeeded",
+            "usage": None,
+            "stage": "run",
+            "artifact_path": None,
+        })
 
     def test_cli_runs_multiple_models_for_one_provider_and_returns_raw_answers(self) -> None:
         adapter = DeterministicFakeAdapter()
