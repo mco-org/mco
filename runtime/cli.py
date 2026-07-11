@@ -120,7 +120,6 @@ TOP_LEVEL_EPILOG = (
     "  mco run --repo . --prompt \"Summarize this repo.\" --providers claude,codex\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --providers claude,codex,qwen --json\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --debate\n"
-    "  mco review --repo . --prompt \"Review for bugs.\" --divide dimensions\n"
     "  mco review --repo . --prompt \"Review for bugs.\" --stream live\n"
     "  mco agent list\n\n"
     "Use `mco doctor -h`, `mco run -h`, or `mco review -h` for full command options."
@@ -1204,24 +1203,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_execution_args(review)
 
-    findings = subparsers.add_parser(
-        "findings",
-        help=argparse.SUPPRESS,
-        description="Removed legacy findings command.",
-        formatter_class=_HelpFormatter,
-    )
-    findings.add_argument("legacy_args", nargs=argparse.REMAINDER)
-    findings.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
-
-    memory_cmd = subparsers.add_parser(
-        "memory",
-        help=argparse.SUPPRESS,
-        description="Removed legacy findings memory command.",
-        formatter_class=_HelpFormatter,
-    )
-    memory_cmd.add_argument("legacy_args", nargs=argparse.REMAINDER)
-    memory_cmd.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
-
     skills_cmd = subparsers.add_parser(
         "skills",
         help="Read, inspect, and sync the bundled mco-cli Skill",
@@ -1764,11 +1745,28 @@ def _handle_session(args: argparse.Namespace) -> int:
 
 
 def main(argv: List[str] | None = None) -> int:
+    _raw_argv = argv if argv is not None else sys.argv[1:]
+    _wants_json = "--json" in _raw_argv
+    if _raw_argv and _raw_argv[0] in ("findings", "memory"):
+        if _raw_argv[0] == "findings":
+            message = (
+                "The findings command was removed. Use mco run/review with raw text, --json, "
+                "--stream jsonl, or --result-mode artifact."
+            )
+        else:
+            message = (
+                "The memory command was removed with the findings memory layer. Persist raw answers with "
+                "--result-mode artifact or pass them through --chain, --debate, or --synthesize."
+            )
+        if _wants_json:
+            print(json.dumps(_error_envelope("removed_surface", message), ensure_ascii=True))
+        else:
+            print(message, file=sys.stderr)
+        return 2
+
     parser = build_parser()
     # If streaming is requested, suppress argparse stderr and emit a machine-readable error.
-    _raw_argv = argv if argv is not None else sys.argv[1:]
     _wants_stream = "--stream" in _raw_argv and any(mode in _raw_argv for mode in ("jsonl", "live"))
-    _wants_json = "--json" in _raw_argv
     _parse_error_msg = ""
     if _wants_stream or _wants_json:
         def _capture_parse_error(message: str) -> None:
