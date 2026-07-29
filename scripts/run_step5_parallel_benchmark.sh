@@ -7,7 +7,8 @@ DATE_STR="$(date +%F)"
 OUT_DIR="$ROOT_DIR/reports/adapter-contract/$DATE_STR"
 mkdir -p "$OUT_DIR"
 TEMPLATE_PATH="$ROOT_DIR/docs/templates/step5-benchmark-report.md.tpl"
-PROVIDERS="${1:-claude,codex,gemini,opencode,qwen,hermes,pi}"
+# Hermes is covered by capability probes; review/read_only rejects it fail-closed.
+PROVIDERS="${1:-claude,codex,gemini,opencode,qwen,pi,copilot,grok,cursor}"
 
 PROMPT="Smoke benchmark for parallel review. No tools. Return a concise natural-language answer."
 RUN_TAG="$(date +%Y%m%d%H%M%S)"

@@ -1,5 +1,7 @@
 # Structured Streaming — Design Spec
 
+> **Status: SUPERSEDED.** This historical findings-driven event schema is not the current streaming contract. Use the [invocation runtime and artifact contract (`v1`)](../../contracts/invocation-runtime-v1.md) and the installed CLI help.
+
 ## Overview
 
 Add `--stream jsonl` flag to `mco review` / `mco run` that outputs real-time JSONL events to stdout as providers execute.

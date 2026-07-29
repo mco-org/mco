@@ -57,7 +57,7 @@ mco run \
   --execution-mode write
 ```
 
-MCO 不会静默替你选择 Provider 或模型。缺少 `--providers` 和 `--agent` 时，应先询问用户希望使用哪些 Agent 和模型。
+MCO 不会根据检测到的二进制文件推断 Provider/模型团队。缺少 `--providers` 和 `--agent` 时，配置文件顶层的 `providers` 会作为已保存默认值生效；如果也没有该默认值，就必须显式选择团队。调用方 Agent 在执行前仍应向用户展示并确认最终解析出的 Provider/模型团队。
 
 ## 为什么使用 MCO
 
@@ -134,14 +134,14 @@ MCO 会把统一执行档位转换成各 Provider 的原生参数：
 
 ## 由其他 Agent 调用 MCO
 
-MCO CLI 是自描述的。调用方 Agent 可以读取 `mco -h`，询问用户选择哪些 Provider，预览策略，然后执行任务。
+MCO CLI 是自描述的。调用方 Agent 可以读取 `mco -h`，解析已保存默认值，向用户确认 Provider/模型团队，预览策略，然后执行任务。
 
 > “使用 MCO，让 Claude 和 Codex 做安全审查，让 Pi 做架构审查。”
 
 安装器与运行时存在两个不同的选择：
 
 - 安装器 `--agent` 决定把 MCO Skill 安装给哪些调用方 Agent。
-- 运行时 `--providers` 决定哪些 Agent 执行当前任务。
+- 运行时 `--providers`、已保存的 `providers` 配置或运行时 `--agent` 声明共同决定本次任务的 invocation。
 
 ```bash
 npx @tt-a1i/mco@latest install --agent codex --agent claude-code --yes

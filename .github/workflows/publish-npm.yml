@@ -1,7 +1,6 @@
 name: Publish npm
 
 on:
-  workflow_dispatch:
   release:
     types: [published]
 
@@ -17,6 +16,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Validate release ref and changelog
+        run: python3 scripts/check_release_ref.py
 
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y jq ripgrep
@@ -74,4 +76,64 @@ jobs:
       - name: Publish package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: |
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          QUERY_STDERR="$(mktemp)"
+          trap 'rm -f -- "$QUERY_STDERR"' EXIT
+          if PUBLISHED_VERSION="$(npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version --prefer-online 2>"$QUERY_STDERR")"; then
+            if [ "$PUBLISHED_VERSION" != "$PACKAGE_VERSION" ]; then
+              echo "::error::Registry returned an unexpected version for ${PACKAGE_NAME}@${PACKAGE_VERSION}; refusing to publish."
+              exit 1
+            fi
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published; skipping npm publish. Registry returned ${PUBLISHED_VERSION}."
+          elif grep -Eq '(^|[[:space:]])code[[:space:]]+E404([[:space:]]|$)' "$QUERY_STDERR"; then
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is not published; publishing it now."
+            npm publish --access public
+          else
+            echo "::error::Unable to determine whether ${PACKAGE_NAME}@${PACKAGE_VERSION} is published; refusing to publish."
+            exit 1
+          fi
+
+      - name: Verify npm latest version
+        run: |
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          PUBLISHED_VERSION=""
+          for attempt in $(seq 1 12); do
+            PUBLISHED_VERSION="$(npm view "${PACKAGE_NAME}@latest" version --prefer-online 2>/dev/null || true)"
+            if [ "$PUBLISHED_VERSION" = "$PACKAGE_VERSION" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 12 ]; then
+              echo "Waiting for npm latest: expected $PACKAGE_VERSION, got ${PUBLISHED_VERSION:-unavailable}"
+              sleep 5
+            fi
+          done
+          if [ "$PUBLISHED_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::npm latest mismatch: expected $PACKAGE_VERSION, got ${PUBLISHED_VERSION:-unavailable}"
+            exit 1
+          fi
+
+      - name: Smoke test clean registry install
+        run: |
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          INSTALL_DIR="$(mktemp -d)"
+          NPM_CACHE_DIR="$(mktemp -d)"
+          cleanup() {
+            rm -rf -- "$INSTALL_DIR" "$NPM_CACHE_DIR"
+          }
+          trap cleanup EXIT
+          npm install "${PACKAGE_NAME}@${PACKAGE_VERSION}" \
+            --prefix "$INSTALL_DIR" \
+            --cache "$NPM_CACHE_DIR" \
+            --no-audit \
+            --no-fund
+          MCO_BIN="$INSTALL_DIR/node_modules/.bin/mco"
+          ACTUAL_VERSION="$("$MCO_BIN" --version)"
+          if [ "$ACTUAL_VERSION" != "mco $PACKAGE_VERSION" ]; then
+            echo "::error::clean install version mismatch: expected mco $PACKAGE_VERSION, got $ACTUAL_VERSION"
+            exit 1
+          fi
+          "$MCO_BIN" --help >/dev/null

@@ -1,9 +1,9 @@
 # Releasing MCO
 
-MCO is published through npm only. Do not publish to PyPI.
-
-This guide records the manual release path that works when GitHub Actions cannot
-publish because `NPM_TOKEN` is missing or npm requires web-based 2FA.
+MCO is published through npm only. Do not publish to PyPI. The normal path is a
+GitHub Release from the matching version tag; the publish workflow gates and
+publishes that exact tag. The manual path remains available when GitHub Actions
+cannot publish because `NPM_TOKEN` is missing or npm requires web-based 2FA.
 
 ## Preview package (CI artifact)
 
@@ -71,13 +71,40 @@ git tag -a vX.Y.Z origin/main -m "vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
+The release workflow accepts only a tag matching `v<package.json version>` and
+requires a dated changelog heading. The same guard can be checked locally:
+
+```bash
+GITHUB_REF=refs/tags/vX.Y.Z python3 scripts/check_release_ref.py
+```
+
 If the tag already exists, do not recreate it. Verify it instead:
 
 ```bash
 git ls-remote --tags origin refs/tags/vX.Y.Z
 ```
 
-## 3. Publish npm from a clean tag checkout
+## 3. Publish through a GitHub Release
+
+Create the release as a Draft, inspect its tag and notes, then publish it. The
+`Publish npm` workflow runs the full gate, publishes the package, waits for npm
+`latest` to match, and performs a clean registry install smoke.
+
+```bash
+gh release create vX.Y.Z --draft --title "vX.Y.Z" --notes-file docs/releases/vX.Y.Z.md
+gh release edit vX.Y.Z --draft=false
+```
+
+Watch the workflow through completion. If `npm publish` succeeds but a later
+verification step fails, choose Re-run failed jobs on that same workflow run.
+The preflight skips `npm publish` only after the registry confirms the exact
+version, then continues with the `latest` and clean-install checks.
+
+If the package was not published or the retry still fails, return the GitHub
+Release to Draft while investigating so GitHub and npm do not continue
+advertising different latest versions.
+
+## 4. Manual fallback: publish npm from a clean tag checkout
 
 Check the currently published version first.
 
@@ -101,7 +128,7 @@ Then publish from a real terminal/TTY:
 npm publish --access public --auth-type=web
 ```
 
-## 4. npm web auth and 2FA
+## 5. npm web auth and 2FA
 
 The repository `NPM_TOKEN` must identify an npm account or granular automation
 token with write access to `@tt-a1i/mco`. The publish workflow runs `npm whoami`
@@ -113,9 +140,9 @@ scope or package permission, so also verify the token owner appears here:
 npm view @tt-a1i/mco maintainers --json
 ```
 
-Keep a GitHub release as Draft until npm publish succeeds. Publishing the Draft
-triggers the npm workflow; if the workflow fails, return the release to Draft so
-GitHub and npm never advertise different latest versions.
+Publishing the prepared Draft GitHub Release triggers the npm workflow. If the
+registry confirms the package was not published and that workflow fails, return
+the release to Draft before using this manual fallback.
 
 Use a real TTY for npm web-auth publish prompts. Do not pipe `npm publish`
 through `tee`, and do not run it through a non-interactive command runner for the
@@ -176,7 +203,7 @@ printed `https://www.npmjs.com/auth/cli/<auth-id>` URL, complete the browser
 confirmation, and return to the terminal. Do not start a second non-TTY publish
 attempt while the first publish is waiting.
 
-## 5. Verify the published package
+## 6. Verify the published package
 
 Confirm the registry state:
 

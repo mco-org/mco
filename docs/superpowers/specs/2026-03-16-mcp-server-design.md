@@ -1,5 +1,7 @@
 # MCP Server Mode — Design Spec
 
+> **Status: SUPERSEDED.** This historical findings/memory tool design is not the current MCP contract. Use the raw run/review surface defined by the [invocation runtime and artifact contract (`v1`)](../../contracts/invocation-runtime-v1.md).
+
 ## Overview
 
 Add `mco serve` subcommand that starts a stdio MCP server, exposing 5 tools for AI agents and MCP-compatible clients to call MCO programmatically.

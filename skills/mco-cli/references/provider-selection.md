@@ -2,7 +2,7 @@
 
 ## Human workflow
 
-Ask the user which providers and models should execute the task. Confirm the list in natural language before invoking MCO.
+Resolve any saved top-level `providers` default, then show and confirm the provider/model team in natural language before invoking MCO. If no saved default exists, ask the user which providers and models should execute the task.
 
 ## Model-qualified workflow
 
@@ -26,13 +26,15 @@ mco review --repo . --prompt "Review for bugs." --providers claude,codex,qwen
 
 MCO converts the shorthand to invocation records before dispatch. It does not route this form through a separate legacy engine.
 
+When neither CLI selection is present, a top-level `providers` configuration supplies the saved default. Detected binaries alone never select a team.
+
 ## Error handling
 
 If MCO returns `provider_selection_required`:
 
 1. Stop and ask the user which providers/models to use.
 2. Retry with the confirmed `--providers` or `--agent` list.
-3. Do not silently substitute a default provider team.
+3. Do not silently substitute a team inferred from detected binaries.
 
 ## Discovery helpers
 

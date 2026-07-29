@@ -36,11 +36,11 @@ mco skills sync --agent AGENT [--agent AGENT ...] [--dry-run] [--json]
 Rules:
 
 - `skills sync` requires at least one explicit `--agent`.
-- Non-interactive and dry-run installer flows require explicit `--agent` selection unless `--yes` accepts detected agents; selection failures happen before global installation.
+- When Skill sync is enabled, non-interactive and dry-run installer flows require explicit `--agent` selection unless `--yes` accepts detected agents; selection failures happen before global installation.
 - Installer `--agent` selects calling agents that receive the `mco-cli` Skill.
-- Runtime `--providers` selects agents that execute an MCO task.
+- Runtime `--providers`, saved `providers` config, or runtime `--agent` declarations select the task invocations.
 - `--yes` accepts only detected agents; it does not mean “all possible agents”.
-- No detected agents plus no `--agent` returns `agent_selection_required`.
+- If Skill sync is enabled and Agent selection remains empty, the installer returns `agent_selection_required` before global installation.
 - Skill installation source is the installed npm package root, not GitHub `main`.
 - The Skills CLI is invoked argv-only with mandatory `--copy`.
 
@@ -50,7 +50,7 @@ Rules:
 {
   "ok": true,
   "action": "install",
-  "cli": {"status": "installed", "version": "0.10.x"},
+  "cli": {"status": "installed", "version": "0.11.0"},
   "skills": {
     "status": "installed",
     "name": "mco-cli",
@@ -72,11 +72,11 @@ If CLI installation succeeds but Skill sync fails:
 - The installer exits non-zero.
 - The response includes a retry command such as `mco skills sync --agent codex`.
 
-### No detected agents
+### No selected agents
 
-In non-interactive mode without `--agent`:
+When Skill sync is enabled and no calling Agent is selected:
 
-- The installer may install/upgrade the CLI.
+- The installer does not start or upgrade the CLI. A dry-run may report the CLI command as planned, but never executes it.
 - Skill sync is skipped.
 - The response uses subtype `agent_selection_required`.
 

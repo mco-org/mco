@@ -38,7 +38,7 @@ Provider-specific overrides remain available through `--provider-permissions-jso
 
 ## Provider selection
 
-`mco run` and `mco review` require an explicit provider/model team:
+`mco run` and `mco review` require a resolved provider/model team. Supply it on the command line:
 
 ```bash
 mco review --providers claude,codex,pi --prompt "Review this repository."
@@ -50,7 +50,7 @@ For model-qualified dispatch, repeat `--agent`:
 mco run --agent fast=pi:fast-model --agent careful=pi:careful-model --prompt "Compare these models."
 ```
 
-If neither `--providers` nor `--agent` is supplied, MCO returns `provider_selection_required`. Calling Agents should ask the user rather than infer consent from installed binaries.
+If neither `--providers` nor `--agent` is supplied, MCO uses the top-level `providers` configuration as the saved default. If no saved default exists, it returns `provider_selection_required`. Calling Agents should show and confirm the resolved team with the user rather than infer consent from installed binaries.
 
 ## Model discovery and routing
 

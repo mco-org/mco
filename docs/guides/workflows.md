@@ -28,7 +28,8 @@ Installer `--agent` selects Skill destinations. Runtime `--agent` selects model-
 mco run \
   --repo . \
   --prompt "Summarize the architecture." \
-  --providers claude,codex
+  --providers claude,codex \
+  --execution-mode read_only
 
 mco review \
   --repo . \
@@ -46,6 +47,7 @@ Use `--agent [alias=]provider:model` when model identity matters or when one pro
 mco run --repo . --prompt "Inspect the authentication flow." \
   --agent security=codex:gpt-5.6-sol \
   --agent alternate=codex:gpt-5.6-luna \
+  --execution-mode read_only \
   --result-mode both --task-id auth-review
 ```
 
@@ -74,7 +76,8 @@ For review coordination, `--perspectives-json` prepends an explicit Provider pro
 mco run --repo . --prompt "Analyze this repository." \
   --agent first=pi:model-a \
   --agent second=codex:model-b \
-  --chain --result-mode artifact --task-id chained-analysis
+  --chain --execution-mode read_only \
+  --result-mode artifact --task-id chained-analysis
 ```
 
 Chain runs one invocation per stage. The next stage receives `stages/<stage>/context/manifest.json` and paths to complete prior Markdown answers. It does not receive a silent summary, sample, truncation, or prompt-embedded copy of the earlier answer.
