@@ -1,8 +1,8 @@
 name: Benchmark
 
+# Manual-only until a self-hosted macOS runner is available.
+# Hermes is excluded because review/read_only fails closed; capability probes cover it.
 on:
-  schedule:
-    - cron: "15 3 * * *"
   workflow_dispatch:
 
 jobs:

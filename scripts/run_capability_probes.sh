@@ -15,7 +15,7 @@ esac
 
 mkdir -p "$BASE_DIR"
 
-providers=(claude codex gemini opencode qwen hermes pi)
+providers=(claude codex gemini opencode qwen hermes pi copilot grok cursor)
 DEFAULT_TIMEOUT_SECONDS=45
 PROBE_CWD="${PROBE_CWD:-${HOME:-$ROOT_DIR}}"
 CLAUDE_BIN="$(command -v claude)"
@@ -25,6 +25,9 @@ OPENCODE_BIN="$(command -v opencode)"
 QWEN_BIN="$(command -v qwen)"
 HERMES_BIN="$(command -v hermes)"
 PI_BIN="$(command -v pi)"
+COPILOT_BIN="$(command -v copilot)"
+GROK_BIN="$(command -v grok)"
+CURSOR_BIN="$(command -v agent)"
 
 provider_version() {
   case "$1" in
@@ -35,6 +38,9 @@ provider_version() {
     qwen) "$QWEN_BIN" --version | head -n1 ;;
     hermes) "$HERMES_BIN" --version | head -n1 ;;
     pi) "$PI_BIN" --version | head -n1 ;;
+    copilot) "$COPILOT_BIN" --version | head -n1 ;;
+    grok) "$GROK_BIN" --version | head -n1 ;;
+    cursor) "$CURSOR_BIN" --version | head -n1 ;;
   esac
 }
 
@@ -163,13 +169,17 @@ cat > "$schema_file" <<'EOF'
 {
   "type": "object",
   "properties": {
-    "probe": { "type": "string" },
-    "ok": { "type": "boolean" }
+    "probe": { "type": "string", "const": "c2" },
+    "ok": { "type": "boolean", "const": true }
   },
   "required": ["probe", "ok"],
   "additionalProperties": false
 }
 EOF
+
+C2_JSON_JQ_FILTER='def is_c2: .probe? == "c2" and .ok? == true;
+  ([.[] | .. | objects | select(is_c2)] | length > 0)
+  or ([.[] | .. | strings | fromjson? | .. | objects | select(is_c2)] | length > 0)'
 
 for provider in "${providers[@]}"; do
   mkdir -p "$BASE_DIR/$provider"
@@ -183,15 +193,21 @@ run_probe "opencode" "C0" "'$OPENCODE_BIN' auth list" ""
 run_probe "qwen" "C0" "'$QWEN_BIN' 'Reply with exactly OK' --output-format text --auth-type qwen-oauth" ""
 run_probe "hermes" "C0" "'$HERMES_BIN' status" ""
 run_probe "pi" "C0" "'$PI_BIN' --list-models" ""
+run_probe "copilot" "C0" "'$COPILOT_BIN' -p 'Reply with exactly OK' -s --no-ask-user --deny-tool=write --deny-tool=shell" ""
+run_probe "grok" "C0" "'$GROK_BIN' models" ""
+run_probe "cursor" "C0" "'$CURSOR_BIN' status" ""
 
 # C1 probes
 run_probe "claude" "C1" "'$CLAUDE_BIN' -p --permission-mode plan --output-format text 'Reply with exactly OK'" ""
-run_probe "codex" "C1" "'$CODEX_BIN' exec --skip-git-repo-check -C '$PROBE_CWD' --sandbox workspace-write 'Reply with exactly OK' || true" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/codex/C1/raw/stdout.log'"
-run_probe "gemini" "C1" "'$GEMINI_BIN' -p 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/gemini/C1/raw/stdout.log'"
-run_probe "opencode" "C1" "'$OPENCODE_BIN' run 'Reply with exactly OK' --format default" "(! rg -q '(^|\\s)Error:' '$BASE_DIR/opencode/C1/raw/stdout.log') && (! rg -q '(^|\\s)Error:' '$BASE_DIR/opencode/C1/raw/stderr.log')"
-run_probe "qwen" "C1" "'$QWEN_BIN' 'Reply with exactly OK' --output-format text --auth-type qwen-oauth" ""
+run_probe "codex" "C1" "'$CODEX_BIN' --ask-for-approval never exec --skip-git-repo-check -C '$PROBE_CWD' --sandbox read-only --json 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/codex/C1/raw/stdout.log'"
+run_probe "gemini" "C1" "'$GEMINI_BIN' -p 'Reply with exactly OK' --approval-mode plan" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/gemini/C1/raw/stdout.log'"
+run_probe "opencode" "C1" "'$OPENCODE_BIN' run --agent plan 'Reply with exactly OK' --format json --dir '$PROBE_CWD'" "(! rg -q '(^|\\s)Error:' '$BASE_DIR/opencode/C1/raw/stdout.log') && (! rg -q '(^|\\s)Error:' '$BASE_DIR/opencode/C1/raw/stderr.log')"
+run_probe "qwen" "C1" "'$QWEN_BIN' 'Reply with exactly OK' --output-format json --auth-type qwen-oauth --approval-mode plan" ""
 run_probe "hermes" "C1" "'$HERMES_BIN' -z 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/hermes/C1/raw/stdout.log'"
 run_probe "pi" "C1" "'$PI_BIN' -p --mode json --no-session --no-context-files --no-skills --no-extensions --tools read,grep,find,ls 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/pi/C1/raw/stdout.log'"
+run_probe "copilot" "C1" "'$COPILOT_BIN' -p 'Reply with exactly OK' -s --no-ask-user --deny-tool=write --deny-tool=shell" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/copilot/C1/raw/stdout.log'"
+run_probe "grok" "C1" "'$GROK_BIN' --no-auto-update -p 'Reply with exactly OK' --output-format plain --permission-mode plan" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/grok/C1/raw/stdout.log'"
+run_probe "cursor" "C1" "'$CURSOR_BIN' -p 'Reply with exactly OK' --output-format text --mode ask --sandbox enabled" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/cursor/C1/raw/stdout.log'"
 
 # C2 probes
 run_probe "claude" "C2" \
@@ -200,28 +216,40 @@ run_probe "claude" "C2" \
 
 codex_msg_file="$BASE_DIR/codex/C2/raw/last_message.json"
 run_probe "codex" "C2" \
-  "rm -f '$codex_msg_file'; '$CODEX_BIN' exec --skip-git-repo-check -C '$PROBE_CWD' --sandbox workspace-write --json --output-schema '$schema_file' --output-last-message '$codex_msg_file' 'Return JSON object with probe=c2 and ok=true' || true" \
+  "rm -f '$codex_msg_file'; '$CODEX_BIN' --ask-for-approval never exec --skip-git-repo-check -C '$PROBE_CWD' --sandbox read-only --json --output-schema '$schema_file' --output-last-message '$codex_msg_file' 'Return JSON object with probe=c2 and ok=true'" \
   "jq -e '[.. | objects | select(has(\"probe\") and has(\"ok\")) | select(.probe==\"c2\" and .ok==true)] | length > 0' '$codex_msg_file'"
 
 run_probe "gemini" "C2" \
-  "'$GEMINI_BIN' -p 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
-  "rg -q '\"probe\"\\s*:\\s*\"c2\"' '$BASE_DIR/gemini/C2/raw/stdout.log' && rg -q '\"ok\"\\s*:\\s*true' '$BASE_DIR/gemini/C2/raw/stdout.log'"
+  "'$GEMINI_BIN' -p 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --output-format json --approval-mode plan" \
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/gemini/C2/raw/stdout.log'"
 
 run_probe "opencode" "C2" \
-  "'$OPENCODE_BIN' run 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --format json" \
-  "jq -s -e '([ .[] | .. | objects | select(.probe?==\"c2\" and .ok?==true)] | length > 0) or ([ .[] | .. | strings | select(test(\"\\\"probe\\\"\\\\s*:\\\\s*\\\"c2\\\"\") and test(\"\\\"ok\\\"\\\\s*:\\\\s*true\")) ] | length > 0)' '$BASE_DIR/opencode/C2/raw/stdout.log'"
+  "'$OPENCODE_BIN' run --agent plan 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --format json --dir '$PROBE_CWD'" \
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/opencode/C2/raw/stdout.log'"
 
 run_probe "qwen" "C2" \
-  "'$QWEN_BIN' 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --output-format json --auth-type qwen-oauth" \
-  "jq -e '([.. | objects | select(has(\"probe\") and has(\"ok\")) | select(.probe==\"c2\" and .ok==true)] | length > 0) or ([.. | strings | select(contains(\"{\\\"probe\\\":\\\"c2\\\",\\\"ok\\\":true}\"))] | length > 0)' '$BASE_DIR/qwen/C2/raw/stdout.log'"
+  "'$QWEN_BIN' 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --output-format json --auth-type qwen-oauth --approval-mode plan" \
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/qwen/C2/raw/stdout.log'"
 
 run_probe "hermes" "C2" \
   "'$HERMES_BIN' -z 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
-  "rg -q '\"probe\"\\s*:\\s*\"c2\"' '$BASE_DIR/hermes/C2/raw/stdout.log' && rg -q '\"ok\"\\s*:\\s*true' '$BASE_DIR/hermes/C2/raw/stdout.log'"
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/hermes/C2/raw/stdout.log'"
 
 run_probe "pi" "C2" \
   "'$PI_BIN' -p --mode json --no-session --no-context-files --no-skills --no-extensions --tools read,grep,find,ls 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
-  "jq -s -e '([ .[] | .. | objects | select(.probe?==\"c2\" and .ok?==true)] | length > 0) or ([ .[] | .. | strings | select(test(\"\\\"probe\\\"\\\\s*:\\\\s*\\\"c2\\\"\") and test(\"\\\"ok\\\"\\\\s*:\\\\s*true\")) ] | length > 0)' '$BASE_DIR/pi/C2/raw/stdout.log'"
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/pi/C2/raw/stdout.log'"
+
+run_probe "copilot" "C2" \
+  "'$COPILOT_BIN' -p 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --output-format json --no-ask-user --deny-tool=write --deny-tool=shell" \
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/copilot/C2/raw/stdout.log'"
+
+run_probe "grok" "C2" \
+  "'$GROK_BIN' --no-auto-update -p 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --output-format json --json-schema \"\$(cat '$schema_file')\" --permission-mode plan" \
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/grok/C2/raw/stdout.log'"
+
+run_probe "cursor" "C2" \
+  "'$CURSOR_BIN' -p 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --output-format json --mode ask --sandbox enabled" \
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/cursor/C2/raw/stdout.log'"
 
 # C3 sample probe for Qwen (stream-json)
 run_probe "qwen" "C3" \
@@ -229,6 +257,7 @@ run_probe "qwen" "C3" \
   "jq -s -e 'length >= 2' '$BASE_DIR/qwen/C3/raw/stdout.log'"
 
 LOCK_FILE="$BASE_DIR/lock-summary.yaml"
+aggregate_exit_code=0
 {
   echo "provider_locks:"
   for provider in "${providers[@]}"; do
@@ -242,6 +271,7 @@ LOCK_FILE="$BASE_DIR/lock-summary.yaml"
     else
       lock_version="BLOCKED"
       gate_status="BLOCKED"
+      aggregate_exit_code=1
     fi
     echo "  $provider:"
     echo "    min_version:"
@@ -278,3 +308,4 @@ SUMMARY_MD="$BASE_DIR/summary.md"
 } > "$SUMMARY_MD"
 
 echo "Done. Probe artifacts in: $BASE_DIR"
+exit "$aggregate_exit_code"

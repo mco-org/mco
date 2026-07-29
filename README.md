@@ -57,7 +57,7 @@ mco run \
   --execution-mode write
 ```
 
-MCO never silently chooses a provider/model team. If neither `--providers` nor `--agent` is supplied, ask the user which agents and models to use.
+MCO never infers a provider/model team from detected binaries. If neither `--providers` nor `--agent` is supplied, a top-level `providers` config entry is used as the saved default; without one, the team must be selected explicitly. A calling agent should still show and confirm the resolved provider/model team with the user before dispatch.
 
 ## Why MCO
 
@@ -134,14 +134,14 @@ See [Provider and permission reference](./docs/reference/providers.md) for the c
 
 ## Use MCO from another agent
 
-MCO's CLI is self-describing. A calling agent can read `mco -h`, ask which providers the user wants, preview the policy, and then execute.
+MCO's CLI is self-describing. A calling agent can read `mco -h`, resolve saved defaults, confirm the provider/model team with the user, preview the policy, and then execute.
 
 > “Use MCO to run a security review with Claude and Codex, and an architecture review with Pi.”
 
 The installer and runtime use two different selections:
 
 - Installer `--agent` chooses which calling agents receive the MCO Skill.
-- Runtime `--providers` chooses which agents execute the current task.
+- Runtime `--providers`, saved `providers` config, or runtime `--agent` declarations choose the task invocations.
 
 ```bash
 npx @tt-a1i/mco@latest install --agent codex --agent claude-code --yes

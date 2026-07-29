@@ -1,5 +1,7 @@
 # Diff-Only Review — Design Spec
 
+> **Status: SUPERSEDED.** This historical findings-driven design is not a current implementation contract. Use the [invocation runtime and artifact contract (`v1`)](../../contracts/invocation-runtime-v1.md); express scope with `--target-paths` or the raw prompt.
+
 ## Overview
 
 Add `--diff`, `--staged`, `--unstaged` flags to `mco review` / `mco run` so that agents only review changed code instead of the entire repository.

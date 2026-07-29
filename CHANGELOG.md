@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-29
+
 ### Added
 - Added the v0.11.0 invocation-native runtime: explicit model-qualified invocations, raw-answer operational records, and file-backed chain, debate, and synthesis stages.
 
@@ -15,6 +17,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Restored MCO's active-maintenance positioning, with Hive documented as a complementary browser workbench.
 - Made installer agent selection fail before global mutation in non-interactive and dry-run flows.
 - Pinned the tested Skill installer dependency to `skills@1.5.15`.
+- Expanded capability probes to all ten built-in Providers and kept the read-only benchmark manual while no compatible self-hosted runner is available.
 
 ### Removed
 - Removed the findings schema and semantic normalization, decision, consensus, findings-memory, Markdown-PR, SARIF, and content-derived status surfaces. Removed flags return migration guidance rather than running a legacy path.
@@ -27,6 +30,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Expanded Skill health checks to every supported calling agent and the complete bundled Skill tree.
 - Added explicit `not_installed` health and Windows npm-prefix handling.
 - Added macOS packaging and Windows installer validation to CI.
+- Made npm publishing fail closed unless the release tag, package version, and dated changelog entry match, then verify npm `latest` and a clean registry install.
 
 ## [0.10.8] - 2026-07-10
 ### Added

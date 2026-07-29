@@ -38,7 +38,7 @@ Nested policy objects are deep-merged.
 }
 ```
 
-`providers` supplies the `--providers` shorthand. Calling Agents should still confirm the provider/model team with the user instead of treating a discoverable binary as consent. Use repeatable `--agent [alias=]provider:model` when a task needs multiple models from one provider.
+`providers` is a saved default selection: when neither CLI `--providers` nor runtime `--agent` is supplied, MCO resolves it as the task's Provider team. It is operational configuration, not fresh user consent for every task. Calling Agents should show and confirm the resolved provider/model team with the user before dispatch instead of treating config or a discoverable binary as consent. Use repeatable `--agent [alias=]provider:model` when a task needs multiple models from one provider.
 
 `timeout_seconds` is the immutable per-invocation wall-clock deadline; `stall_timeout_seconds` limits time without Provider output progress. `provider_timeouts` overrides the hard deadline for named Providers, while `review_hard_timeout_seconds` caps the complete task.
 
@@ -87,6 +87,7 @@ Temporary ACP agents can also be registered for one invocation:
 mco run \
   --custom-agent mybot "mybot --acp" \
   --providers mybot \
+  --execution-mode read_only \
   --prompt "Analyze this repository."
 ```
 
