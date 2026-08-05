@@ -3,6 +3,12 @@
 const { spawnSync } = require("node:child_process");
 const { resolve } = require("node:path");
 
+const { resolveExecutable } = require("../scripts/exec-util.js");
+
+function defaultRunner(command, args, options) {
+  return spawnSync(resolveExecutable(command), args, options);
+}
+
 function launch(args, deps = {}) {
   if (args[0] === "install") {
     void require("../scripts/install-wizard.js")
@@ -15,7 +21,7 @@ function launch(args, deps = {}) {
   }
 
   const scriptPath = resolve(__dirname, "..", "mco");
-  const runner = deps.runner || spawnSync;
+  const runner = deps.runner || defaultRunner;
   const result = runner("python3", [scriptPath, ...args], {
     stdio: "inherit",
     shell: false,

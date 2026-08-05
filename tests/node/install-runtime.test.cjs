@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const runtime = require("../../scripts/install-runtime.js");
+const { resolveExecutable } = require("../../scripts/exec-util.js");
 
 test("buildNpmInstallArgv pins exact package version", () => {
   assert.deepEqual(runtime.buildNpmInstallArgv("0.10.9"), [
@@ -117,4 +118,32 @@ test("runMcoScript fails when placeholder used without allowPlaceholder", () => 
   }));
   assert.equal(result.status, 1);
   assert.equal(result.failure, "global_mco_not_found");
+});
+
+test("resolveExecutable leaves non-Windows commands untouched", () => {
+  const originalPlatform = process.platform;
+  Object.defineProperty(process, "platform", { value: "linux" });
+  try {
+    assert.equal(resolveExecutable("npm"), "npm");
+    assert.equal(resolveExecutable("python3"), "python3");
+  } finally {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  }
+});
+
+test("resolveExecutable resolves .cmd/.exe shims on Windows", () => {
+  const originalPlatform = process.platform;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  const env = {
+    Path: "C:\\Windows\\system32;C:\\Tools",
+    PATHEXT: ".COM;.EXE;.BAT;.CMD",
+  };
+  const exists = (candidate) => candidate === "C:\\Tools\\node.exe";
+  try {
+    assert.equal(resolveExecutable("node", env, exists), "C:\\Tools\\node.exe");
+    assert.equal(resolveExecutable("node.exe", env, exists), "node.exe");
+    assert.equal(resolveExecutable("npm", env, () => false), "npm");
+  } finally {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  }
 });
