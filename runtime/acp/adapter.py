@@ -26,6 +26,7 @@ from ..contracts import (
     TaskRunRef,
     TaskStatus,
 )
+from ..platform import user_suffix
 from ..types import ErrorKind
 from .client import AcpClient
 from .transport import JsonRpcError, TransportClosed
@@ -150,7 +151,7 @@ class AcpAdapter:
     def run(self, input_task: TaskInput) -> TaskRunRef:
         """Start an ACP session and send the prompt."""
         artifact_root = str(input_task.metadata.get(
-            "artifact_root", os.path.join(tempfile.gettempdir(), "mco-{}".format(os.getuid())),
+            "artifact_root", os.path.join(tempfile.gettempdir(), "mco-{}".format(user_suffix())),
         ))
         paths = expected_paths(artifact_root, input_task.task_id, (self.id,))
         root = paths["root"]

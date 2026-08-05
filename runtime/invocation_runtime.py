@@ -465,7 +465,7 @@ def run_invocations(
             shutil.rmtree(artifact_root_path)
         artifact_root_path.mkdir(parents=True, exist_ok=True)
     else:
-        temp_directory = tempfile.TemporaryDirectory(prefix="mco-invocations-")
+        temp_directory = tempfile.TemporaryDirectory(prefix="mco-invocations-", ignore_cleanup_errors=True)
         artifact_root_path = Path(temp_directory.name)
     provider_artifact_base = artifact_root_path / "provider-runs"
     provider_artifact_base.mkdir(parents=True, exist_ok=True)
@@ -750,7 +750,7 @@ def run_invocation_workflow(
     if persist_artifacts:
         stage_base = str(Path(artifact_base or "reports/review").resolve())
     else:
-        temp_directory = tempfile.TemporaryDirectory(prefix="mco-invocation-workflow-")
+        temp_directory = tempfile.TemporaryDirectory(prefix="mco-invocation-workflow-", ignore_cleanup_errors=True)
         stage_base = temp_directory.name
     artifact_root = (Path(stage_base).resolve() / resolved_task_id)
     if persist_artifacts and artifact_root.exists():
