@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
-const { spawnSync } = require("node:child_process");
 const { resolve } = require("node:path");
 
-const { resolveExecutable } = require("../scripts/exec-util.js");
+const { spawnExecutable } = require("../scripts/exec-util.js");
 
 function defaultRunner(command, args, options) {
-  return spawnSync(resolveExecutable(command), args, options);
+  return spawnExecutable(command, args, options);
 }
 
 function launch(args, deps = {}) {
