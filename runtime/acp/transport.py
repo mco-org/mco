@@ -12,6 +12,8 @@ import subprocess
 import threading
 from typing import Any, Dict, List, Optional
 
+from ..platform import resolve_spawn_arg
+
 
 class JsonRpcError(Exception):
     """Error response from the JSON-RPC peer."""
@@ -77,7 +79,7 @@ class JsonRpcTransport:
 
         try:
             self._process = subprocess.Popen(
-                command,
+                resolve_spawn_arg(command),
                 cwd=cwd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
