@@ -4,6 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+const { spawnExecutable } = require("./exec-util.js");
+
 const PACKAGE_NAME = "@tt-a1i/mco";
 const SKILL_NAME = "mco-cli";
 const DRY_RUN_MCO_PLACEHOLDER = "mco";
@@ -19,11 +21,7 @@ const CALLING_AGENT_BINARIES = Object.entries(manifest.agents || {}).flatMap(
 );
 
 function defaultRunner(command, args, options = {}) {
-  return spawnSync(command, args, {
-    encoding: "utf8",
-    shell: false,
-    ...options,
-  });
+  return spawnExecutable(command, args, options);
 }
 
 function normalizeSkillAgents(values) {

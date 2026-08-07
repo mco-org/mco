@@ -30,6 +30,7 @@
     "runtime/**/*.py",
     "scripts/install-wizard.js",
     "scripts/install-runtime.js",
+    "scripts/exec-util.js",
     "skills/mco-cli/**"
   ]
 }

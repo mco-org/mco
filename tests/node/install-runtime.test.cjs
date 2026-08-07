@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const runtime = require("../../scripts/install-runtime.js");
+const { resolveExecutable, isCmdShim, escapeCmdArg, buildCmdShimArgv } = require("../../scripts/exec-util.js");
 
 test("buildNpmInstallArgv pins exact package version", () => {
   assert.deepEqual(runtime.buildNpmInstallArgv("0.10.9"), [
@@ -117,4 +118,60 @@ test("runMcoScript fails when placeholder used without allowPlaceholder", () => 
   }));
   assert.equal(result.status, 1);
   assert.equal(result.failure, "global_mco_not_found");
+});
+
+test("resolveExecutable leaves non-Windows commands untouched", () => {
+  const originalPlatform = process.platform;
+  Object.defineProperty(process, "platform", { value: "linux" });
+  try {
+    assert.equal(resolveExecutable("npm"), "npm");
+    assert.equal(resolveExecutable("python3"), "python3");
+  } finally {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  }
+});
+
+test("resolveExecutable resolves .cmd/.exe shims on Windows", () => {
+  const originalPlatform = process.platform;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  const env = {
+    Path: "C:\\Windows\\system32;C:\\Tools",
+    PATHEXT: ".COM;.EXE;.BAT;.CMD",
+  };
+  const exists = (candidate) => candidate === "C:\\Tools\\node.exe";
+  try {
+    assert.equal(resolveExecutable("node", env, exists), "C:\\Tools\\node.exe");
+    assert.equal(resolveExecutable("node.exe", env, exists), "node.exe");
+    assert.equal(resolveExecutable("npm", env, () => false), "npm");
+  } finally {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  }
+});
+
+test("isCmdShim only matches .cmd/.bat on win32", () => {
+  const originalPlatform = process.platform;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    assert.equal(isCmdShim("npm.cmd"), true);
+    assert.equal(isCmdShim("npm.CMD"), true);
+    assert.equal(isCmdShim("tool.bat"), true);
+    assert.equal(isCmdShim("node.exe"), false);
+    assert.equal(isCmdShim("npm"), false);
+  } finally {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  }
+});
+
+test("escapeCmdArg quotes args and escapes percent signs", () => {
+  assert.equal(escapeCmdArg("--version"), "\"--version\"");
+  assert.equal(escapeCmdArg("a b"), "\"a b\"");
+  assert.equal(escapeCmdArg('say "hi"'), "\"say \"\"hi\"\"\"");
+  assert.equal(escapeCmdArg("%PATH%"), "\"^%PATH^%\"");
+});
+
+test("buildCmdShimArgv routes shims through cmd.exe /d /s /c with shell:false", () => {
+  const { argv } = buildCmdShimArgv("C:\\Tools\\npm.cmd", ["install", "-g", "@tt-a1i/mco@0.11.0"], "C:\\Windows\\system32\\cmd.exe");
+  assert.equal(argv[0], "C:\\Windows\\system32\\cmd.exe");
+  assert.deepEqual(argv.slice(1, 4), ["/d", "/s", "/c"]);
+  assert.equal(argv[4], "\"\"C:\\Tools\\npm.cmd\" \"install\" \"-g\" \"@tt-a1i/mco@0.11.0\"\"");
 });
