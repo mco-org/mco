@@ -7,6 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+- Added a built-in Antigravity CLI (`agy`) adapter with plan, sandboxed write, unrestricted, and model-selection support.
+
 ## [0.11.0] - 2026-07-29
 
 ### Added

@@ -4,6 +4,10 @@ from typing import Dict, Mapping, Optional
 
 
 _PROVIDER_RISKS: Dict[str, Dict[str, str]] = {
+    "agy": {
+        "level": "read_only",
+        "reason": "default command uses agy plan mode with sandboxing",
+    },
     "claude": {
         "level": "read_only",
         "reason": "default command uses Claude plan permission mode",
@@ -68,6 +72,13 @@ def effective_provider_risk(
     transport: str = "shim",
 ) -> Dict[str, str]:
     permissions = applied_permissions or {}
+    if provider == "agy" and "mode" in permissions:
+        mode = str(permissions["mode"]).strip()
+        if permissions.get("dangerously_skip_permissions") == "true":
+            level = "approval_bypass"
+        else:
+            level = {"plan": "read_only", "accept-edits": "workspace_write"}.get(mode, "unknown")
+        return {"level": level, "reason": "effective agy mode={}".format(mode)}
     if provider == "claude" and "permission_mode" in permissions:
         permission_mode = str(permissions["permission_mode"]).strip()
         levels = {

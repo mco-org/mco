@@ -15,7 +15,7 @@ esac
 
 mkdir -p "$BASE_DIR"
 
-providers=(claude codex gemini opencode qwen hermes pi copilot grok cursor)
+providers=(claude codex gemini opencode qwen hermes pi copilot grok cursor agy)
 DEFAULT_TIMEOUT_SECONDS=45
 PROBE_CWD="${PROBE_CWD:-${HOME:-$ROOT_DIR}}"
 CLAUDE_BIN="$(command -v claude)"
@@ -28,6 +28,7 @@ PI_BIN="$(command -v pi)"
 COPILOT_BIN="$(command -v copilot)"
 GROK_BIN="$(command -v grok)"
 CURSOR_BIN="$(command -v agent)"
+AGY_BIN="$(command -v agy)"
 
 provider_version() {
   case "$1" in
@@ -41,6 +42,7 @@ provider_version() {
     copilot) "$COPILOT_BIN" --version | head -n1 ;;
     grok) "$GROK_BIN" --version | head -n1 ;;
     cursor) "$CURSOR_BIN" --version | head -n1 ;;
+    agy) "$AGY_BIN" --version | head -n1 ;;
   esac
 }
 
@@ -196,6 +198,7 @@ run_probe "pi" "C0" "'$PI_BIN' --list-models" ""
 run_probe "copilot" "C0" "'$COPILOT_BIN' -p 'Reply with exactly OK' -s --no-ask-user --deny-tool=write --deny-tool=shell" ""
 run_probe "grok" "C0" "'$GROK_BIN' models" ""
 run_probe "cursor" "C0" "'$CURSOR_BIN' status" ""
+run_probe "agy" "C0" "'$AGY_BIN' --version" ""
 
 # C1 probes
 run_probe "claude" "C1" "'$CLAUDE_BIN' -p --permission-mode plan --output-format text 'Reply with exactly OK'" ""
@@ -208,6 +211,7 @@ run_probe "pi" "C1" "'$PI_BIN' -p --mode json --no-session --no-context-files --
 run_probe "copilot" "C1" "'$COPILOT_BIN' -p 'Reply with exactly OK' -s --no-ask-user --deny-tool=write --deny-tool=shell" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/copilot/C1/raw/stdout.log'"
 run_probe "grok" "C1" "'$GROK_BIN' --no-auto-update -p 'Reply with exactly OK' --output-format plain --permission-mode plan" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/grok/C1/raw/stdout.log'"
 run_probe "cursor" "C1" "'$CURSOR_BIN' -p 'Reply with exactly OK' --output-format text --mode ask --sandbox enabled" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/cursor/C1/raw/stdout.log'"
+run_probe "agy" "C1" "'$AGY_BIN' --mode plan --output-format text --sandbox --print 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/agy/C1/raw/stdout.log'"
 
 # C2 probes
 run_probe "claude" "C2" \
@@ -250,6 +254,10 @@ run_probe "grok" "C2" \
 run_probe "cursor" "C2" \
   "'$CURSOR_BIN' -p 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --output-format json --mode ask --sandbox enabled" \
   "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/cursor/C2/raw/stdout.log'"
+
+run_probe "agy" "C2" \
+  "'$AGY_BIN' --mode plan --output-format json --sandbox --json-schema '$schema_file' --print 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/agy/C2/raw/stdout.log'"
 
 # C3 sample probe for Qwen (stream-json)
 run_probe "qwen" "C3" \

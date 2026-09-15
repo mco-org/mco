@@ -86,6 +86,7 @@ For explicit review coordination, `--perspectives-json` adds a Provider-specific
 | Pi | `pi` | `pi` |
 | [Grok Build](https://docs.x.ai/build/overview) | `grok` | `grok` |
 | [Cursor CLI](https://cursor.com/docs/cli/overview) | `cursor` / `agent` | `cursor` |
+| Antigravity CLI | `agy` | `agy` |
 
 Each provider CLI remains responsible for its own installation, authentication, model access, and native sandbox behavior.
 

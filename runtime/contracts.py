@@ -7,11 +7,11 @@ from .answer_transport import AnswerTransport
 from .types import ErrorKind
 
 
-ProviderId = Literal["claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor"]
+ProviderId = Literal["claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor", "agy"]
 CapabilityTier = Literal["C0", "C1", "C2", "C3", "C4", "C5", "C6"]
 TaskAttemptState = Literal["PENDING", "STARTED", "SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"]
 
-PROVIDER_IDS: Sequence[ProviderId] = ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor")
+PROVIDER_IDS: Sequence[ProviderId] = ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor", "agy")
 CAPABILITY_TIERS: Sequence[CapabilityTier] = ("C0", "C1", "C2", "C3", "C4", "C5", "C6")
 
 

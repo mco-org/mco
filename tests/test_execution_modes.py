@@ -20,6 +20,10 @@ class ExecutionModeMappingTests(unittest.TestCase):
             {"sandbox": "workspace-write", "approval_policy": "never"},
         )
         self.assertEqual(execution_permissions("pi", "write"), {"tool_profile": "write"})
+        self.assertEqual(
+            execution_permissions("agy", "write"),
+            {"mode": "accept-edits", "sandbox": "true"},
+        )
 
     def test_hermes_requires_yolo_because_oneshot_bypasses_approvals(self) -> None:
         self.assertIsNone(execution_permissions("hermes", "read_only"))

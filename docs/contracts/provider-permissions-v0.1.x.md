@@ -26,6 +26,7 @@ MCO first resolves `execution_mode`, then translates it into provider permission
 | `copilot` | `["access"]` | deny write and shell | allow write, deny shell | `--allow-all` |
 | `grok` | `["permission_mode", "approval_mode"]` | `plan` | `acceptEdits` | `bypassPermissions` |
 | `cursor` | `["mode", "force", "sandbox"]` | ask mode, sandbox enabled | agent force, sandbox enabled | agent force, sandbox disabled |
+| `agy` | `["mode", "sandbox", "dangerously_skip_permissions"]` | plan mode, sandbox enabled | accept-edits mode, sandbox enabled | accept-edits with permission bypass |
 
 ## Strict vs Best-Effort Examples
 
