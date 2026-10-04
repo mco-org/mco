@@ -70,16 +70,13 @@ class OllamaAdapter(ShimAdapterBase):
 
     def _model_available(self, binary: str) -> bool:
         result = subprocess.run(
-            [binary, "list"],
+            [binary, "show", self.model],
             capture_output=True,
             text=True,
             check=False,
             env=_sanitize_env(),
         )
-        if result.returncode != 0:
-            return False
-        output = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
-        return self.model.lower() in output
+        return result.returncode == 0
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
         return ["ollama", "run", self.model, input_task.prompt]

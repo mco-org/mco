@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -278,3 +279,45 @@ class TestAgentCliSubcommands(unittest.TestCase):
             exit_code = main(["agent", "check", "copilot", "--repo", "."])
         self.assertEqual(exit_code, 0)
         self.assertIn("risk=approval_bypass", stdout_buf.getvalue())
+
+
+class TestOllamaModelPresence(unittest.TestCase):
+    def test_detect_rejects_models_that_only_match_part_of_a_list_entry(self) -> None:
+        for requested, installed in [
+            ("codellama:7b", "codellama:7b-instruct"),
+            ("llama3", "llama3.2:latest"),
+            ("codellama", "other/codellama:latest"),
+        ]:
+            with self.subTest(requested=requested, installed=installed):
+                def run(command, **kwargs):
+                    if command[1] == "--version":
+                        return subprocess.CompletedProcess(command, 0, "ollama version is 0.1.0", "")
+                    if command[1] == "list":
+                        return subprocess.CompletedProcess(command, 0, "NAME ID SIZE MODIFIED\n{} abc 1 GB 1 day ago\n".format(installed), "")
+                    return subprocess.CompletedProcess(command, 1, "", "Error: model not found")
+
+                with patch("runtime.adapters.ollama.OllamaAdapter._resolve_binary", return_value="ollama"), \
+                        patch("runtime.adapters.ollama.subprocess.run", side_effect=run):
+                    presence = OllamaAdapter(model=requested).detect()
+
+                self.assertTrue(presence.detected)
+                self.assertFalse(presence.auth_ok)
+                self.assertEqual(presence.reason, "model_not_found")
+
+    def test_detect_accepts_a_model_resolved_by_ollama(self) -> None:
+        for requested in ["codellama", "codellama:7b", "example/codellama:latest"]:
+            with self.subTest(requested=requested):
+                def run(command, **kwargs):
+                    if command[1] == "--version":
+                        return subprocess.CompletedProcess(command, 0, "ollama version is 0.1.0", "")
+                    if command[1] == "list":
+                        installed = requested if ":" in requested else requested + ":latest"
+                        return subprocess.CompletedProcess(command, 0, "NAME ID SIZE MODIFIED\n{} abc 1 GB 1 day ago\n".format(installed), "")
+                    return subprocess.CompletedProcess(command, 0, "Model\n  architecture llama", "")
+
+                with patch("runtime.adapters.ollama.OllamaAdapter._resolve_binary", return_value="ollama"), \
+                        patch("runtime.adapters.ollama.subprocess.run", side_effect=run):
+                    presence = OllamaAdapter(model=requested).detect()
+
+                self.assertTrue(presence.auth_ok)
+                self.assertEqual(presence.reason, "ok")
