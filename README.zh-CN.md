@@ -86,6 +86,7 @@ MCO 将回答正文视为不透明内容，不会从自然语言中推断 findin
 | Pi | `pi` | `pi` |
 | [Grok Build](https://docs.x.ai/build/overview) | `grok` | `grok` |
 | [Cursor CLI](https://cursor.com/docs/cli/overview) | `cursor` / `agent` | `cursor` |
+| Antigravity CLI | `agy` | `agy` |
 
 各 Provider CLI 仍然独立负责安装、认证、模型权限和原生沙箱行为。
 

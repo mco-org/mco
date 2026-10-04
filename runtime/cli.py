@@ -22,7 +22,7 @@ from .skill_manager import read_bundled_skill, skill_status, sync_bundled_skill
 from . import __version__
 from .policy import ExecutionPreviewRequest, provider_policy_preview
 
-SUPPORTED_PROVIDERS = ("claude", "codex", "copilot", "cursor", "gemini", "grok", "hermes", "opencode", "pi", "qwen")
+SUPPORTED_PROVIDERS = ("agy", "claude", "codex", "copilot", "cursor", "gemini", "grok", "hermes", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
 DEFAULT_DOCTOR_PROVIDERS = SUPPORTED_PROVIDERS
 DEFAULT_CONFIG = ReviewConfig()

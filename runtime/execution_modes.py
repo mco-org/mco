@@ -6,6 +6,11 @@ from typing import Dict, Optional
 EXECUTION_MODES = ("read_only", "write", "yolo")
 
 _PROVIDER_EXECUTION_PERMISSIONS: Dict[str, Dict[str, Optional[Dict[str, str]]]] = {
+    "agy": {
+        "read_only": {"mode": "plan", "sandbox": "true"},
+        "write": {"mode": "accept-edits", "sandbox": "true"},
+        "yolo": {"mode": "accept-edits", "dangerously_skip_permissions": "true"},
+    },
     "claude": {
         "read_only": {"permission_mode": "plan"},
         "write": {"permission_mode": "acceptEdits"},

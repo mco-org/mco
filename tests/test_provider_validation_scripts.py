@@ -114,7 +114,7 @@ class ProviderValidationScriptTests(unittest.TestCase):
             fake_driver.chmod(0o755)
             for binary in (
                 "claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi",
-                "copilot", "grok", "agent",
+                "copilot", "grok", "agent", "agy",
             ):
                 (fake_bin_dir / binary).symlink_to(fake_driver)
 
@@ -203,6 +203,7 @@ class ProviderValidationScriptTests(unittest.TestCase):
             "copilot": ("--deny-tool=write", "--deny-tool=shell"),
             "grok": ("--permission-mode plan",),
             "cursor": ("--mode ask", "--sandbox enabled"),
+            "agy": ("--mode plan", "--sandbox"),
         }
 
         for provider, fragments in expected_fragments.items():

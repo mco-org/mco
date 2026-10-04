@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 from typing import Any, Dict, List, Mapping, Optional
 
+from .agy import AgyAdapter
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
 from .copilot import CopilotAdapter
@@ -112,6 +113,7 @@ def adapter_registry(
                 registry[name] = adapter
         # Providers without ACP support keep shim adapters
         shim_fallbacks = {
+            "agy": AgyAdapter,
             "claude": ClaudeAdapter,
             "codex": CodexAdapter,
             "cursor": CursorAdapter,
@@ -130,6 +132,7 @@ def adapter_registry(
 
     # Default: shim adapters plus configured agents
     registry = {
+        "agy": AgyAdapter(),
         "claude": ClaudeAdapter(),
         "codex": CodexAdapter(),
         "gemini": GeminiAdapter(),
