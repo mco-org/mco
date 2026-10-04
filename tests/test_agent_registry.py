@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -282,6 +283,39 @@ class TestAgentCliSubcommands(unittest.TestCase):
 
 
 class TestOllamaModelPresence(unittest.TestCase):
+    def test_detect_passes_models_as_positional_arguments(self) -> None:
+        cli = """
+import argparse
+import json
+import sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--version", action="version", version="ollama version is 0.1.0")
+show = parser.add_subparsers(dest="command").add_parser("show")
+show.add_argument("model")
+args = parser.parse_args()
+print(json.dumps({"model": args.model}))
+sys.exit(1)
+"""
+        real_run = subprocess.run
+        for requested in ["--help", "-h", "--", "codellama", "example/codellama:latest"]:
+            with self.subTest(requested=requested):
+                show_results = []
+
+                def run(command, **kwargs):
+                    result = real_run([sys.executable, "-c", cli, *command[1:]], **kwargs)
+                    if command[1] == "show":
+                        show_results.append(result)
+                    return result
+
+                with patch("runtime.adapters.ollama.OllamaAdapter._resolve_binary", return_value="ollama"), \
+                        patch("runtime.adapters.ollama.subprocess.run", side_effect=run):
+                    presence = OllamaAdapter(model=requested).detect()
+
+                self.assertFalse(presence.auth_ok)
+                self.assertEqual(presence.reason, "model_not_found")
+                self.assertEqual(json.loads(show_results[0].stdout), {"model": requested})
+
     def test_detect_rejects_models_that_only_match_part_of_a_list_entry(self) -> None:
         for requested, installed in [
             ("codellama:7b", "codellama:7b-instruct"),
@@ -313,6 +347,7 @@ class TestOllamaModelPresence(unittest.TestCase):
                     if command[1] == "list":
                         installed = requested if ":" in requested else requested + ":latest"
                         return subprocess.CompletedProcess(command, 0, "NAME ID SIZE MODIFIED\n{} abc 1 GB 1 day ago\n".format(installed), "")
+                    self.assertEqual(command, ["ollama", "show", "--", requested])
                     return subprocess.CompletedProcess(command, 0, "Model\n  architecture llama", "")
 
                 with patch("runtime.adapters.ollama.OllamaAdapter._resolve_binary", return_value="ollama"), \
