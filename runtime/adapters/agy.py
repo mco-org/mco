@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import List
 
 from ..contracts import CapabilitySet, TaskInput
 from .shim import ShimAdapterBase
@@ -23,7 +23,7 @@ class AgyAdapter(ShimAdapterBase):
         )
 
     def _auth_check_command(self, binary: str) -> List[str]:
-        return [binary, "--version"]
+        return [binary, "models"]
 
     def supported_permission_keys(self) -> List[str]:
         return ["mode", "sandbox", "dangerously_skip_permissions"]
@@ -38,7 +38,10 @@ class AgyAdapter(ShimAdapterBase):
             raise ValueError("unsupported agy mode: {}".format(mode))
 
         command = ["agy", "--mode", str(mode), "--output-format", "text"]
-        bypass = permissions.get("dangerously_skip_permissions") == "true"
+        bypass_value = permissions.get("dangerously_skip_permissions", "false")
+        if bypass_value not in ("true", "false"):
+            raise ValueError("unsupported agy permission bypass value: {}".format(bypass_value))
+        bypass = bypass_value == "true"
         sandbox = permissions.get("sandbox", "false" if bypass else "true")
         if sandbox not in ("true", "false"):
             raise ValueError("unsupported agy sandbox value: {}".format(sandbox))

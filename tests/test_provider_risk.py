@@ -39,6 +39,16 @@ class ProviderRiskTests(unittest.TestCase):
         risk = effective_provider_risk("grok", {"approval_mode": "always-approve"})
         self.assertEqual(risk["level"], "approval_bypass")
 
+    def test_agy_bypass_without_mode_is_visible(self) -> None:
+        risk = effective_provider_risk("agy", {"dangerously_skip_permissions": "true"})
+        self.assertEqual(risk["level"], "approval_bypass")
+
+    def test_agy_disabled_sandbox_is_elevated(self) -> None:
+        for mode in ("plan", "accept-edits"):
+            with self.subTest(mode=mode):
+                risk = effective_provider_risk("agy", {"mode": mode, "sandbox": "false"})
+                self.assertEqual(risk["level"], "elevated")
+
     def test_cursor_agent_mode_override_is_visible(self) -> None:
         risk = effective_provider_risk("cursor", {"mode": "agent"})
         self.assertEqual(risk["level"], "workspace_write")

@@ -72,8 +72,13 @@ def effective_provider_risk(
     transport: str = "shim",
 ) -> Dict[str, str]:
     permissions = applied_permissions or {}
-    if provider == "agy" and "mode" in permissions:
-        mode = str(permissions["mode"]).strip()
+    if provider == "agy":
+        mode = str(permissions.get("mode", "plan")).strip()
+        if permissions.get("sandbox") == "false":
+            return {
+                "level": "elevated",
+                "reason": "effective agy sandbox=false disables terminal restrictions",
+            }
         if permissions.get("dangerously_skip_permissions") == "true":
             level = "approval_bypass"
         else:

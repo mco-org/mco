@@ -198,7 +198,7 @@ run_probe "pi" "C0" "'$PI_BIN' --list-models" ""
 run_probe "copilot" "C0" "'$COPILOT_BIN' -p 'Reply with exactly OK' -s --no-ask-user --deny-tool=write --deny-tool=shell" ""
 run_probe "grok" "C0" "'$GROK_BIN' models" ""
 run_probe "cursor" "C0" "'$CURSOR_BIN' status" ""
-run_probe "agy" "C0" "'$AGY_BIN' --version" ""
+run_probe "agy" "C0" "'$AGY_BIN' models" ""
 
 # C1 probes
 run_probe "claude" "C1" "'$CLAUDE_BIN' -p --permission-mode plan --output-format text 'Reply with exactly OK'" ""
