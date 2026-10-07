@@ -7,8 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-07
+
 ### Added
-- Added a built-in Antigravity CLI (`agy`) adapter with plan, sandboxed write, unrestricted, and model-selection support.
+- Added a built-in Antigravity CLI (`agy`) adapter with plan, sandboxed write, unrestricted, and model-selection support, authentication checks, and permission-risk reporting.
+- Added MCP progress notifications during long runs and per-call timeout overrides.
+
+### Fixed
+- Made MCP run/review calls honor configured timeout policies, whole-run deadlines, parallelism limits, and pinned provider models.
+- Made the Python runtime and npm/Python command shims work on Windows, including process termination and platform-specific executable handling.
+- Preserved provider answers on legacy console encodings instead of silently dropping output containing unsupported characters.
+- Made Ollama readiness checks probe the exact requested model and treat flag-like model names as positional arguments.
 
 ## [0.11.0] - 2026-07-29
 
