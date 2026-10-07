@@ -7,13 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-## [0.12.0] - 2026-10-07
+## [0.12.1] - 2026-10-07
 
 ### Added
 - Added a built-in Antigravity CLI (`agy`) adapter with plan, sandboxed write, unrestricted, and model-selection support, authentication checks, and permission-risk reporting.
 - Added MCP progress notifications during long runs and per-call timeout overrides.
 
 ### Fixed
+- Installed locked Node dependencies before release tests so the npm publish gate can run on a clean runner.
 - Made MCP run/review calls honor configured timeout policies, whole-run deadlines, parallelism limits, and pinned provider models.
 - Made the Python runtime and npm/Python command shims work on Windows, including process termination and platform-specific executable handling.
 - Preserved provider answers on legacy console encodings instead of silently dropping output containing unsupported characters.

@@ -103,6 +103,11 @@ class PublishWorkflowTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+    def test_gate_installs_node_dependencies_before_tests(self) -> None:
+        gate = self._workflow().split("  publish:\n", 1)[0]
+        self.assertIn("run: npm ci", gate)
+        self.assertLess(gate.index("run: npm ci"), gate.index("run: npm test"))
+
     def _publish_script(self) -> str:
         lines = self._workflow().splitlines()
         step_start = lines.index("      - name: Publish package")
