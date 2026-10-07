@@ -70,7 +70,7 @@ class OllamaAdapter(ShimAdapterBase):
 
     def _model_available(self, binary: str) -> bool:
         result = subprocess.run(
-            [binary, "show", self.model],
+            [binary, "show", "--", self.model],
             capture_output=True,
             text=True,
             check=False,
