@@ -1,0 +1,3 @@
+# Keep shell interpreters and syntax intact when core.autocrlf is enabled.
+*.sh text eol=lf
+*.bash text eol=lf

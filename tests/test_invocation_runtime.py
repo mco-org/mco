@@ -351,7 +351,17 @@ class InvocationRuntimeCliTests(unittest.TestCase):
         )
 
     def test_global_hard_timeout_uses_one_deadline_across_stages(self) -> None:
-        adapter = DelayedStartFakeAdapter(0.15)
+        # The deadline has to land between one and two invocations: the run
+        # stage must finish, the debate stage must not. Absolute headroom on
+        # each side matters more than keeping the test short, because a loaded
+        # machine that overshoots by a few tens of milliseconds turns this into
+        # a false failure rather than a real one.
+        invocation_seconds = 0.5
+        deadline_seconds = 0.8
+        self.assertLess(invocation_seconds, deadline_seconds)
+        self.assertLess(deadline_seconds, 2 * invocation_seconds)
+
+        adapter = DelayedStartFakeAdapter(invocation_seconds)
         started_at = time.monotonic()
         with tempfile.TemporaryDirectory() as repo:
             payload = run_invocation_workflow(
@@ -362,13 +372,15 @@ class InvocationRuntimeCliTests(unittest.TestCase):
                 timeout_seconds=10,
                 provider_permissions={},
                 allow_paths=["."],
-                global_timeout_seconds=0.2,
+                global_timeout_seconds=deadline_seconds,
                 debate=True,
                 synthesize=True,
                 synthesis_provider="pi",
             )
 
-        self.assertLess(time.monotonic() - started_at, 0.55)
+        # Generous, and still far below the three invocations an unshared
+        # per-stage deadline would have cost.
+        self.assertLess(time.monotonic() - started_at, 3 * invocation_seconds)
         self.assertEqual(payload["status"], "partial")
         self.assertEqual(
             [(item["stage"], item["status"]) for item in payload["outputs"]],

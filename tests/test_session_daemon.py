@@ -68,10 +68,15 @@ class TestDaemonProtocol(unittest.TestCase):
         t.start()
         sock_path = _socket_path(self.tmp, "test-session")
         for _ in range(50):
-            if os.path.exists(sock_path):
-                break
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(0.05)
+                    client.connect(sock_path)
+                return t
+            except OSError:
+                pass
             time.sleep(0.05)
-        return t
+        self.fail("session daemon did not start listening")
 
     def test_ping_pong(self) -> None:
         t = self._start_daemon()

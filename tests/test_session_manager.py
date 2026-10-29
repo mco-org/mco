@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import tempfile
 import threading
 import time
@@ -30,10 +31,15 @@ class _DaemonTestBase(unittest.TestCase):
         t.start()
         sock_path = _socket_path(repo_root, name)
         for _ in range(100):
-            if os.path.exists(sock_path):
-                break
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(0.05)
+                    client.connect(sock_path)
+                return t
+            except OSError:
+                pass
             time.sleep(0.05)
-        return t
+        self.fail("session daemon did not start listening")
 
     def _stop_daemon(self, repo_root: str, name: str, thread: threading.Thread) -> None:
         client_stop(repo_root, name)
@@ -172,3 +178,38 @@ class TestSessionNotRunning(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             results = broadcast_prompt(tmp, "hello")
             self.assertEqual(results, [])
+
+
+@unittest.skipUnless(hasattr(socket, "AF_UNIX"), "requires Unix sockets")
+class TestDaemonReadiness(_DaemonTestBase):
+    def test_start_waits_until_a_bound_socket_is_listening(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = SessionState(name="readiness", provider="claude", repo_root=tmp)
+            save_state(tmp, state)
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(_socket_path(tmp, "readiness"))
+            listener.settimeout(2)
+            release = threading.Event()
+            listening = threading.Event()
+
+            def delayed_daemon(*args):
+                if release.wait(timeout=2):
+                    listener.listen(1)
+                    listening.set()
+                    try:
+                        connection, _ = listener.accept()
+                        connection.close()
+                    except socket.timeout:
+                        pass
+
+            timer = threading.Timer(0.2, release.set)
+            timer.start()
+            try:
+                with patch(__name__ + ".run_daemon", side_effect=delayed_daemon):
+                    thread = self._start_daemon_thread(tmp, "readiness")
+                self.assertTrue(listening.is_set(), "bound socket is not yet a ready listener")
+            finally:
+                release.set()
+                thread.join(timeout=3)
+                timer.cancel()
+                listener.close()

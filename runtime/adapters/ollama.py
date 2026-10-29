@@ -60,6 +60,7 @@ class OllamaAdapter(ShimAdapterBase):
     def _probe_version(self, binary: str) -> Optional[str]:
         result = subprocess.run(
             [binary, "--version"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
@@ -71,6 +72,7 @@ class OllamaAdapter(ShimAdapterBase):
     def _model_available(self, binary: str) -> bool:
         result = subprocess.run(
             [binary, "show", "--", self.model],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,

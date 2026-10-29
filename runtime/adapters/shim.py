@@ -268,6 +268,7 @@ class ShimAdapterBase:
     def _probe_version(self, binary: str) -> Optional[str]:
         result = subprocess.run(
             [binary, "--version"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
@@ -280,6 +281,7 @@ class ShimAdapterBase:
         cmd = self._auth_check_command(binary)
         result = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
