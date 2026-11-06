@@ -87,21 +87,23 @@ class PiAdapter(ShimAdapterBase):
             cmd.extend(["--model", model.strip()])
         provider = input_task.metadata.get("provider")
         if isinstance(provider, str) and provider.strip():
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("Pi provider override requires a model")
             cmd.extend(["--provider", provider.strip()])
-        cmd.append(input_task.prompt)
+        cmd.extend(["--", input_task.prompt])
         return cmd
 
     def _build_command_for_record(self) -> List[str]:
         return [
             "pi", "-p", "--mode", "json", "--no-session",
             "--tools", "read,grep,find,ls", "--no-context-files",
-            "--no-skills", "--no-extensions", "<prompt>",
+            "--no-skills", "--no-extensions", "--", "<prompt>",
         ]
 
     def _is_success(self, return_code: int, stdout_text: str, stderr_text: str) -> bool:
         if return_code != 0:
             return False
-        return '"type":"agent_end"' in stdout_text
+        return self.decode_transport(stdout_text).status == "succeeded"
 
     @staticmethod
     def _extract_final_text_from_jsonl(jsonl_text: str) -> str:

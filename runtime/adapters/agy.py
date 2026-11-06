@@ -28,13 +28,16 @@ class AgyAdapter(ShimAdapterBase):
     def supported_permission_keys(self) -> List[str]:
         return ["mode", "sandbox", "dangerously_skip_permissions"]
 
+    def supports_context_files(self) -> bool:
+        return True
+
     def supported_model_keys(self) -> List[str]:
         return ["model"]
 
     def _build_command(self, input_task: TaskInput) -> List[str]:
         permissions = input_task.metadata.get("provider_permissions", {})
         mode = permissions.get("mode", "plan") if isinstance(permissions, dict) else "plan"
-        if mode not in ("plan", "accept-edits"):
+        if mode not in ("plan", "accept-edits", "auto"):
             raise ValueError("unsupported agy mode: {}".format(mode))
 
         command = ["agy", "--mode", str(mode), "--output-format", "text"]

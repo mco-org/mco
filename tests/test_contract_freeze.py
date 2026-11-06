@@ -22,7 +22,7 @@ from runtime.contracts import CAPABILITY_TIERS, PROVIDER_IDS, ProviderAdapter
 
 class ContractFreezeTests(unittest.TestCase):
     def test_provider_and_capability_sets_are_frozen(self) -> None:
-        self.assertEqual(tuple(PROVIDER_IDS), ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor", "agy"))
+        self.assertEqual(tuple(PROVIDER_IDS), ("claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi", "copilot", "grok", "cursor", "agy", "kimi"))
         self.assertEqual(tuple(CAPABILITY_TIERS), ("C0", "C1", "C2", "C3", "C4", "C5", "C6"))
 
     def test_provider_adapter_protocol_shape(self) -> None:

@@ -15,7 +15,7 @@ esac
 
 mkdir -p "$BASE_DIR"
 
-providers=(claude codex gemini opencode qwen hermes pi copilot grok cursor agy)
+providers=(claude codex gemini opencode qwen hermes pi copilot grok cursor agy kimi)
 DEFAULT_TIMEOUT_SECONDS=45
 PROBE_CWD="${PROBE_CWD:-${HOME:-$ROOT_DIR}}"
 CLAUDE_BIN="$(command -v claude)"
@@ -29,6 +29,7 @@ COPILOT_BIN="$(command -v copilot)"
 GROK_BIN="$(command -v grok)"
 CURSOR_BIN="$(command -v agent)"
 AGY_BIN="$(command -v agy)"
+KIMI_BIN="$(command -v kimi)"
 
 provider_version() {
   case "$1" in
@@ -43,6 +44,7 @@ provider_version() {
     grok) "$GROK_BIN" --version | head -n1 ;;
     cursor) "$CURSOR_BIN" --version | head -n1 ;;
     agy) "$AGY_BIN" --version | head -n1 ;;
+    kimi) "$KIMI_BIN" --version | head -n1 ;;
   esac
 }
 
@@ -133,7 +135,7 @@ run_probe() {
   local version
   version="$(provider_version "$provider")"
 
-  run_with_timeout "$DEFAULT_TIMEOUT_SECONDS" bash -c "$cmd" >"$stdout_path" 2>"$stderr_path"
+  (cd "$PROBE_CWD" && run_with_timeout "$DEFAULT_TIMEOUT_SECONDS" bash -c "$cmd") >"$stdout_path" 2>"$stderr_path"
   local ec=$?
 
   local status="FAIL"
@@ -154,6 +156,9 @@ run_probe() {
     else
       status="PASS"
       reason="probe_passed"
+      if [ "$provider" = "kimi" ] && [ "$capability" = "C0" ]; then
+        reason="version_available_auth_deferred_to_run"
+      fi
       : > "$parsed_path"
     fi
   else
@@ -198,20 +203,23 @@ run_probe "pi" "C0" "'$PI_BIN' --list-models" ""
 run_probe "copilot" "C0" "'$COPILOT_BIN' -p 'Reply with exactly OK' -s --no-ask-user --deny-tool=write --deny-tool=shell" ""
 run_probe "grok" "C0" "'$GROK_BIN' models" ""
 run_probe "cursor" "C0" "'$CURSOR_BIN' status" ""
+run_probe "kimi" "C0" "'$KIMI_BIN' --version" ""
 run_probe "agy" "C0" "'$AGY_BIN' models" ""
 
 # C1 probes
 run_probe "claude" "C1" "'$CLAUDE_BIN' -p --permission-mode plan --output-format text 'Reply with exactly OK'" ""
 run_probe "codex" "C1" "'$CODEX_BIN' --ask-for-approval never exec --skip-git-repo-check -C '$PROBE_CWD' --sandbox read-only --json 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/codex/C1/raw/stdout.log'"
 run_probe "gemini" "C1" "'$GEMINI_BIN' -p 'Reply with exactly OK' --approval-mode plan" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/gemini/C1/raw/stdout.log'"
-run_probe "opencode" "C1" "'$OPENCODE_BIN' run --agent plan 'Reply with exactly OK' --format json --dir '$PROBE_CWD'" "(! rg -q '(^|\\s)Error:' '$BASE_DIR/opencode/C1/raw/stdout.log') && (! rg -q '(^|\\s)Error:' '$BASE_DIR/opencode/C1/raw/stderr.log')"
+run_probe "opencode" "C1" "'$OPENCODE_BIN' run --agent plan 'Reply with exactly OK' --format json" "(! rg -q '(^|\\s)Error:' '$BASE_DIR/opencode/C1/raw/stdout.log') && (! rg -q '(^|\\s)Error:' '$BASE_DIR/opencode/C1/raw/stderr.log')"
 run_probe "qwen" "C1" "'$QWEN_BIN' 'Reply with exactly OK' --output-format json --auth-type qwen-oauth --approval-mode plan" ""
-run_probe "hermes" "C1" "'$HERMES_BIN' -z 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/hermes/C1/raw/stdout.log'"
-run_probe "pi" "C1" "'$PI_BIN' -p --mode json --no-session --no-context-files --no-skills --no-extensions --tools read,grep,find,ls 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/pi/C1/raw/stdout.log'"
+run_probe "hermes" "C1" "'$HERMES_BIN' --ignore-rules -z 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/hermes/C1/raw/stdout.log'"
+run_probe "pi" "C1" "'$PI_BIN' -p --mode json --no-session --no-context-files --no-skills --no-extensions --tools read,grep,find,ls -- 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/pi/C1/raw/stdout.log'"
 run_probe "copilot" "C1" "'$COPILOT_BIN' -p 'Reply with exactly OK' -s --no-ask-user --deny-tool=write --deny-tool=shell" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/copilot/C1/raw/stdout.log'"
 run_probe "grok" "C1" "'$GROK_BIN' --no-auto-update -p 'Reply with exactly OK' --output-format plain --permission-mode plan" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/grok/C1/raw/stdout.log'"
 run_probe "cursor" "C1" "'$CURSOR_BIN' -p 'Reply with exactly OK' --output-format text --mode ask --sandbox enabled" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/cursor/C1/raw/stdout.log'"
 run_probe "agy" "C1" "'$AGY_BIN' --mode plan --output-format text --sandbox --print 'Reply with exactly OK'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/agy/C1/raw/stdout.log'"
+
+run_probe "kimi" "C1" "'$KIMI_BIN' -p 'Reply with exactly OK' --output-format stream-json --agent-file '$ROOT_DIR/runtime/data/kimi-read-only.md'" "rg -q '(^|[^A-Za-z])OK([^A-Za-z]|$)' '$BASE_DIR/kimi/C1/raw/stdout.log'"
 
 # C2 probes
 run_probe "claude" "C2" \
@@ -228,7 +236,7 @@ run_probe "gemini" "C2" \
   "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/gemini/C2/raw/stdout.log'"
 
 run_probe "opencode" "C2" \
-  "'$OPENCODE_BIN' run --agent plan 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --format json --dir '$PROBE_CWD'" \
+  "'$OPENCODE_BIN' run --agent plan 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --format json" \
   "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/opencode/C2/raw/stdout.log'"
 
 run_probe "qwen" "C2" \
@@ -236,11 +244,11 @@ run_probe "qwen" "C2" \
   "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/qwen/C2/raw/stdout.log'"
 
 run_probe "hermes" "C2" \
-  "'$HERMES_BIN' -z 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
+  "'$HERMES_BIN' --ignore-rules -z 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
   "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/hermes/C2/raw/stdout.log'"
 
 run_probe "pi" "C2" \
-  "'$PI_BIN' -p --mode json --no-session --no-context-files --no-skills --no-extensions --tools read,grep,find,ls 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
+  "'$PI_BIN' -p --mode json --no-session --no-context-files --no-skills --no-extensions --tools read,grep,find,ls -- 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
   "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/pi/C2/raw/stdout.log'"
 
 run_probe "copilot" "C2" \
@@ -258,6 +266,10 @@ run_probe "cursor" "C2" \
 run_probe "agy" "C2" \
   "'$AGY_BIN' --mode plan --output-format json --sandbox --json-schema '$schema_file' --print 'Return JSON object {\"probe\":\"c2\",\"ok\":true}'" \
   "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/agy/C2/raw/stdout.log'"
+
+run_probe "kimi" "C2" \
+  "'$KIMI_BIN' -p 'Return JSON object {\"probe\":\"c2\",\"ok\":true}' --output-format stream-json --agent-file '$ROOT_DIR/runtime/data/kimi-read-only.md'" \
+  "jq -s -e '$C2_JSON_JQ_FILTER' '$BASE_DIR/kimi/C2/raw/stdout.log'"
 
 # C3 sample probe for Qwen (stream-json)
 run_probe "qwen" "C3" \

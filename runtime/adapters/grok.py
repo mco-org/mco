@@ -28,6 +28,9 @@ class GrokAdapter(ShimAdapterBase):
     def supported_permission_keys(self) -> List[str]:
         return ["permission_mode", "approval_mode"]
 
+    def supports_context_files(self) -> bool:
+        return True
+
     def supported_model_keys(self) -> List[str]:
         return ["model"]
 
@@ -43,7 +46,7 @@ class GrokAdapter(ShimAdapterBase):
         permissions = input_task.metadata.get("provider_permissions", {})
         permission_mode = permissions.get("permission_mode") if isinstance(permissions, dict) else None
         approval_mode = permissions.get("approval_mode") if isinstance(permissions, dict) else None
-        if permission_mode not in (None, "", "plan", "acceptEdits", "bypassPermissions"):
+        if permission_mode not in (None, "", "default", "plan", "acceptEdits", "auto", "dontAsk", "bypassPermissions"):
             raise ValueError("unsupported Grok permission_mode: {}".format(permission_mode))
         if approval_mode not in (None, "", "ask", "always-approve"):
             raise ValueError("unsupported Grok approval_mode: {}".format(approval_mode))
@@ -60,4 +63,12 @@ class GrokAdapter(ShimAdapterBase):
         return ["grok", "--no-auto-update", "-p", "<prompt>", "--output-format", "plain"]
 
     def _is_success(self, return_code: int, stdout_text: str, stderr_text: str) -> bool:
-        return return_code == 0 and bool(stdout_text.strip())
+        # Grok exits zero after headless approval refusals and does not collect
+        # permission_denials in structured results. Treat its explicit diagnostic
+        # as blocked, even if a later tool could have recovered from the refusal.
+        permission_blocked = any(
+            line.startswith("permission required: ")
+            and line.endswith(" was not run, as a headless run cannot ask for approval")
+            for line in stderr_text.splitlines()
+        )
+        return return_code == 0 and bool(stdout_text.strip()) and not permission_blocked

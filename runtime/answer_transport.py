@@ -19,7 +19,7 @@ class AnswerTransport:
 
 
 def _json_lines(raw: str) -> Iterable[dict[str, Any]]:
-    for line in raw.splitlines():
+    for line in raw.split("\n"):
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
@@ -36,7 +36,7 @@ def _json_payloads(raw: str) -> Iterable[Any]:
             return
         except json.JSONDecodeError:
             pass
-    for line in raw.splitlines():
+    for line in raw.split("\n"):
         try:
             yield json.loads(line)
         except json.JSONDecodeError:
@@ -199,24 +199,36 @@ def decode_pi_events(raw: str) -> AnswerTransport:
                 if isinstance(delta, str):
                     deltas.append(AnswerDelta(delta))
         elif event_type == "agent_end":
+            # New Pi streams settle after retries; older streams end here.
+            status = "running" if "willRetry" in payload else "succeeded"
             messages = payload.get("messages")
             if isinstance(messages, list):
                 for message in reversed(messages):
                     if not isinstance(message, Mapping) or message.get("role") != "assistant":
                         continue
+                    if message.get("stopReason") in {"error", "aborted", "length"}:
+                        status = "failed"
                     content = message.get("content")
                     if not isinstance(content, list):
-                        continue
+                        content = []
                     parts = [
                         block.get("text", "")
                         for block in content
                         if isinstance(block, Mapping) and block.get("type") == "text" and isinstance(block.get("text"), str)
                     ]
-                    if parts:
-                        final_answer = "".join(parts)
-                        break
+                    # An empty final assistant message must not revive an earlier answer.
+                    final_answer = "".join(parts)
+                    break
             usage = _event_usage(payload) or usage
-            status = "succeeded"
+            if payload.get("willRetry") is True:
+                status = "running"
+        elif event_type == "agent_settled":
+            if payload.get("aborted") is True:
+                status = "failed"
+            elif status != "failed":
+                status = "succeeded"
+        elif event_type == "auto_retry_end" and payload.get("success") is False:
+            status = "failed"
         elif event_type in {"error", "agent_error"}:
             status = "failed"
 
@@ -260,3 +272,41 @@ def decode_acp_events(updates: Iterable[Mapping[str, Any]]) -> AnswerTransport:
     if not deltas and final_answer:
         deltas.append(AnswerDelta(final_answer))
     return AnswerTransport(tuple(deltas), final_answer, status, usage)
+
+
+def decode_kimi_events(raw: str) -> AnswerTransport:
+    deltas: list[AnswerDelta] = []
+    final_answer = ""
+    failed = False
+    for line in raw.split("\n"):
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(message, dict):
+            continue
+        if message.get("type") == "error":
+            failed = True
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            # Legacy stream-json also used typed content blocks.
+            text = "".join(
+                block["text"] for block in content
+                if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+            )
+        else:
+            text = ""
+        if text:
+            deltas.append(AnswerDelta(text))
+        # A message containing tool calls is intermediate commentary,
+        # not the final answer, even when the process exits successfully.
+        if not message.get("tool_calls"):
+            final_answer = text
+        else:
+            final_answer = ""
+    status = "failed" if failed else "succeeded" if final_answer.strip() else "running"
+    return AnswerTransport(tuple(deltas), final_answer, status, None)

@@ -24,6 +24,7 @@
     "CLAUDE.md",
     "CHANGELOG.md",
     "runtime/data/*.json",
+    "runtime/data/*.md",
     "README.md",
     "README.zh-CN.md",
     "bin/mco.js",

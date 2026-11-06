@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .answer_transport import decode_codex_events, decode_json_text_events, decode_pi_events
+from .answer_transport import decode_codex_events, decode_json_text_events, decode_pi_events, decode_kimi_events
 
 
 def extract_final_text_from_output(text: str) -> str:
@@ -8,7 +8,7 @@ def extract_final_text_from_output(text: str) -> str:
     raw = text.strip()
     if not raw:
         return ""
-    for decoder in (decode_codex_events, decode_pi_events, decode_json_text_events):
+    for decoder in (decode_codex_events, decode_pi_events, decode_kimi_events, decode_json_text_events):
         try:
             transport = decoder(text)
         except Exception:

@@ -7,6 +7,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+- Added Kimi Code CLI (`kimi`) with read-only and write tool profiles and native print-mode execution.
+
+### Changed
+- Updated OpenCode 2 command construction and model selection; plugin isolation requests now fail in strict mode or are dropped in best-effort mode.
+- Mapped Hermes context-file disabling to `--ignore-rules`, which also disables memory and preloaded skills.
+- Require a model when selecting a Pi provider override.
+
+### Fixed
+- Preserved Unicode separators inside JSONL answers and made Pi model errors, exhausted retries, cancellation, and token-limit truncation fail accurately.
+- Preserved Pi/Hermes provider routing through CLI, MCP, and file-backed stages.
+- Separated prior-answer file reading from ambient-context controls, enabling Kimi, OpenCode, Antigravity, and Grok stages; read-only stages now reject providers without a read-only mode.
+- Prevented Codex nonzero process exits from being reported as successful.
+- Accepted current Antigravity and Grok permission modes without changing default permissions.
+- Reported Grok headless permission refusals as failures even when the CLI exits zero.
+
 ## [0.12.1] - 2026-10-07
 
 ### Added

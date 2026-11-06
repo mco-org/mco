@@ -27,7 +27,14 @@ class OpenCodeAdapter(ShimAdapterBase):
         return [binary, "auth", "list"]
 
     def supported_context_keys(self) -> List[str]:
-        return ["plugins"]
+        # OpenCode 2 removed --pure; no per-run plugin isolation is verified.
+        return []
+
+    def supports_context_files(self) -> bool:
+        return True
+
+    def supported_model_keys(self) -> List[str]:
+        return ["model"]
 
     def decode_transport(self, raw: str) -> AnswerTransport:
         return decode_json_text_events(raw)
@@ -47,18 +54,15 @@ class OpenCodeAdapter(ShimAdapterBase):
         cmd.extend(["--agent", str(agent_mode)])
         if auto == "true":
             cmd.append("--auto")
-        # Context policy is opt-in: only apply when provider_context key is present.
-        if "provider_context" in input_task.metadata:
-            ctx = input_task.metadata.get("provider_context", {})
-            if not isinstance(ctx, dict):
-                ctx = {}
-            if "plugins" in ctx and ctx.get("plugins") is not True:
-                cmd.append("--pure")
-        cmd.extend([input_task.prompt, "--format", "json", "--dir", input_task.repo_root])
+        model = input_task.metadata.get("model")
+        if isinstance(model, str) and model.strip():
+            cmd.extend(["--model", model.strip()])
+        # ShimAdapterBase starts the process in repo_root; OpenCode 2 removed --dir.
+        cmd.extend([input_task.prompt, "--format", "json"])
         return cmd
 
     def _build_command_for_record(self) -> List[str]:
         return [
             "opencode", "run", "--agent", "plan", "<prompt>",
-            "--format", "json", "--dir", "<repo_root>",
+            "--format", "json",
         ]

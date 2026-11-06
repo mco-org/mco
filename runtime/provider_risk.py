@@ -36,6 +36,10 @@ _PROVIDER_RISKS: Dict[str, Dict[str, str]] = {
         "level": "read_only",
         "reason": "default command locks Pi tools to read,grep,find,ls and disables extensions",
     },
+    "kimi": {
+        "level": "read_only",
+        "reason": "default command limits Kimi tools to Read, Grep and Glob; not an OS sandbox",
+    },
     "copilot": {
         "level": "read_only",
         "reason": "default adapter command denies Copilot write and shell tools",
@@ -82,7 +86,7 @@ def effective_provider_risk(
         if permissions.get("dangerously_skip_permissions") == "true":
             level = "approval_bypass"
         else:
-            level = {"plan": "read_only", "accept-edits": "workspace_write"}.get(mode, "unknown")
+            level = {"plan": "read_only", "accept-edits": "workspace_write", "auto": "workspace_write"}.get(mode, "unknown")
         return {"level": level, "reason": "effective agy mode={}".format(mode)}
     if provider == "claude" and "permission_mode" in permissions:
         permission_mode = str(permissions["permission_mode"]).strip()
@@ -145,12 +149,12 @@ def effective_provider_risk(
             "level": levels.get(tool_profile, "unknown"),
             "reason": "effective Pi tool_profile={}".format(tool_profile),
         }
-    if provider == "copilot" and "access" in permissions:
+    if provider in ("copilot", "kimi") and "access" in permissions:
         access = str(permissions["access"]).strip()
         levels = {"read_only": "read_only", "write": "workspace_write", "yolo": "approval_bypass"}
         return {
             "level": levels.get(access, "unknown"),
-            "reason": "effective Copilot access={}".format(access),
+            "reason": "effective {} access={}".format(provider, access),
         }
     if provider == "hermes" and permissions.get("yolo") == "true":
         return {
@@ -161,6 +165,9 @@ def effective_provider_risk(
         permission_mode = str(permissions["permission_mode"]).strip()
         levels = {
             "plan": "read_only",
+            "default": "workspace_write",
+            "auto": "workspace_write",
+            "dontAsk": "workspace_write",
             "acceptEdits": "workspace_write",
             "bypassPermissions": "approval_bypass",
         }
