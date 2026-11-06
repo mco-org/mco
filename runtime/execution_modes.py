@@ -42,6 +42,11 @@ _PROVIDER_EXECUTION_PERMISSIONS: Dict[str, Dict[str, Optional[Dict[str, str]]]] 
         "write": {"tool_profile": "write"},
         "yolo": {"tool_profile": "yolo"},
     },
+    "kimi": {
+        "read_only": {"access": "read_only"},
+        "write": {"access": "write"},
+        "yolo": {"access": "yolo"},
+    },
     "copilot": {
         "read_only": {"access": "read_only"},
         "write": {"access": "write"},

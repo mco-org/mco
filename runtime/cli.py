@@ -22,7 +22,7 @@ from .skill_manager import read_bundled_skill, skill_status, sync_bundled_skill
 from . import __version__
 from .policy import ExecutionPreviewRequest, provider_policy_preview
 
-SUPPORTED_PROVIDERS = ("agy", "claude", "codex", "copilot", "cursor", "gemini", "grok", "hermes", "opencode", "pi", "qwen")
+SUPPORTED_PROVIDERS = ("agy", "claude", "codex", "copilot", "cursor", "gemini", "grok", "hermes", "kimi", "opencode", "pi", "qwen")
 SUPPORTED_PROVIDER_LIST = ",".join(SUPPORTED_PROVIDERS)
 DEFAULT_DOCTOR_PROVIDERS = SUPPORTED_PROVIDERS
 DEFAULT_CONFIG = ReviewConfig()
@@ -2339,6 +2339,7 @@ def main(argv: List[str] | None = None) -> int:
         if unknown:
             return _invocation_error("invalid_providers", "Unknown providers: {}".format(", ".join(dict.fromkeys(unknown))))
         effective_provider_context: Dict[str, Dict[str, object]] = {}
+        effective_provider_models: Dict[str, Dict[str, object]] = {}
         for invocation in invocations:
             preview = provider_policy_preview(invocation.provider, adapter_map[invocation.provider], cfg.policy)
             if preview["would_fail_strict"]:
@@ -2376,6 +2377,10 @@ def main(argv: List[str] | None = None) -> int:
                 effective_provider_context[invocation.provider] = (
                     dict(applied_context) if isinstance(applied_context, Mapping) else {}
                 )
+            applied_model = preview.get("applied_model", {})
+            effective_provider_models[invocation.provider] = (
+                dict(applied_model) if isinstance(applied_model, Mapping) else {}
+            )
         cancel_event = threading.Event()
         previous_sigint = signal.getsignal(signal.SIGINT)
 
@@ -2451,6 +2456,7 @@ def main(argv: List[str] | None = None) -> int:
                 timeout_seconds=cfg.policy.stall_timeout_seconds,
                 hard_timeout_seconds=cfg.policy.timeout_seconds,
                 provider_permissions=cfg.policy.provider_permissions,
+                provider_models=effective_provider_models,
                 provider_context=effective_provider_context,
                 provider_timeouts=cfg.policy.provider_timeouts,
                 max_provider_parallelism=cfg.policy.max_provider_parallelism,

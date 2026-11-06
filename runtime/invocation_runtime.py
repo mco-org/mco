@@ -173,6 +173,7 @@ def _run_one_invocation(
     hard_timeout_seconds: int,
     provider_permissions: Mapping[str, Mapping[str, str]],
     provider_context: Mapping[str, Mapping[str, object]],
+    provider_models: Mapping[str, Mapping[str, str]],
     allow_paths: Sequence[str],
     cancel_event: threading.Event,
     cancel_state: Mapping[str, str],
@@ -220,6 +221,9 @@ def _run_one_invocation(
     )
     if context_manifest:
         task.metadata["context_manifest"] = context_manifest
+    model_config = provider_models.get(invocation.provider, {})
+    if isinstance(model_config, Mapping) and "provider" in model_config:
+        task.metadata["provider"] = model_config["provider"]
     if invocation.model != "default":
         task.metadata["model"] = invocation.model
     if invocation.provider in provider_context:
@@ -456,6 +460,7 @@ def run_invocations(
     context_paths: Sequence[str] = (),
     context_manifest: Optional[str] = None,
     provider_context: Optional[Mapping[str, Mapping[str, object]]] = None,
+    provider_models: Optional[Mapping[str, Mapping[str, str]]] = None,
     provider_timeouts: Optional[Mapping[str, int]] = None,
     max_provider_parallelism: int = 0,
     poll_interval_seconds: float = 0.05,
@@ -522,6 +527,7 @@ def run_invocations(
                     ),
                     provider_permissions=provider_permissions,
                     provider_context=provider_context or {},
+                    provider_models=provider_models or {},
                     allow_paths=allow_paths,
                     cancel_event=stop_event,
                     cancel_state=stop_state,
@@ -694,6 +700,13 @@ def _context_prompt(task_prompt: str, manifest_path: Path, context_paths: Sequen
 
 
 def _supports_context_files(adapter: ProviderAdapter) -> bool:
+    supports_context_files = getattr(adapter, "supports_context_files", None)
+    if callable(supports_context_files):
+        try:
+            return supports_context_files() is True
+        except (AttributeError, TypeError):
+            return False
+    # Keep legacy declarations working for ACP and external adapters.
     supported_context_keys = getattr(adapter, "supported_context_keys", None)
     if not callable(supported_context_keys):
         return False
@@ -725,6 +738,7 @@ def run_invocation_workflow(
     synthesize: bool = False,
     synthesis_provider: Optional[str] = None,
     provider_context: Optional[Mapping[str, Mapping[str, object]]] = None,
+    provider_models: Optional[Mapping[str, Mapping[str, str]]] = None,
     provider_timeouts: Optional[Mapping[str, int]] = None,
     max_provider_parallelism: int = 0,
     poll_interval_seconds: float = 0.05,
@@ -748,6 +762,7 @@ def run_invocation_workflow(
             cancel_event=cancel_event,
             event_callback=event_callback,
             provider_context=provider_context,
+            provider_models=provider_models,
             provider_timeouts=provider_timeouts,
             max_provider_parallelism=max_provider_parallelism,
             poll_interval_seconds=poll_interval_seconds,
@@ -835,28 +850,32 @@ def run_invocation_workflow(
             from .execution_modes import execution_permissions
 
             stage_permissions = {
-                provider: execution_permissions(provider, "read_only") or dict(provider_permissions.get(provider, {}))
+                provider: permissions
                 for provider in adapters
+                if (permissions := execution_permissions(provider, "read_only")) is not None
             }
-        eligible_invocations = list(stage_invocations)
+        eligible_invocations = []
         unsupported_outputs = {}
-        if manifest_path is not None:
-            eligible_invocations = []
-            for invocation in stage_invocations:
-                if _supports_context_files(adapters[invocation.provider]):
-                    eligible_invocations.append(invocation)
-                    continue
-                unsupported_outputs[invocation.invocation_id] = {
-                    "invocation_id": invocation.invocation_id,
-                    "provider": invocation.provider,
-                    "model": invocation.model,
-                    "stage": stage,
-                    "status": "failed",
-                    "output": None,
-                    "error": "context_file_unsupported",
-                    "exit_code": None,
-                    "artifact_path": None,
-                }
+        for invocation in stage_invocations:
+            error = None
+            if stage in ("debate", "synthesis") and invocation.provider not in stage_permissions:
+                error = "read_only_unsupported"
+            elif manifest_path is not None and not _supports_context_files(adapters[invocation.provider]):
+                error = "context_file_unsupported"
+            if error is None:
+                eligible_invocations.append(invocation)
+                continue
+            unsupported_outputs[invocation.invocation_id] = {
+                "invocation_id": invocation.invocation_id,
+                "provider": invocation.provider,
+                "model": invocation.model,
+                "stage": stage,
+                "status": "failed",
+                "output": None,
+                "error": error,
+                "exit_code": None,
+                "artifact_path": None,
+            }
         payload = run_invocations(
             invocations=eligible_invocations,
             adapters=adapters,
@@ -877,6 +896,7 @@ def run_invocation_workflow(
             context_paths=context_paths,
             context_manifest=str(manifest_path) if manifest_path is not None else None,
             provider_context=provider_context,
+            provider_models=provider_models,
             provider_timeouts=provider_timeouts,
             max_provider_parallelism=max_provider_parallelism,
             poll_interval_seconds=poll_interval_seconds,

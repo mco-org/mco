@@ -27,6 +27,7 @@ MCO first resolves `execution_mode`, then translates it into provider permission
 | `grok` | `["permission_mode", "approval_mode"]` | `plan` | `acceptEdits` | `bypassPermissions` |
 | `cursor` | `["mode", "force", "sandbox"]` | ask mode, sandbox enabled | agent force, sandbox enabled | agent force, sandbox disabled |
 | `agy` | `["mode", "sandbox", "dangerously_skip_permissions"]` | plan mode, sandbox enabled | accept-edits mode, sandbox enabled | accept-edits with permission bypass |
+| `kimi` | `["access"]` | Read/Grep/Glob tools | adds Write/Edit | native print-mode auto approval |
 
 ## Strict vs Best-Effort Examples
 
@@ -53,5 +54,6 @@ Given config:
 - `write` means “can modify project files”, not identical isolation across vendors. MCO uses the narrowest provider-native profile that still permits normal coding work.
 - Hermes oneshot auto-bypasses approvals. MCO therefore fails closed for Hermes under `read_only` and `write` instead of claiming a boundary Hermes cannot enforce.
 - OpenCode currently exposes no separate mode broader than `build --auto`; its `write` and `yolo` mappings are therefore identical.
-- Pi is the strongest tool-granular mapping: `write` enables file write/edit but withholds bash; `yolo` adds bash.
+- Kimi tool profiles restrict tools but do not provide an OS filesystem sandbox. Its native print mode auto-approves; `yolo` uses that mode without a tool allowlist.
+- Pi uses a tool-granular mapping: `write` enables file write/edit but withholds bash; `yolo` adds bash.
 - ACP permission flags are currently auditable only where the ACP adapter exposes matching permission keys. Strict mode fails closed when a requested execution profile cannot be enforced.

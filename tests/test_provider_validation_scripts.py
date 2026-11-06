@@ -62,7 +62,7 @@ class ProviderValidationScriptTests(unittest.TestCase):
                     case ",${FAKE_PROSE_C2_PROVIDERS:-}," in
                       *",$provider,"*) prose_c2=true ;;
                     esac
-                    if [[ "$args" == *"--output-format stream-json"* ]]; then
+                    if [[ "$args" == *"--output-format stream-json"* ]] && [ "$provider" != "kimi" ]; then
                       printf '%s\n%s\n' '{"type":"message"}' '{"type":"result"}'
                       exit 0
                     fi
@@ -114,7 +114,7 @@ class ProviderValidationScriptTests(unittest.TestCase):
             fake_driver.chmod(0o755)
             for binary in (
                 "claude", "codex", "gemini", "opencode", "qwen", "hermes", "pi",
-                "copilot", "grok", "agent", "agy",
+                "copilot", "grok", "agent", "agy", "kimi",
             ):
                 (fake_bin_dir / binary).symlink_to(fake_driver)
 
@@ -147,6 +147,7 @@ class ProviderValidationScriptTests(unittest.TestCase):
                     (probe_root / "schema_c2.json").read_text(encoding="utf-8"),
                 ),
                 "summary": (probe_root / "summary.md").read_text(encoding="utf-8"),
+                "kimi_c0": json.loads((probe_root / "kimi/C0/result.json").read_text(encoding="utf-8")),
             }
             for provider in PROVIDER_IDS:
                 artifacts[provider] = json.loads(
@@ -189,6 +190,10 @@ class ProviderValidationScriptTests(unittest.TestCase):
                     target_paths=[],
                     metadata={"provider_permissions": permissions},
                 )
+                if provider == "kimi":
+                    actual[-1] = str(ROOT / "runtime/data/kimi-read-only.md")
+                if provider == "hermes":
+                    actual.remove("--ignore-rules")
                 self.assertEqual(actual, adapter._build_command(task))
 
     def test_c2_probes_preserve_read_only_permission_flags(self) -> None:
@@ -197,9 +202,10 @@ class ProviderValidationScriptTests(unittest.TestCase):
             "claude": ("--permission-mode plan",),
             "codex": ("--ask-for-approval never", "--sandbox read-only"),
             "gemini": ("--approval-mode plan",),
-            "opencode": ("--agent plan", "--dir '$PROBE_CWD'"),
+            "opencode": ("--agent plan",),
             "qwen": ("--approval-mode plan",),
-            "pi": ("--tools read,grep,find,ls",),
+            "pi": ("--tools read,grep,find,ls --",),
+            "kimi": ("--output-format stream-json", "--agent-file"),
             "copilot": ("--deny-tool=write", "--deny-tool=shell"),
             "grok": ("--permission-mode plan",),
             "cursor": ("--mode ask", "--sandbox enabled"),
@@ -297,6 +303,14 @@ class ProviderValidationScriptTests(unittest.TestCase):
             lock_summary,
             r"(?s)  copilot:.*?C2: FAIL.*?gate_status: BLOCKED",
         )
+
+    def test_kimi_c0_reports_version_only_and_defers_auth(self) -> None:
+        completed, artifacts = self._run_capability_probes()
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(artifacts["kimi_c0"]["reason"], "version_available_auth_deferred_to_run")
+        script = (ROOT / "scripts" / "run_capability_probes.sh").read_text(encoding="utf-8")
+        self.assertRegex(script, r'(?m)^run_probe "kimi" "C0".*--version.*""$')
+        self.assertIn("'$HERMES_BIN' --ignore-rules -z", script)
 
     def test_copilot_c0_probe_denies_write_and_shell_tools(self) -> None:
         script = (ROOT / "scripts" / "run_capability_probes.sh").read_text(encoding="utf-8")

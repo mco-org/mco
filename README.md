@@ -87,6 +87,7 @@ For explicit review coordination, `--perspectives-json` adds a Provider-specific
 | [Grok Build](https://docs.x.ai/build/overview) | `grok` | `grok` |
 | [Cursor CLI](https://cursor.com/docs/cli/overview) | `cursor` / `agent` | `cursor` |
 | Antigravity CLI | `agy` | `agy` |
+| Kimi Code CLI | `kimi` | `kimi` |
 
 Each provider CLI remains responsible for its own installation, authentication, model access, and native sandbox behavior.
 

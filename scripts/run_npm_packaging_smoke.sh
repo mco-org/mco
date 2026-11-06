@@ -30,6 +30,9 @@ for required_path in \
   package/mco \
   package/runtime/adapters/copilot.py \
   package/runtime/adapters/cursor.py \
+  package/runtime/adapters/kimi.py \
+  package/runtime/data/kimi-read-only.md \
+  package/runtime/data/kimi-write.md \
   package/runtime/provider_risk.py \
   package/runtime/skill_health.py \
   package/runtime/skill_manager.py \
@@ -93,6 +96,29 @@ if health.get("status") == "unknown" or reference.get("status") != "ok":
     raise SystemExit("bundled skill reference is unavailable after npm install")
 PY
 
+# Run from outside the source tree so dry-run resolves the installed profiles.
+check_kimi_dry_runs() {
+  local mco_bin="$1"
+  local expected_root="$2"
+  local python_bin="$3"
+  for mode in read_only write; do
+    (cd "$INSTALL_DIR" && "$mco_bin" run --repo "$INSTALL_DIR" --prompt smoke --providers kimi --execution-mode "$mode" --dry-run --json) | "$python_bin" -c '
+import json
+import pathlib
+import sys
+
+root, mode = pathlib.Path(sys.argv[1]).resolve(), sys.argv[2]
+payload = json.load(sys.stdin)
+command = payload["providers_detail"]["kimi"]["command_template"]
+profile = pathlib.Path(command[command.index("--agent-file") + 1]).resolve()
+expected = root / "runtime" / "data" / ("kimi-read-only.md" if mode == "read_only" else "kimi-write.md")
+if profile != expected or not profile.read_text().strip():
+    raise SystemExit(f"installed Kimi profile unavailable: {profile}")
+' "$expected_root" "$mode"
+  done
+}
+check_kimi_dry_runs "$MCO_BIN" "$PACKAGE_ROOT" python3
+
 python3 -m pip wheel . --wheel-dir "$WHEEL_DIR" --no-deps -q
 WHEEL_FILE="$(ls "$WHEEL_DIR"/*.whl)"
 python3 -m zipfile -l "$WHEEL_FILE" | grep -Fq 'runtime/data/skill_calling_agents.json' || {
@@ -100,6 +126,9 @@ python3 -m zipfile -l "$WHEEL_FILE" | grep -Fq 'runtime/data/skill_calling_agent
   exit 1
 }
 for required_path in \
+  runtime/adapters/kimi.py \
+  runtime/data/kimi-read-only.md \
+  runtime/data/kimi-write.md \
   skills/mco-cli/SKILL.md \
   skills/mco-cli/references/installation.md \
   skills/mco-cli/references/provider-selection.md \
@@ -123,6 +152,8 @@ missing = required - agents
 if missing:
     raise SystemExit(f"wheel install smoke: manifest missing agents: {sorted(missing)}")
 PY
+WHEEL_PACKAGE_ROOT="$(cd "$INSTALL_DIR" && "$WHEEL_VENV/bin/python" -c 'import pathlib, runtime; print(pathlib.Path(runtime.__file__).resolve().parent.parent)')"
+check_kimi_dry_runs "$WHEEL_VENV/bin/mco" "$WHEEL_PACKAGE_ROOT" "$WHEEL_VENV/bin/python"
 "$WHEEL_VENV/bin/mco" skills read >/dev/null
 "$WHEEL_VENV/bin/mco" skills status --json | "$WHEEL_VENV/bin/python" -c '
 import json

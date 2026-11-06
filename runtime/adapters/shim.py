@@ -95,6 +95,16 @@ class ShimAdapterBase:
     def supported_model_keys(self) -> List[str]:
         return []
 
+    def supports_context_files(self) -> bool:
+        """Whether the agent can read explicit reference files from disk.
+
+        Preserve existing adapters' declarations; ambient-context controls are
+        otherwise independent of the ability to read staged answers.
+        """
+        supported_context_keys = getattr(self, "supported_context_keys", None)
+        keys = supported_context_keys() if callable(supported_context_keys) else []
+        return isinstance(keys, list) and "context_files" in keys
+
     def decode_transport(self, raw: str) -> AnswerTransport:
         return decode_plain_text(raw)
 

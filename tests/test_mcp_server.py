@@ -163,7 +163,7 @@ class McpPolicyTests(unittest.TestCase):
         self.assertEqual(kwargs["provider_timeouts"], {})
 
     def test_review_uses_a_model_pinned_in_config(self) -> None:
-        self._write_global_config({"provider_models": {"pi": {"model": "pi-pinned"}}})
+        self._write_global_config({"provider_models": {"pi": {"model": "pi-pinned", "provider": "github-copilot"}}})
         with tempfile.TemporaryDirectory() as repo, patch(
             "runtime.invocation_runtime.run_invocation_workflow", return_value=self._workflow_result,
         ) as workflow:
@@ -172,6 +172,7 @@ class McpPolicyTests(unittest.TestCase):
         self.assertEqual(
             [item.model for item in workflow.call_args.kwargs["invocations"]], ["pi-pinned"],
         )
+        self.assertEqual(workflow.call_args.kwargs["provider_models"]["pi"]["provider"], "github-copilot")
 
     def test_a_bare_string_is_accepted_as_the_documented_pin_shorthand(self) -> None:
         # The CLI accepts "pi": "pi-pinned"; the MCP path must not ignore it.

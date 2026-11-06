@@ -11,7 +11,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from runtime.answer_transport import AnswerTransport, decode_pi_events
+from runtime.adapters.agy import AgyAdapter
+from runtime.adapters.codex import CodexAdapter
+from runtime.adapters.custom import CommandShimAdapter
+from runtime.adapters.grok import GrokAdapter
+from runtime.adapters.hermes import HermesAdapter
+from runtime.adapters.kimi import KimiAdapter
+from runtime.adapters.opencode import OpenCodeAdapter
+from runtime.adapters.pi import PiAdapter
+from runtime.answer_transport import AnswerTransport, decode_pi_events, decode_plain_text
+from runtime.execution_modes import execution_permissions
 from runtime.cli import main
 from runtime.invocation_runtime import parse_invocations, run_invocation_workflow, run_invocations
 from runtime.contracts import CapabilitySet, ProviderPresence, TaskInput, TaskRunRef, TaskStatus
@@ -55,6 +64,29 @@ class DeterministicFakeAdapter:
 
     def normalize(self, raw: object, ctx: object) -> list[object]:
         raise AssertionError("invocation runtime must not parse findings")
+
+
+class RoutingFakeAdapter(DeterministicFakeAdapter):
+    def __init__(self, provider: str) -> None:
+        super().__init__()
+        self.id = provider
+        self.commands: list[list[str]] = []
+
+    def supported_model_keys(self) -> list[str]:
+        return ["model", "provider"]
+
+    def supported_permission_keys(self) -> list[str]:
+        return ["tool_profile"] if self.id == "pi" else ["yolo"]
+
+    def run(self, input_task: TaskInput) -> TaskRunRef:
+        adapter = PiAdapter() if self.id == "pi" else HermesAdapter()
+        self.commands.append(adapter._build_command(input_task))
+        ref = super().run(input_task)
+        if self.id != "pi":
+            raw = Path(ref.artifact_path) / "raw"
+            (raw / "pi.stdout.log").rename(raw / (self.id + ".stdout.log"))
+            (raw / "pi.stderr.log").rename(raw / (self.id + ".stderr.log"))
+        return ref
 
 
 class ProtocolFakeAdapter(DeterministicFakeAdapter):
@@ -304,6 +336,45 @@ class UsageProtocolFakeAdapter(ProtocolFakeAdapter):
 
 
 class InvocationRuntimeCliTests(unittest.TestCase):
+    def test_cli_routes_provider_model_config_to_adapter_commands(self) -> None:
+        for provider in ("pi", "hermes"):
+            for agents in ([], ["--agent", "fast=" + provider + ":fast", "--agent", "careful=" + provider + ":careful"]):
+                with self.subTest(provider=provider, agents=agents):
+                    adapter = RoutingFakeAdapter(provider)
+                    with tempfile.TemporaryDirectory() as repo, contextlib.redirect_stdout(io.StringIO()):
+                        with patch("runtime.cli._doctor_adapter_registry", return_value={provider: adapter}), patch("runtime.cli.discover_models", return_value={"ok": False, "models": []}):
+                            exit_code = main([
+                                "run", "--repo", repo, "--prompt", "routing", "--json", "--execution-mode", "yolo",
+                                "--provider-models-json", json.dumps({provider: {"model": "configured", "provider": "github-copilot"}}),
+                                *(agents or ["--providers", provider]),
+                            ])
+                    self.assertEqual(exit_code, 0)
+                    self.assertEqual(sorted(command[command.index("--model") + 1] for command in adapter.commands), ["careful", "fast"] if agents else ["configured"])
+                    self.assertTrue(adapter.commands)
+                    for command in adapter.commands:
+                        self.assertIn("--provider", command)
+                        self.assertEqual(command[command.index("--provider") + 1], "github-copilot")
+
+    def test_file_backed_workflows_preserve_provider_routing(self) -> None:
+        for options, stages in (({"chain": True}, {"chain-00", "chain-01"}), ({"debate": True, "synthesize": True}, {"run", "debate", "synthesis"})):
+            with self.subTest(options=options):
+                adapter = RoutingFakeAdapter("pi")
+                with tempfile.TemporaryDirectory() as repo:
+                    payload = run_invocation_workflow(
+                        invocations=parse_invocations(["fast=pi:fast", "careful=pi:careful"], ["."]),
+                        adapters={"pi": adapter}, repo_root=repo, prompt="routing", timeout_seconds=10,
+                        provider_permissions={}, allow_paths=["."],
+                        provider_models={"pi": {"model": "configured", "provider": "github-copilot"}},
+                        **options,
+                    )
+                self.assertEqual(payload["status"], "complete")
+                self.assertEqual({task.metadata["stage"] for task in adapter.inputs}, stages)
+                for task, command in zip(adapter.inputs, adapter.commands):
+                    self.assertEqual(command[command.index("--provider") + 1], "github-copilot")
+                    self.assertEqual(task.metadata["model"], task.metadata["invocation_id"])
+                    if task.metadata["stage"] not in ("run", "chain-00"):
+                        self.assertIn("context_manifest", task.metadata)
+
     def test_global_timeout_does_not_wait_for_blocking_adapter_start(self) -> None:
         adapter = BlockingRunFakeAdapter()
         started_at = time.monotonic()
@@ -538,6 +609,90 @@ class InvocationRuntimeCliTests(unittest.TestCase):
         self.assertEqual(payload["status"], "partial")
         self.assertEqual(payload["outputs"][1]["error"], "context_file_unsupported")
         self.assertEqual([task.metadata["invocation_id"] for task in adapter.inputs], ["first"])
+
+    @contextlib.contextmanager
+    def _fake_provider_io(self, adapter):
+        inputs = []
+        commands = []
+
+        def run(task):
+            inputs.append(task)
+            commands.append(adapter._build_command(task))
+            if task.metadata.get("context_manifest"):
+                from runtime.acp.handlers import handle_fs_read
+
+                manifest = json.loads(handle_fs_read(
+                    {"path": task.metadata["context_manifest"]},
+                    cwd=task.repo_root, allow_paths=task.metadata["allow_paths"],
+                )["content"])
+                for item in manifest["inputs"]:
+                    if item["path"]:
+                        self.assertIn("prior answer", handle_fs_read(
+                            {"path": item["path"]}, cwd=task.repo_root,
+                            allow_paths=task.metadata["allow_paths"],
+                        )["content"])
+            root = Path(task.metadata["artifact_root"]) / task.task_id
+            raw = root / "raw"
+            raw.mkdir(parents=True, exist_ok=True)
+            (raw / (adapter.id + ".stdout.log")).write_text("prior answer", encoding="utf-8")
+            (raw / (adapter.id + ".stderr.log")).write_text("", encoding="utf-8")
+            return TaskRunRef(task.task_id, adapter.id, task.task_id, str(root), "2026-07-11T00:00:00Z")
+
+        def poll(ref):
+            return TaskStatus(ref.task_id, adapter.id, ref.run_id, "SUCCEEDED", True, None, None, exit_code=0)
+
+        with patch.object(adapter, "run", side_effect=run), patch.object(adapter, "poll", side_effect=poll), patch.object(adapter, "decode_transport", side_effect=decode_plain_text):
+            yield inputs, commands
+
+    def test_current_cli_chain_reads_context_independently_of_ambient_policy(self) -> None:
+        for adapter_class in (AgyAdapter, PiAdapter, OpenCodeAdapter, HermesAdapter, KimiAdapter, CodexAdapter, GrokAdapter):
+            adapter = adapter_class()
+            with self.subTest(provider=adapter.id), tempfile.TemporaryDirectory() as repo, self._fake_provider_io(adapter) as (inputs, commands):
+                permissions = execution_permissions(adapter.id, "yolo")
+                payload = run_invocation_workflow(
+                    invocations=parse_invocations(["first=" + adapter.id + ":default", "second=" + adapter.id + ":default"], ["."]),
+                    adapters={adapter.id: adapter}, repo_root=repo, prompt="review this", timeout_seconds=10,
+                    provider_permissions={adapter.id: permissions}, allow_paths=["."], chain=True,
+                )
+                self.assertEqual(payload["status"], "complete")
+                self.assertEqual(len(commands), 2)
+                self.assertEqual(inputs[1].metadata["provider_permissions"], permissions)
+                self.assertTrue(inputs[1].metadata["context_read_only_paths"])
+                self.assertIn(inputs[1].metadata["context_manifest"], inputs[1].prompt)
+                self.assertNotIn("prior answer", inputs[1].prompt)
+                self.assertNotIn("provider_context", inputs[1].metadata)
+
+    def test_dependent_stages_require_read_only_without_yolo_fallback(self) -> None:
+        for adapter_class in (AgyAdapter, PiAdapter, OpenCodeAdapter, HermesAdapter, KimiAdapter, CodexAdapter, GrokAdapter):
+            adapter = adapter_class()
+            with self.subTest(provider=adapter.id), tempfile.TemporaryDirectory() as repo, self._fake_provider_io(adapter) as (inputs, commands):
+                payload = run_invocation_workflow(
+                    invocations=parse_invocations(["first=" + adapter.id + ":default"], ["."]),
+                    adapters={adapter.id: adapter}, repo_root=repo, prompt="review this", timeout_seconds=10,
+                    provider_permissions={adapter.id: execution_permissions(adapter.id, "yolo")}, allow_paths=["."],
+                    debate=True, synthesize=True,
+                )
+                if adapter.id == "hermes":
+                    self.assertEqual(payload["status"], "partial")
+                    self.assertEqual(len(inputs), 1)
+                    self.assertEqual([(item["stage"], item["error"]) for item in payload["outputs"][1:]],
+                                     [("debate", "read_only_unsupported"), ("synthesis", "read_only_unsupported")])
+                else:
+                    self.assertEqual(payload["status"], "complete")
+                    self.assertEqual(len(commands), 3)
+                    self.assertTrue(all(task.metadata["provider_permissions"] == execution_permissions(adapter.id, "read_only") for task in inputs[1:]))
+
+    def test_context_file_capability_is_opt_in_and_explicit_false_takes_precedence(self) -> None:
+        from runtime.invocation_runtime import _supports_context_files
+
+        custom = CommandShimAdapter("custom", ["custom"])
+        self.assertFalse(_supports_context_files(custom))
+        custom.supported_context_keys = lambda: ["context_files"]
+        self.assertTrue(_supports_context_files(custom))
+        self.assertTrue(_supports_context_files(DeterministicFakeAdapter()))
+        adapter = DeterministicFakeAdapter()
+        adapter.supports_context_files = lambda: False
+        self.assertFalse(_supports_context_files(adapter))
 
     def test_debate_and_synthesis_are_raw_file_backed_stages(self) -> None:
         adapter = ContextReadingFakeAdapter()

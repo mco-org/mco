@@ -12,6 +12,7 @@ from .custom import CommandShimAdapter
 from .gemini import GeminiAdapter
 from .grok import GrokAdapter
 from .hermes import HermesAdapter
+from .kimi import KimiAdapter
 from .ollama import OllamaAdapter
 from .opencode import OpenCodeAdapter
 from .pi import PiAdapter
@@ -120,6 +121,7 @@ def adapter_registry(
             "gemini": GeminiAdapter,
             "grok": GrokAdapter,
             "hermes": HermesAdapter,
+            "kimi": KimiAdapter,
             "opencode": OpenCodeAdapter,
             "pi": PiAdapter,
             "qwen": QwenAdapter,
@@ -137,6 +139,7 @@ def adapter_registry(
         "codex": CodexAdapter(),
         "gemini": GeminiAdapter(),
         "hermes": HermesAdapter(),
+        "kimi": KimiAdapter(),
         "opencode": OpenCodeAdapter(),
         "pi": PiAdapter(),
         "qwen": QwenAdapter(),
@@ -174,6 +177,7 @@ __all__ = [
     "GeminiAdapter",
     "GrokAdapter",
     "HermesAdapter",
+    "KimiAdapter",
     "OllamaAdapter",
     "OpenCodeAdapter",
     "PiAdapter",

@@ -50,10 +50,10 @@ class HermesAdapter(ShimAdapterBase):
             ctx = input_task.metadata.get("provider_context", {})
             if not isinstance(ctx, dict):
                 ctx = {}
-            # Only add --safe-mode when context_files is explicitly False.
-            # When absent, Hermes uses its default ambient context behavior.
+            # --ignore-rules also disables memory and preloaded skills.
+            # --safe-mode additionally discards provider configuration.
             if ctx.get("context_files") is False:
-                cmd.append("--safe-mode")
+                cmd.append("--ignore-rules")
             skills = ctx.get("skills")
             if isinstance(skills, list) and skills:
                 for skill_name in skills:

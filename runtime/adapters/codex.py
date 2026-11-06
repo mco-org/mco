@@ -101,13 +101,4 @@ class CodexAdapter(ShimAdapterBase):
         ]
 
     def _is_success(self, return_code: int, stdout_text: str, stderr_text: str) -> bool:
-        if return_code == 0:
-            return True
-        # Codex may emit MCP startup errors and still return useful JSON events.
-        if stdout_text.strip() and "\"type\":\"turn.completed\"" in stdout_text:
-            return True
-        if stdout_text.strip() and "\"ok\":true" in stdout_text:
-            return True
-        if "mcp client" in stderr_text.lower() and stdout_text.strip():
-            return True
-        return False
+        return return_code == 0

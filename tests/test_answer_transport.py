@@ -6,9 +6,31 @@ import unittest
 from runtime.acp.adapter import AcpAdapter
 from runtime.adapters.codex import CodexAdapter
 from runtime.adapters.pi import PiAdapter
+from runtime.adapters.opencode import OpenCodeAdapter
+from runtime.output_text import extract_final_text_from_output
 
 
 class AnswerTransportTests(unittest.TestCase):
+    def test_kimi_session_display_uses_final_answer_without_protocol(self) -> None:
+        raw = "\n".join([
+            json.dumps({"role": "assistant", "content": "Reading", "tool_calls": [{"id": "1"}]}),
+            json.dumps({"role": "tool", "content": "private tool output"}),
+            json.dumps({"role": "assistant", "content": "Final answer"}),
+        ])
+        self.assertEqual(extract_final_text_from_output(raw), "Final answer")
+
+    def test_jsonl_preserves_unicode_line_separators_inside_answers(self) -> None:
+        answer = "first\u2028second\u2029third"
+        cases = [
+            (PiAdapter(), {"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": answer}]}]}),
+            (CodexAdapter(), {"type": "item.completed", "item": {"type": "agent_message", "text": answer}}),
+            (OpenCodeAdapter(), {"type": "text", "part": {"type": "text", "text": answer}}),
+        ]
+        for adapter, event in cases:
+            with self.subTest(provider=adapter.id):
+                raw = json.dumps({"type": "start"}) + "\n" + json.dumps(event, ensure_ascii=False) + "\n"
+                self.assertEqual(adapter.decode_transport(raw).final_answer, answer)
+
     def test_codex_transport_decodes_answer_deltas_final_and_usage(self) -> None:
         raw = "\n".join(
             [
