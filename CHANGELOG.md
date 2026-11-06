@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-07
+
 ### Added
 - Added Kimi Code CLI (`kimi`) with read-only and write tool profiles and native print-mode execution.
 
